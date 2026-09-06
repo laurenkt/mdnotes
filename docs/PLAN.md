@@ -54,7 +54,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       nested-path create or open is M2.6b.)
 - [?] M2.6b Nested-path create/open in the list (C-4 vs S-2, L-5): after Enter on `daily/foo`
       the kept query does not list the new note, so it cannot be selected. Blocked on Q1.
-- [ ] M2.7 Autosave E-4, E-5, E-6 with a testable clock. Smoke test: edit, advance clock, file
+- [x] M2.7 Autosave E-4, E-5, E-6 with a testable clock. Smoke test: edit, advance clock, file
       updated; switch note, file updated immediately.
 - [ ] M2.8 Undo per note (E-7). Font preference (E-8) read from `UserDefaults`.
 - [ ] M2.9 Launch perf: `LaunchPerfTests` measuring PF-1 (app delegate finish-launching to list

@@ -229,8 +229,8 @@ final class NoteListSmokeTests: XCTestCase {
         editor.onLoad = { id in
             if id == self.beta { loaded.fulfill() }
         }
-        editor.load(alpha, from: library.store)
-        editor.load(beta, from: library.store)
+        editor.load(alpha, from: library)
+        editor.load(beta, from: library)
         await fulfillment(of: [loaded], timeout: 10)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(editor.noteID, beta)
@@ -242,7 +242,7 @@ final class NoteListSmokeTests: XCTestCase {
         try Data([0xFF, 0xFE] + Array("hi".utf8)).write(to: root.appendingPathComponent(bad.relativePath))
         let (controller, library) = try await makeControllerWithLibrary(noteCount: 4)
         let editor = controller.editorController
-        let reported = await loadAfter(editor) { editor.load(bad, from: library.store) }
+        let reported = await loadAfter(editor) { editor.load(bad, from: library) }
         XCTAssertEqual(reported, .some(bad))
         XCTAssertFalse(controller.mainView.textView.isEditable)
         XCTAssertTrue(controller.mainView.textView.string.hasSuffix("hi"))

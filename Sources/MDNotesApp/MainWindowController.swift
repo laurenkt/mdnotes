@@ -13,6 +13,9 @@ import MDNotesCore
 /// the field's command selectors arrive through the delegate, the list's through
 /// `NoteTableView`'s closures, the editor's through `EditorController`, and Cmd-L is a key
 /// equivalent of `MainView`.
+///
+/// Autosave (E-4) lives in `EditorController`; this controller adds the window-level trigger,
+/// writing unsaved edits when the window stops being key.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -36,7 +39,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// was opened or created, or nil when the query was rejected or the write failed.
     public var onCommitQuery: (@MainActor (NoteID?) -> Void)?
 
-    public init() {
+    /// `autosaveClock` times the editor's autosave delay (E-4); tests pass one they advance
+    /// by hand.
+    public init(autosaveClock: any AutosaveClock = SystemAutosaveClock()) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -53,8 +58,12 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         window.initialFirstResponder = view.searchField
         mainView = view
         listController = NoteListController(tableView: view.tableView)
-        editorController = EditorController(textView: view.textView)
+        editorController = EditorController(textView: view.textView, clock: autosaveClock)
         super.init(window: window)
+        // E-4: unsaved edits are written the moment the window stops being key.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidResignKey(_:)), name: NSWindow.didResignKeyNotification,
+            object: window)
         listController.onSelectionChange = { [weak self] entry in self?.showInEditor(entry) }
         view.searchField.delegate = self
         view.searchField.target = self
@@ -193,9 +202,17 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             focusEditor()
         } else if let library {
             mainView.tableView.deselectAll(nil)
-            editorController.load(id, from: library.store)
+            editorController.load(id, from: library)
             window?.makeFirstResponder(mainView.textView)
         }
+    }
+
+    // MARK: - Autosave on focus loss (E-4)
+
+    /// The window stopped being key: another window or app took over. Unsaved edits are
+    /// written now rather than 300 ms from the last keystroke.
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        editorController.flush()
     }
 
     private func showInlineMessage(_ text: String) {
@@ -258,6 +275,6 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             editorController.clear()
             return
         }
-        editorController.load(entry.id, from: library.store)
+        editorController.load(entry.id, from: library)
     }
 }

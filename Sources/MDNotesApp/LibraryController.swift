@@ -41,6 +41,9 @@ public final class LibraryController {
     public let root: URL
     public let store: NoteStore
 
+    /// Every write this process has made to the library, for the watcher to ignore (E-6).
+    public let ownWrites = OwnWrites()
+
     /// The latest snapshot. Replaced, never mutated; safe to hold across a reload.
     public private(set) var snapshot: SearchIndex = .empty
     public private(set) var phase: Phase = .idle
@@ -112,7 +115,7 @@ public final class LibraryController {
         let store = store
         queue.async { [self] in
             guard worker.isCurrent(generation) else { return }
-            let (index, phase) = worker.update { state in
+            let (index, phase, _) = worker.update { state in
                 state.touchedSinceScan.formUnion(changes.added)
                 state.touchedSinceScan.formUnion(changes.modified)
                 state.touchedSinceScan.formUnion(changes.removed)
@@ -138,8 +141,9 @@ public final class LibraryController {
             let outcome: Result<NoteStore.Creation, any Error>
             do {
                 let creation = try store.create(id)
+                if creation.created { ownWrites.record(id, modifiedAt: creation.modifiedAt) }
                 let changes = LibraryChanges(added: [id])
-                let (index, phase) = worker.update { state in
+                let (index, phase, _) = worker.update { state in
                     state.touchedSinceScan.insert(id)
                     if creation.created {
                         // The body is known to be empty; no need to read the file back.
@@ -164,6 +168,32 @@ public final class LibraryController {
         }
     }
 
+    // MARK: - Saving (E-4, E-5, E-6)
+
+    /// Writes `text` over the file backing `id`, atomically (E-5), records the write in
+    /// `ownWrites` (E-6), and folds the new body and modification date into the snapshot
+    /// without rereading the file. The write happens synchronously on the calling thread, which
+    /// must not be the main thread (PF-6), so a caller that reads the note afterwards on the
+    /// same queue sees what it wrote; the fold and publish follow on the library's queue.
+    /// Returns the file's new modification date. A stopped library still writes the file but
+    /// leaves its empty snapshot alone.
+    nonisolated public func save(_ text: String, to id: NoteID) throws -> Date {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        let modifiedAt = try AtomicWriter().write(text, to: store.url(for: id))
+        ownWrites.record(id, modifiedAt: modifiedAt)
+        queue.async { [self] in
+            let (index, phase, generation) = worker.update { state in
+                guard state.phase != .idle else { return }
+                state.touchedSinceScan.insert(id)
+                state.index = state.index.applying(changes: LibraryChanges(modified: [id])) { _ in
+                    (modifiedAt: modifiedAt, body: text)
+                }
+            }
+            if phase != .idle { publish(index, phase: phase, generation: generation) }
+        }
+        return modifiedAt
+    }
+
     // MARK: - Progressive population (PF-7)
 
     /// Reads one batch of bodies on the queue, publishes, and queues the next batch. Each batch
@@ -175,7 +205,7 @@ public final class LibraryController {
         let store = store
         queue.async { [self] in
             guard worker.isCurrent(generation) else { return }
-            let (index, phase) = worker.update { state in
+            let (index, phase, _) = worker.update { state in
                 let batch = notes[start..<end].filter { !state.touchedSinceScan.contains($0.id) }
                 state.index = state.index.applying(reading: batch, store: store)
                 state.phase = end < notes.count ? .indexing(bodiesRead: end, of: notes.count) : .ready
@@ -213,8 +243,8 @@ public final class LibraryController {
 
     // MARK: - Background state
 
-    /// The index as the background queue sees it. Every access happens on the serial queue, so
-    /// the lock never contends; it exists so the state can cross into `@Sendable` blocks.
+    /// The index as the background queue sees it. Every mutation happens on the serial queue,
+    /// so the lock never contends; it exists so the state can cross into `@Sendable` blocks.
     private final class Worker: Sendable {
         struct State {
             var generation = 0
@@ -242,11 +272,12 @@ public final class LibraryController {
             }
         }
 
-        /// Mutates the state and returns the index and phase to publish.
-        func update(_ body: (inout State) -> Void) -> (SearchIndex, Phase) {
+        /// Mutates the state and returns the index and phase to publish, with the generation
+        /// they belong to, read under the same lock so a `reset` in between cannot mislabel them.
+        func update(_ body: (inout State) -> Void) -> (SearchIndex, Phase, Int) {
             state.withLock {
                 body(&$0)
-                return ($0.index, $0.phase)
+                return ($0.index, $0.phase, $0.generation)
             }
         }
     }
