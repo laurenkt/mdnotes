@@ -95,12 +95,12 @@ public struct SearchIndex: Sendable {
 
         /// Freezes the accumulated notes into a snapshot.
         public func build() -> SearchIndex {
-            SearchIndex(notes: notes)
+            SearchIndex(ordered: notes.map { Item(id: $0.key, note: $0.value) }.sorted(by: SearchIndex.precedesInList))
         }
     }
 
     /// A snapshot with no notes.
-    public static let empty = SearchIndex(notes: [:])
+    public static let empty = SearchIndex(ordered: [])
 
     /// Every note, most recently modified first.
     public let entries: [Entry]
@@ -114,33 +114,86 @@ public struct SearchIndex: Sendable {
     }
     let spans: [Span]
 
-    private init(notes: [NoteID: FoldedNote]) {
-        let ordered = notes.sorted { a, b in
-            if a.value.modifiedAt != b.value.modifiedAt { return a.value.modifiedAt > b.value.modifiedAt }
-            return a.key.relativePath < b.key.relativePath
+    /// A note's folded text about to be packed into a snapshot. The slices borrow their storage,
+    /// from a `FoldedNote` or from an older snapshot's arena, so packing copies each byte once.
+    struct Item {
+        let id: NoteID
+        let modifiedAt: Date
+        let title: ArraySlice<UInt8>
+        let body: ArraySlice<UInt8>
+
+        init(id: NoteID, note: FoldedNote) {
+            self.id = id
+            modifiedAt = note.modifiedAt
+            title = note.title[...]
+            body = note.body[...]
         }
+
+        init(entry: Entry) {
+            id = entry.id
+            modifiedAt = entry.modifiedAt
+            title = entry.arena.bytes[entry.titleRange]
+            body = entry.arena.bytes[entry.bodyRange]
+        }
+    }
+
+    /// List order (S-3): most recently modified first, ties broken by path so the order is
+    /// deterministic.
+    static func precedesInList(_ a: Item, _ b: Item) -> Bool {
+        if a.modifiedAt != b.modifiedAt { return a.modifiedAt > b.modifiedAt }
+        return a.id.relativePath < b.id.relativePath
+    }
+
+    /// Packs `items`, which must already be in list order, into a fresh arena.
+    private init(ordered items: [Item]) {
         var bytes: [UInt8] = []
-        bytes.reserveCapacity(ordered.reduce(0) { $0 + $1.value.title.count + $1.value.body.count })
+        bytes.reserveCapacity(items.reduce(0) { $0 + $1.title.count + $1.body.count })
         var ranges: [(title: Range<Int>, body: Range<Int>)] = []
-        ranges.reserveCapacity(ordered.count)
-        for (_, note) in ordered {
+        ranges.reserveCapacity(items.count)
+        for item in items {
             let titleStart = bytes.count
-            bytes.append(contentsOf: note.title)
+            bytes.append(contentsOf: item.title)
             let bodyStart = bytes.count
-            bytes.append(contentsOf: note.body)
+            bytes.append(contentsOf: item.body)
             ranges.append((titleStart..<bodyStart, bodyStart..<bytes.count))
         }
-        let arena = ordered.isEmpty ? Arena.empty : Arena(bytes: bytes)
-        entries = zip(ordered, ranges).map { item, range in
+        let arena = items.isEmpty ? Arena.empty : Arena(bytes: bytes)
+        entries = zip(items, ranges).map { item, range in
             Entry(
-                id: item.key, modifiedAt: item.value.modifiedAt, titleRange: range.title, bodyRange: range.body,
-                arena: arena)
+                id: item.id, modifiedAt: item.modifiedAt, titleRange: range.title, bodyRange: range.body, arena: arena)
         }
         spans = ranges.map { range in
             Span(
                 titleStart: Int32(range.title.lowerBound), bodyStart: Int32(range.body.lowerBound),
                 end: Int32(range.body.upperBound))
         }
+    }
+
+    /// A new snapshot with `upserts` inserted or replaced and `removing` dropped, without
+    /// touching disk. Untouched notes are carried over from this snapshot's arena; the whole
+    /// arena is repacked so a query stays a single contiguous sweep (PF-2). An id in both lists
+    /// is upserted. Later upserts of the same id win.
+    func applying(upserts: [(id: NoteID, note: FoldedNote)], removing: Set<NoteID>) -> SearchIndex {
+        var fresh: [NoteID: FoldedNote] = [:]
+        for (id, note) in upserts { fresh[id] = note }
+        var touched = removing
+        for id in fresh.keys { touched.insert(id) }
+        if touched.isEmpty { return self }
+
+        let incoming = fresh.map { Item(id: $0.key, note: $0.value) }.sorted(by: SearchIndex.precedesInList)
+        var merged: [Item] = []
+        merged.reserveCapacity(entries.count + incoming.count)
+        var next = incoming.startIndex
+        for entry in entries where !touched.contains(entry.id) {
+            let kept = Item(entry: entry)
+            while next < incoming.endIndex, SearchIndex.precedesInList(incoming[next], kept) {
+                merged.append(incoming[next])
+                next += 1
+            }
+            merged.append(kept)
+        }
+        merged.append(contentsOf: incoming[next...])
+        return SearchIndex(ordered: merged)
     }
 
     /// Number of notes in the snapshot.

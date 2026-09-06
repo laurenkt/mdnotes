@@ -55,6 +55,16 @@ public struct NoteStore: Sendable {
         root.appendingPathComponent(id.relativePath, isDirectory: false)
     }
 
+    /// The modification date of the file backing `id`, read the same way the scanner reads it.
+    /// Throws if the file does not exist. An evicted placeholder still has a date (L-7).
+    public func modificationDate(of id: NoteID) throws -> Date {
+        let url = self.url(for: id)
+        // Same autorelease consideration as `isDownloaded` (PF-5).
+        return try autoreleasepool {
+            try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? .distantPast
+        }
+    }
+
     /// Reads the body of `id`. Throws if the file cannot be read at all (missing, permissions);
     /// encoding and download problems are reported in the result, not thrown.
     public func read(_ id: NoteID) throws -> NoteBody {

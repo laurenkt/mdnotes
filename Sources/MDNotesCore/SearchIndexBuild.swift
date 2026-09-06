@@ -6,6 +6,15 @@ extension SearchIndex {
     /// (PF-4). A note whose body cannot be read (evicted, undecodable, or gone) is indexed by
     /// title only (L-7, L-8). Synchronous file I/O: call it off the main thread (PF-6).
     public static func build(notes: [ScannedNote], store: NoteStore) -> SearchIndex {
+        var builder = Builder()
+        builder.add(folded: fold(notes: notes, store: store))
+        return builder.build()
+    }
+
+    /// Reads and folds the bodies of `notes` on all cores. Order of the result is unspecified.
+    /// A body that cannot be read folds to empty (L-7, L-8). Synchronous file I/O (PF-6).
+    static func fold(notes: [ScannedNote], store: NoteStore) -> [(id: NoteID, note: FoldedNote)] {
+        if notes.isEmpty { return [] }
         let chunkCount = max(1, min(64, notes.count / 128))
         let folded = Mutex<[(id: NoteID, note: FoldedNote)]>([])
         DispatchQueue.concurrentPerform(iterations: chunkCount) { chunk in
@@ -21,9 +30,7 @@ extension SearchIndex {
             }
             folded.withLock { $0.append(contentsOf: out) }
         }
-        var builder = Builder()
-        builder.add(folded: folded.withLock { $0 })
-        return builder.build()
+        return folded.withLock { $0 }
     }
 }
 
