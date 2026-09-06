@@ -125,14 +125,32 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     }
 
     /// Shows `library` in the window: every snapshot it publishes reloads the list, and the
-    /// selected note is read from its store. Replaces any library attached before.
+    /// selected note is read from its store. A library attached before is let go of first, as
+    /// `detachLibrary()` does.
     public func attach(_ library: LibraryController) {
-        self.library?.onSnapshotChange = nil
-        self.library?.onExternalChanges = nil
+        if self.library != nil { detachLibrary() }
         self.library = library
         library.onSnapshotChange = { [weak self] snapshot in self?.libraryDidPublish(snapshot) }
         library.onExternalChanges = { [weak self] changes in self?.libraryDidChangeExternally(changes) }
         libraryDidPublish(library.snapshot)
+    }
+
+    /// Lets go of the attached library (L-1: the library folder is changing). Unsaved edits to
+    /// the note shown are written to it first (E-4 treats leaving a note as a save), then the
+    /// editor is emptied, an inline rename in progress is dropped, and the list is emptied,
+    /// so no row of the old library can be selected into the editor. The query in the search
+    /// field is kept; the next library is shown through it. Does nothing when no library is
+    /// attached.
+    public func detachLibrary() {
+        guard let library else { return }
+        library.onSnapshotChange = nil
+        library.onExternalChanges = nil
+        self.library = nil
+        pendingRenames = [:]
+        hideInlineMessage()
+        listController.cancelEditingTitle()
+        editorController.clear()
+        listController.show(SearchIndex.empty.query(query))
     }
 
     // MARK: - Search (S-1, S-5)

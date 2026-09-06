@@ -33,6 +33,10 @@ public final class MainView: NSView, NSSplitViewDelegate {
     /// controller.
     public var onRenameNote: (@MainActor () -> Bool)?
 
+    /// Cmd-, (PR-1). Shows the Preferences window. Installed by the app delegate; the key is
+    /// left alone while nothing is installed.
+    public var onShowPreferences: (@MainActor () -> Void)?
+
     private let stack: NSStackView
     private let defaults: UserDefaults
     private var isRestoringSplit = false
@@ -130,10 +134,11 @@ public final class MainView: NSView, NSSplitViewDelegate {
     }
 
     /// Cmd-L focuses the search field wherever focus is (S-7), Cmd-Delete deletes the selected
-    /// note wherever focus is (D-1), and Cmd-R edits its title in the list (R-1). The window
-    /// tries the content view's key equivalents before the menu and before the first
-    /// responder's `keyDown`, so all three hold whichever view has focus; Cmd-Delete and Cmd-R
-    /// with no row selected are left to the focused view.
+    /// note wherever focus is (D-1), Cmd-R edits its title in the list (R-1), and Cmd-, shows
+    /// the Preferences window (PR-1). The window tries the content view's key equivalents
+    /// before the menu and before the first responder's `keyDown`, so all of them hold
+    /// whichever view has focus; Cmd-Delete and Cmd-R with no row selected are left to the
+    /// focused view.
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if Self.isCommand(event, key: "l") {
             focusSearchField()
@@ -143,6 +148,10 @@ public final class MainView: NSView, NSSplitViewDelegate {
             return true
         }
         if Self.isCommand(event, key: "r"), let onRenameNote, onRenameNote() {
+            return true
+        }
+        if Self.isCommand(event, key: ","), let onShowPreferences {
+            onShowPreferences()
             return true
         }
         return super.performKeyEquivalent(with: event)
