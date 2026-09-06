@@ -44,7 +44,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       synthetic library: list count reaches N.
 - [x] M2.3 List data source and row view (S-6). Selection loads the editor (S-8). Smoke test:
       select row, editor text equals file body.
-- [ ] M2.4 Search field wiring: every keystroke re-queries and reloads the table (S-1, S-5).
+- [x] M2.4 Search field wiring: every keystroke re-queries and reloads the table (S-1, S-5).
       `ListPerfTests`: PF-2 keystroke-to-reload measured around the real controller path with
       20k notes.
 - [ ] M2.5 Keyboard flow S-7 and S-8. Smoke test drives `keyDown` / responder chain and asserts
