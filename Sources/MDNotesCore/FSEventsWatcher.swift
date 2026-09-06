@@ -205,7 +205,9 @@ public final class FSEventsWatcher: Sendable {
         }
         for relative in files {
             guard let id = LibraryScanner.noteID(forRelativePath: relative) else { continue }
-            if FileManager.default.fileExists(atPath: rootPath + "/" + relative) {
+            // Exact about case (L-4): after a rename of `Alpha.md` to `alpha.md` the old path
+            // still "exists" on a case-insensitive volume, but the old note is gone.
+            if NoteStore.fileExistsExactly(at: URL(fileURLWithPath: rootPath + "/" + relative, isDirectory: false)) {
                 if known.contains(id) { changes.modified.insert(id) } else { changes.added.insert(id) }
             } else {
                 changes.removed.insert(id)

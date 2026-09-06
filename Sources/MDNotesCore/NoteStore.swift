@@ -57,12 +57,45 @@ public struct NoteStore: Sendable {
 
     /// The modification date of the file backing `id`, read the same way the scanner reads it.
     /// Throws if the file does not exist. An evicted placeholder still has a date (L-7).
+    ///
+    /// Exact about case: a note's identity is its path as the scanner lists it (L-4), so on a
+    /// case-insensitive volume a file whose name differs from `id`'s only in case is a different
+    /// note, and `id` does not exist. Without this a note renamed `Alpha` to `alpha` would keep
+    /// answering for its old id (R-2, X-1).
     public func modificationDate(of id: NoteID) throws -> Date {
         let url = self.url(for: id)
         // Same autorelease consideration as `isDownloaded` (PF-5).
         return try autoreleasepool {
+            let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .nameKey])
+            guard NoteStore.nameMatches(values.name, url: url) else {
+                throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: url.path])
+            }
+            return values.contentModificationDate ?? .distantPast
+        }
+    }
+
+    /// The modification date of whatever file `url` reaches, case variants included. For the
+    /// one caller that must never write over a file it can reach (`create`).
+    static func modificationDate(at url: URL) throws -> Date {
+        try autoreleasepool {
             try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? .distantPast
         }
+    }
+
+    /// True if a file exists at exactly `url`, its name matching in case (L-4), not merely a
+    /// case variant of it on a case-insensitive volume.
+    public static func fileExistsExactly(at url: URL) -> Bool {
+        autoreleasepool {
+            guard let values = try? url.resourceValues(forKeys: [.nameKey]) else { return false }
+            return nameMatches(values.name, url: url)
+        }
+    }
+
+    /// Whether the name the file system reports for `url` is the one `url` spells, allowing
+    /// only Unicode normalisation to differ. A nil name (the volume did not say) is trusted.
+    private static func nameMatches(_ reported: String?, url: URL) -> Bool {
+        guard let reported else { return true }
+        return reported == url.lastPathComponent
     }
 
     /// Reads the body of `id`. Throws if the file cannot be read at all (missing, permissions);

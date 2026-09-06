@@ -17,8 +17,9 @@ import Synchronization
 /// is first stripped of the echoes of this controller's own writes (E-6): an added or modified
 /// note whose file carries exactly the modification date `save` or `create` recorded in
 /// `ownWrites` was written by us and is not reread, and a removed note that `delete` moved to
-/// the Trash is not reported. What remains is external, is folded into the snapshot like
-/// `apply(_:)` does, and is then reported through `onExternalChanges`.
+/// the Trash, or that `rename` gave another name, is not reported. What remains is external,
+/// is folded into the snapshot like `apply(_:)` does, and is then reported through
+/// `onExternalChanges`.
 @MainActor
 public final class LibraryController {
     /// Where the controller is in populating the index.
@@ -311,6 +312,56 @@ public final class LibraryController {
                         guard generation == self.generation else { return }
                         completion(outcome)
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - Rename (R-2, D-2)
+
+    /// Renames the file backing `id` to `newID`'s path on the background queue (PF-6), never
+    /// over another file (R-2). Once it has landed the note moves to its new id in the snapshot
+    /// without waiting for the watcher (D-2): the old id is dropped and the new one indexed
+    /// from the file, and the result is published before `completion` runs on the main thread
+    /// with the file's modification date, which a rename leaves unchanged. The rename is
+    /// recorded in `ownWrites` as a removal of the old id and a write of the new one, so the
+    /// watcher's report of it is recognised as ours (E-6). A failure leaves the snapshot alone
+    /// and hands `completion` the error; a collision is `CocoaError.fileWriteFileExists`. If the
+    /// library is stopped or restarted before the rename lands, `completion` is never called.
+    public func rename(
+        _ id: NoteID, to newID: NoteID, completion: @escaping @MainActor (Result<Date, any Error>) -> Void
+    ) {
+        let generation = generation
+        let store = store
+        queue.async { [self] in
+            guard worker.isCurrent(generation) else { return }
+            let outcome: Result<Date, any Error>
+            do {
+                let modifiedAt = try writes.sync {
+                    let modifiedAt = try store.rename(id, to: newID)
+                    if id != newID {
+                        ownWrites.recordRemoval(id)
+                        ownWrites.record(newID, modifiedAt: modifiedAt)
+                    }
+                    return modifiedAt
+                }
+                if id != newID {
+                    let changes = LibraryChanges(added: [newID], removed: [id])
+                    let (index, phase, _) = worker.update { state in
+                        state.touchedSinceScan.insert(id)
+                        state.touchedSinceScan.insert(newID)
+                        state.index = state.index.applying(changes: changes, store: store)
+                    }
+                    publish(index, phase: phase, generation: generation)
+                }
+                outcome = .success(modifiedAt)
+            } catch {
+                outcome = .failure(error)
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard generation == self.generation else { return }
+                    completion(outcome)
                 }
             }
         }

@@ -29,6 +29,16 @@ import MDNotesCore
 /// selected note goes to the Trash through the library with no confirmation. The snapshot the
 /// library publishes when the move has landed no longer lists the note (D-2), so the same path
 /// as an external deletion (X-4) clears the editor and moves the selection to the next row.
+///
+/// Rename (R-1, R-2) is Cmd-R, a key equivalent of `MainView`, or a double-click on a title:
+/// the list edits the title in place and hands the committed text to `commitTitle(of:to:)`,
+/// which rejects an unusable title inline, under the search field like C-3, or renames the
+/// file through the library. The rename is remembered in `pendingRenames` until the snapshot
+/// listing the note under its new id arrives (D-2), so that publish is recognised as the note
+/// moving rather than vanishing: the editor and the list selection follow it to the new id and
+/// nothing is reloaded. A renamed title the current query no longer matches leaves the list, as
+/// it would if the query had been typed after the rename. Links to the note are not rewritten
+/// yet (R-3).
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -55,6 +65,14 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// Called on the main thread once a deletion begun by `deleteSelectedNote()` has settled:
     /// with the note and where it went in the Trash, or the error that kept it in place.
     public var onDeleteNote: (@MainActor (NoteID, Result<URL, any Error>) -> Void)?
+
+    /// Called on the main thread once a rename accepted by `commitTitle(of:to:)` has settled:
+    /// with the old and new ids and the file's modification date, or the error that kept the
+    /// old name. Not called for a title rejected inline.
+    public var onRenameNote: (@MainActor (NoteID, NoteID, Result<Date, any Error>) -> Void)?
+
+    /// Renames begun and not yet seen in a snapshot, old id to new (R-2, D-2).
+    private var pendingRenames: [NoteID: NoteID] = [:]
 
     /// `autosaveClock` times the editor's autosave delay (E-4); tests pass one they advance
     /// by hand.
@@ -92,6 +110,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         editorController.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         // D-1: Cmd-Delete from anywhere in the window.
         view.onDeleteNote = { [weak self] in self?.deleteSelectedNote() ?? false }
+        // R-1, R-2: Cmd-R from anywhere in the window; the list's edited title comes back here.
+        view.onRenameNote = { [weak self] in self?.renameSelectedNote() ?? false }
+        listController.onCommitTitle = { [weak self] id, text in self?.commitTitle(of: id, to: text) ?? false }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
         // the name must be set after the content view exists so a restored frame lays it out.
         shouldCascadeWindows = false
@@ -260,6 +281,61 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         return true
     }
 
+    // MARK: - Rename (R-1, R-2)
+
+    /// Cmd-R, and the menu item. Edits the selected row's title inline in the list (R-1).
+    /// Returns false, doing nothing, when no row is selected.
+    @discardableResult
+    public func renameSelectedNote() -> Bool {
+        guard listController.selectedEntry != nil else { return false }
+        return listController.beginEditingTitle(ofRow: mainView.tableView.selectedRow)
+    }
+
+    /// The list committed `text` as the new title of `id` (R-2). A title that cannot be a file
+    /// name, or that another note in the folder already has ignoring case, is rejected: the
+    /// reason is shown under the search field and false is returned, so the list keeps the
+    /// text up to be fixed. Otherwise true is returned and the rename begins: unsaved edits to
+    /// the note are written first under its old name (E-4 treats leaving a note as a save), then
+    /// the file is renamed within its folder off the main thread. The snapshot the library
+    /// publishes when it lands lists the note under its new id (D-2), and `libraryDidPublish`
+    /// moves the editor and the selection with it. A failure on disk leaves the note as it was
+    /// and shows the reason. `onRenameNote` reports the outcome. A title that trims to the
+    /// current one is accepted and renames nothing.
+    public func commitTitle(of id: NoteID, to text: String) -> Bool {
+        guard let library else { return false }
+        hideInlineMessage()
+        let newID: NoteID
+        do {
+            newID = try NoteRename.noteID(renaming: id, toTitle: text)
+        } catch {
+            showInlineMessage(error.message)
+            return false
+        }
+        if newID == id { return true }
+        if let other = NoteRename.collision(renaming: id, to: newID, in: library.snapshot) {
+            showInlineMessage(NoteRename.Rejection.collision(other).message)
+            return false
+        }
+        pendingRenames[id] = newID
+        let rename: @MainActor () -> Void = { [weak self] in
+            library.rename(id, to: newID) { [weak self] outcome in
+                guard let self else { return }
+                pendingRenames[id] = nil
+                if case .failure(let error) = outcome {
+                    FileHandle.standardError.write(Data("MDNotes: could not rename \(id) to \(newID): \(error)\n".utf8))
+                    showInlineMessage(error.localizedDescription)
+                }
+                onRenameNote?(id, newID, outcome)
+            }
+        }
+        if editorController.noteID == id {
+            editorController.flush(completion: rename)
+        } else {
+            rename()
+        }
+        return true
+    }
+
     // MARK: - Autosave on focus loss (E-4)
 
     /// The window stopped being key: another window or app took over. Unsaved edits are
@@ -311,6 +387,13 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     }
 
     private func libraryDidPublish(_ snapshot: SearchIndex) {
+        // R-2, D-2: a rename of ours has landed. The note is the same; only its id changed.
+        for (oldID, newID) in pendingRenames
+        where snapshot.entry(for: oldID) == nil && snapshot.entry(for: newID) != nil {
+            pendingRenames[oldID] = nil
+            if editorController.noteID == oldID { editorController.noteWasRenamed(to: newID) }
+            listController.noteWasRenamed(from: oldID, to: newID)
+        }
         if let id = editorController.noteID, snapshot.entry(for: id) == nil {
             openNoteWasDeleted(id, snapshot: snapshot)
             return

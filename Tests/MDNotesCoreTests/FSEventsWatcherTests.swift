@@ -174,6 +174,19 @@ final class FSEventsWatcherTests: XCTestCase {
         XCTAssertEqual(recorder.union.modified, [])
     }
 
+    func testX1_caseOnlyRenameIsRemovalPlusAddition() throws {
+        try write("Before.md")
+        try startWatching()
+        // On a case-insensitive volume the old path still reaches the file; the old id is gone
+        // all the same (L-4, R-2).
+        XCTAssertEqual(rename(url("Before.md").path, url("before.md").path), 0)
+        waitFor("rename Before.md -> before.md") {
+            $0.removed.contains(self.id("Before.md")) && $0.added.contains(self.id("before.md"))
+        }
+        XCTAssertEqual(recorder.union.modified, [])
+        XCTAssertFalse(try XCTUnwrap(watcher).knownNotes.contains(id("Before.md")))
+    }
+
     func testX1_renameIntoAndOutOfNestedFolders() throws {
         try write("top.md")
         try write("daily/2026/deep.md")

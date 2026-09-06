@@ -28,6 +28,11 @@ public final class MainView: NSView, NSSplitViewDelegate {
     /// lets the key go on to whatever has focus. Installed by the window controller.
     public var onDeleteNote: (@MainActor () -> Bool)?
 
+    /// Cmd-R (R-1). Returns true if a note was selected and its title is now being edited in
+    /// the list; false lets the key go on to whatever has focus. Installed by the window
+    /// controller.
+    public var onRenameNote: (@MainActor () -> Bool)?
+
     private let stack: NSStackView
     private let defaults: UserDefaults
     private var isRestoringSplit = false
@@ -124,16 +129,20 @@ public final class MainView: NSView, NSSplitViewDelegate {
         }
     }
 
-    /// Cmd-L focuses the search field wherever focus is (S-7), and Cmd-Delete deletes the
-    /// selected note wherever focus is (D-1). The window tries the content view's key
-    /// equivalents before the menu and before the first responder's `keyDown`, so both hold
-    /// whichever view has focus; Cmd-Delete with no row selected is left to the focused view.
+    /// Cmd-L focuses the search field wherever focus is (S-7), Cmd-Delete deletes the selected
+    /// note wherever focus is (D-1), and Cmd-R edits its title in the list (R-1). The window
+    /// tries the content view's key equivalents before the menu and before the first
+    /// responder's `keyDown`, so all three hold whichever view has focus; Cmd-Delete and Cmd-R
+    /// with no row selected are left to the focused view.
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if Self.isCommand(event, key: "l") {
             focusSearchField()
             return true
         }
         if Self.isCommand(event, key: Self.deleteKey), let onDeleteNote, onDeleteNote() {
+            return true
+        }
+        if Self.isCommand(event, key: "r"), let onRenameNote, onRenameNote() {
             return true
         }
         return super.performKeyEquivalent(with: event)

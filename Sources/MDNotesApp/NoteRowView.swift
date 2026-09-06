@@ -53,6 +53,43 @@ public final class NoteRowView: NSTableCellView {
         needsLayout = true
     }
 
+    // MARK: - Inline title editing (R-1)
+
+    /// True while the title label is editable: between `beginEditingTitle` and `endEditingTitle`.
+    public private(set) var isEditingTitle = false
+
+    /// Makes the title label an editable field, with `delegate` hearing its field editor, and
+    /// gives it focus with the whole title selected. Returns false, changing nothing, if the row
+    /// is not in a window, since then nothing can be focused.
+    @discardableResult
+    public func beginEditingTitle(delegate: any NSTextFieldDelegate) -> Bool {
+        guard let window else { return false }
+        titleLabel.isEditable = true
+        titleLabel.drawsBackground = true
+        titleLabel.backgroundColor = .textBackgroundColor
+        titleLabel.textColor = .labelColor
+        titleLabel.delegate = delegate
+        isEditingTitle = true
+        guard window.makeFirstResponder(titleLabel) else {
+            endEditingTitle()
+            return false
+        }
+        titleLabel.currentEditor()?.selectAll(nil)
+        return true
+    }
+
+    /// Returns the title label to a plain label showing `title` if given, or leaves its text.
+    /// Focus is left where it is; the caller moves it.
+    public func endEditingTitle(showing title: String? = nil) {
+        if let title { titleLabel.stringValue = title }
+        titleLabel.delegate = nil
+        titleLabel.isEditable = false
+        titleLabel.isSelectable = false
+        titleLabel.drawsBackground = false
+        isEditingTitle = false
+        applyColors()
+    }
+
     public override func layout() {
         super.layout()
         let width = bounds.width

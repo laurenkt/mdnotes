@@ -81,12 +81,13 @@ extension NoteStore {
     }
 
     /// Creates the empty file backing `id`, making any missing folders on the way (C-2). The
-    /// write is atomic (E-5). An existing file is never overwritten: it is left as it is and
-    /// `created` is false. Synchronous file I/O: call it off the main thread (PF-6).
+    /// write is atomic (E-5). An existing file is never overwritten, a case variant of the name
+    /// on a case-insensitive volume included: it is left as it is and `created` is false.
+    /// Synchronous file I/O: call it off the main thread (PF-6).
     public func create(_ id: NoteID) throws -> Creation {
         let url = self.url(for: id)
         if FileManager.default.fileExists(atPath: url.path) {
-            return Creation(modifiedAt: try modificationDate(of: id), created: false)
+            return Creation(modifiedAt: try NoteStore.modificationDate(at: url), created: false)
         }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let modifiedAt = try AtomicWriter().write("", to: url)

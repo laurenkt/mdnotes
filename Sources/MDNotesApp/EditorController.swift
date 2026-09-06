@@ -245,6 +245,17 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         }
     }
 
+    /// R-2: the shown note's file has been renamed by us, so the same text now lives at `newID`.
+    /// The editor follows: its note id, and the undo stack the note has built up (E-7), move to
+    /// the new id; the text, selection and any unsaved edits stay untouched, and nothing is
+    /// reread. Does nothing while no note is shown.
+    public func noteWasRenamed(to newID: NoteID) {
+        guard let oldID = noteID, oldID != newID else { return }
+        noteID = newID
+        if shownNoteID == oldID { shownNoteID = newID }
+        if let stack = undoStacks.removeValue(forKey: oldID) { undoStacks[newID] = stack }
+    }
+
     private func receive(_ body: NoteBody?, for id: NoteID, generation: Int, restoring selection: NSRange?) {
         guard generation == self.generation else { return }
         self.body = body
