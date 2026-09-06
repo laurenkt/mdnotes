@@ -39,7 +39,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M2.1 Layout: search field, `NSTableView` list, `NSTextView` editor in an `NSSplitView`,
       backlinks strip placeholder. Persisted frame and split (W-1, W-2). Smoke test: views exist
       and are laid out at a given size.
-- [ ] M2.2 `LibraryController`: owns the scanner, store, and index; publishes snapshots to the
+- [x] M2.2 `LibraryController`: owns the scanner, store, and index; publishes snapshots to the
       main thread (PF-6). Progressive population during initial scan (PF-7). Smoke test with
       synthetic library: list count reaches N.
 - [ ] M2.3 List data source and row view (S-6). Selection loads the editor (S-8). Smoke test:

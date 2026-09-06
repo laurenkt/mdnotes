@@ -11,6 +11,16 @@ extension SearchIndex {
         return builder.build()
     }
 
+    /// A new snapshot with the bodies of `notes` read from `store` and folded in, replacing any
+    /// entry with the same id; modification dates are taken from `notes` as scanned. This is
+    /// how a titles-only launch snapshot fills in progressively (PF-7). A body that cannot be
+    /// read is indexed by title only (L-7, L-8). Synchronous file I/O: call it off the main
+    /// thread (PF-6). This snapshot is unchanged.
+    public func applying(reading notes: [ScannedNote], store: NoteStore) -> SearchIndex {
+        if notes.isEmpty { return self }
+        return applying(upserts: SearchIndex.fold(notes: notes, store: store), removing: [])
+    }
+
     /// Reads and folds the bodies of `notes` on all cores. Order of the result is unspecified.
     /// A body that cannot be read folds to empty (L-7, L-8). Synchronous file I/O (PF-6).
     static func fold(notes: [ScannedNote], store: NoteStore) -> [(id: NoteID, note: FoldedNote)] {
