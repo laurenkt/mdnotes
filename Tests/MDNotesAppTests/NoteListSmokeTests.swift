@@ -65,7 +65,8 @@ final class NoteListSmokeTests: XCTestCase {
         let controller = makeMainWindowController()
         controller.window?.setContentSize(NSSize(width: 800, height: 600))
         controller.mainView.layoutSubtreeIfNeeded()
-        let library = LibraryController(root: root)
+        // No watcher: these tests feed changes through apply(_:) themselves.
+        let library = LibraryController(root: root, watchesFileSystem: false)
         controller.attach(library)
         library.start()
         await waitUntil("library ready") { library.phase == .ready }

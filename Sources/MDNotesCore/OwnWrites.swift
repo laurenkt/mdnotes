@@ -8,6 +8,10 @@ import Synchronization
 /// file (E-5). A watcher event for that id whose file still carries that date is the echo of
 /// our own write. A later write to the same note replaces the record, so the ledger never
 /// grows past the number of notes written this session. Safe from any thread.
+///
+/// The record is kept after its event has been matched: FSEvents may deliver the echo of one
+/// write in more than one callback, and every one of them must be recognised. It goes away
+/// when the next write to the same note replaces it.
 public final class OwnWrites: Sendable {
     private let dates = Mutex<[NoteID: Date]>([:])
 
@@ -37,5 +41,31 @@ public final class OwnWrites: Sendable {
     /// How many notes have a recorded write.
     public var count: Int {
         dates.withLock { $0.count }
+    }
+
+    // MARK: - Suppression (E-6)
+
+    /// `changes` with the echoes of this process's own writes taken out: an added or modified
+    /// id whose file now carries exactly the modification date recorded for it was last
+    /// written by us, and is dropped. An id with no record, a different date on disk, or no
+    /// file at all is someone else's change and stays. Removals are never ours here and always
+    /// stay. `modificationDate` reads the file, so call this off the main thread (PF-6).
+    public func suppressing(
+        _ changes: LibraryChanges, modificationDate: (NoteID) throws -> Date
+    ) -> LibraryChanges {
+        if changes.isEmpty || count == 0 { return changes }
+        var external = changes
+        for id in changes.added.union(changes.modified) {
+            guard let recorded = lastWrite(of: id), let onDisk = try? modificationDate(id), onDisk == recorded
+            else { continue }
+            external.added.remove(id)
+            external.modified.remove(id)
+        }
+        return external
+    }
+
+    /// `suppressing(_:modificationDate:)` reading dates from `store`.
+    public func suppressing(_ changes: LibraryChanges, store: NoteStore) -> LibraryChanges {
+        suppressing(changes) { try store.modificationDate(of: $0) }
     }
 }

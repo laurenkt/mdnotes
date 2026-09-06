@@ -402,6 +402,86 @@ final class AutosaveSmokeTests: XCTestCase {
         XCTAssertEqual(writes.count, 1)
     }
 
+    // MARK: - E-6 the watcher drops the echo of our writes
+
+    /// Counts the snapshots the library publishes, and collects the external changes it reports,
+    /// while still forwarding each snapshot to the window.
+    @MainActor
+    private final class Reloads {
+        private(set) var publishes = 0
+        private(set) var external: [LibraryChanges] = []
+
+        init(_ library: LibraryController) {
+            let forward = library.onSnapshotChange
+            library.onSnapshotChange = { [weak self] snapshot in
+                self?.publishes += 1
+                forward?(snapshot)
+            }
+            library.onExternalChanges = { [weak self] changes in self?.external.append(changes) }
+        }
+    }
+
+    /// Long enough for the watcher (0.1 s latency) to have delivered anything it was going to.
+    private let watcherSettle: Duration = .seconds(1)
+
+    func testE6_autosaveDoesNotTriggerAReload() async throws {
+        let fixture = try await makeFixture()
+        XCTAssertTrue(fixture.library.isWatching, "the library watches its root once scanned (X-1)")
+        try await select(alpha, in: fixture)
+        let reloads = Reloads(fixture.library)
+
+        type(" edited", in: fixture)
+        _ = try await saveAfter(fixture) { fixture.clock.advance(by: 0.3) }
+        await waitUntil("the save's own fold is published") { reloads.publishes >= 1 }
+        try await Task.sleep(for: watcherSettle)
+
+        XCTAssertEqual(reloads.publishes, 1, "the save folds its text once; the watcher's echo adds nothing")
+        XCTAssertEqual(reloads.external, [], "our own write is not an external change")
+        XCTAssertEqual(fixture.library.snapshot.query("edited").map(\.id), [alpha])
+        XCTAssertEqual(fixture.editor.body, .text("alpha body edited"))
+        XCTAssertEqual(fixture.textView.string, "alpha body edited")
+
+        // The watcher is alive: a write by someone else, with its own date, does reload.
+        try Data("alpha body rewritten elsewhere".utf8).write(to: root.appendingPathComponent(alpha.relativePath))
+        await waitUntil("external change reported", timeout: 10) { !reloads.external.isEmpty }
+        XCTAssertEqual(reloads.external, [LibraryChanges(modified: [alpha])])
+        XCTAssertEqual(reloads.publishes, 2, "the snapshot is published before the change is reported")
+        XCTAssertEqual(fixture.library.snapshot.query("elsewhere").map(\.id), [alpha])
+        XCTAssertEqual(fixture.library.snapshot.entry(for: alpha)?.modifiedAt, try modificationDate(alpha))
+    }
+
+    func testE6_twoAutosavesInARowTriggerNoReload() async throws {
+        let fixture = try await makeFixture()
+        try await select(alpha, in: fixture)
+        let reloads = Reloads(fixture.library)
+
+        type(" one", in: fixture)
+        _ = try await saveAfter(fixture) { fixture.clock.advance(by: 0.3) }
+        type(" two", in: fixture)
+        _ = try await saveAfter(fixture) { fixture.clock.advance(by: 0.3) }
+        await waitUntil("both folds published") { reloads.publishes >= 2 }
+        try await Task.sleep(for: watcherSettle)
+
+        XCTAssertEqual(reloads.publishes, 2)
+        XCTAssertEqual(reloads.external, [])
+        XCTAssertEqual(try fileText(alpha), "alpha body one two")
+    }
+
+    func testE6_creatingANoteDoesNotTriggerAReload() async throws {
+        let fixture = try await makeFixture()
+        let reloads = Reloads(fixture.library)
+        let fresh = NoteID(relativePath: "Fresh.md")
+        let created = expectation(description: "created")
+        fixture.library.create(fresh) { _ in created.fulfill() }
+        await fulfillment(of: [created], timeout: 10)
+        XCTAssertEqual(reloads.publishes, 1, "create publishes the note once, before its completion")
+        try await Task.sleep(for: watcherSettle)
+
+        XCTAssertEqual(reloads.publishes, 1, "the watcher's echo of the create adds nothing")
+        XCTAssertEqual(reloads.external, [])
+        XCTAssertEqual(fixture.library.snapshot.count, 4)
+    }
+
     func testE6_creatingANoteRecordsItsWrite() async throws {
         let fixture = try await makeFixture()
         let fresh = NoteID(relativePath: "Fresh.md")

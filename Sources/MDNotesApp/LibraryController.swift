@@ -11,6 +11,12 @@ import Synchronization
 /// note is published at once, so the list is complete and title-searchable before any body has
 /// been read. Bodies are then read in batches, most recently modified first, and each batch
 /// publishes a fuller snapshot until `phase` is `.ready`.
+///
+/// Once the root has been walked an `FSEventsWatcher` covers it (X-1). Every batch it reports
+/// is first stripped of the echoes of this controller's own writes (E-6): an added or modified
+/// note whose file carries exactly the modification date `save` or `create` recorded in
+/// `ownWrites` was written by us and is not reread. What remains is external, is folded into
+/// the snapshot like `apply(_:)` does, and is then reported through `onExternalChanges`.
 @MainActor
 public final class LibraryController {
     /// Where the controller is in populating the index.
@@ -51,16 +57,34 @@ public final class LibraryController {
     /// Called on the main thread after `snapshot` and `phase` have been replaced.
     public var onSnapshotChange: (@MainActor (SearchIndex) -> Void)?
 
+    /// Called on the main thread with each batch of file-system changes that were not this
+    /// process's own writes (E-6, X-1), after the snapshot reflecting them has been published.
+    /// Never called for an autosave or a `create` of ours.
+    public var onExternalChanges: (@MainActor (LibraryChanges) -> Void)?
+
     private let batchSize: Int
+    private let watchesFileSystem: Bool
     private let queue = DispatchQueue(label: "MDNotes.LibraryController", qos: .userInitiated)
+    /// Serialises this controller's writes with the watcher's check of them, so an event can
+    /// never be judged before the write that caused it is on record in `ownWrites` (E-6).
+    private let writes = DispatchQueue(label: "MDNotes.LibraryController.writes", qos: .userInitiated)
     private let worker: Worker
+    /// The watcher for the current `start()`, set on the background queue once the scan is done.
+    private let watcher = Mutex<FSEventsWatcher?>(nil)
     /// Bumped by `start()` and `stop()`; results tagged with an older generation are dropped.
     private var generation = 0
 
-    public init(root: URL, batchSize: Int = LibraryController.defaultBatchSize) {
+    /// - Parameters:
+    ///   - root: the library root (L-1).
+    ///   - batchSize: bodies read per batch during the initial population (PF-7).
+    ///   - watchesFileSystem: whether `start()` also watches the root for changes (X-1). Tests
+    ///     that feed changes through `apply(_:)` by hand turn it off so the real watcher does not
+    ///     report the same changes a second time.
+    public init(root: URL, batchSize: Int = LibraryController.defaultBatchSize, watchesFileSystem: Bool = true) {
         precondition(batchSize > 0)
         self.root = root
         self.batchSize = batchSize
+        self.watchesFileSystem = watchesFileSystem
         store = NoteStore(root: root)
         worker = Worker()
     }
@@ -75,6 +99,7 @@ public final class LibraryController {
         snapshot = .empty
         phase = .scanning
         worker.reset(generation: generation)
+        stopWatching()
 
         let root = root
         queue.async { [self] in
@@ -85,6 +110,11 @@ public final class LibraryController {
             } catch {
                 publish(.empty, phase: .failed(error.localizedDescription), generation: generation)
                 return
+            }
+            // The stream is live before the titles are published, so a change made while the
+            // bodies are still being read is not lost (X-1).
+            if watchesFileSystem {
+                startWatching(knownNotes: Set(titlesOnly.entries.map(\.id)), generation: generation)
             }
             // Bodies are read in list order, most recently modified first, so the rows at the
             // top of the list, the ones on screen at launch, get their snippets first (S-3, PF-7).
@@ -102,14 +132,22 @@ public final class LibraryController {
         worker.reset(generation: generation)
         snapshot = .empty
         phase = .idle
+        stopWatching()
     }
 
     /// Folds file-system changes into the index (X-1), reading only the notes named, and
     /// publishes the result. Safe to call while the initial population is still running: a
     /// batch never overwrites a note that a change has touched since the scan.
     public func apply(_ changes: LibraryChanges) {
+        fold(changes, generation: generation)
+    }
+
+    /// `apply(_:)` for any thread, with the generation the changes belong to. Returns without
+    /// queueing anything when there is nothing to fold or the generation is stale.
+    nonisolated private func fold(
+        _ changes: LibraryChanges, generation: Int, then completion: (@Sendable () -> Void)? = nil
+    ) {
         if changes.isEmpty { return }
-        let generation = generation
         let store = store
         queue.async { [self] in
             guard worker.isCurrent(generation) else { return }
@@ -120,6 +158,70 @@ public final class LibraryController {
                 state.index = state.index.applying(changes: changes, store: store)
             }
             publish(index, phase: phase, generation: generation)
+            completion?()
+        }
+    }
+
+    // MARK: - Watching (X-1, E-6)
+
+    /// True while a watcher started by `start()` is running. Exposed for tests.
+    public var isWatching: Bool {
+        watcher.withLock { $0?.isRunning ?? false }
+    }
+
+    /// Starts a watcher over the root on the background queue. A watcher that cannot be started
+    /// is reported on stderr and the library goes on without one: everything else still works,
+    /// only external changes go unnoticed until the next `start()`.
+    nonisolated private func startWatching(knownNotes: Set<NoteID>, generation: Int) {
+        // Weak: the watcher lives as long as the controller, so a strong capture here would be
+        // a cycle that kept both alive after the last outside reference was dropped. The strong
+        // reference taken for the call is handed to the main queue afterwards, so if it turns
+        // out to be the last one the controller, and the watcher it owns, are released there
+        // and not inside the watcher's own callback, where stopping it would deadlock.
+        let watcher = FSEventsWatcher(root: root, knownNotes: knownNotes) { [weak self] changes in
+            guard let self else { return }
+            watcherDidReport(changes, generation: generation)
+            DispatchQueue.main.async { withExtendedLifetime(self) {} }
+        }
+        do {
+            try watcher.start()
+        } catch {
+            FileHandle.standardError.write(Data("MDNotes: not watching \(root.path): \(error)\n".utf8))
+            return
+        }
+        let superseded = self.watcher.withLock { current -> FSEventsWatcher? in
+            defer { current = watcher }
+            return current
+        }
+        superseded?.stop()
+    }
+
+    /// Stops the current watcher, off the main thread: stopping waits for a callback in flight,
+    /// which may be reading the disk.
+    private func stopWatching() {
+        guard
+            let watcher = watcher.withLock({ current -> FSEventsWatcher? in
+                defer { current = nil }
+                return current
+            })
+        else { return }
+        queue.async { watcher.stop() }
+    }
+
+    /// The watcher's handler, on its queue. Drops the echoes of our own writes (E-6), folds
+    /// the rest into the snapshot (X-1) and, once that snapshot has been published, hands the
+    /// external changes to `onExternalChanges` on the main thread.
+    nonisolated private func watcherDidReport(_ changes: LibraryChanges, generation: Int) {
+        guard worker.isCurrent(generation) else { return }
+        let external = writes.sync { ownWrites.suppressing(changes, store: store) }
+        if external.isEmpty { return }
+        fold(external, generation: generation) {
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard generation == self.generation else { return }
+                    self.onExternalChanges?(external)
+                }
+            }
         }
     }
 
@@ -138,8 +240,11 @@ public final class LibraryController {
             guard worker.isCurrent(generation) else { return }
             let outcome: Result<NoteStore.Creation, any Error>
             do {
-                let creation = try store.create(id)
-                if creation.created { ownWrites.record(id, modifiedAt: creation.modifiedAt) }
+                let creation = try writes.sync {
+                    let creation = try store.create(id)
+                    if creation.created { ownWrites.record(id, modifiedAt: creation.modifiedAt) }
+                    return creation
+                }
                 let changes = LibraryChanges(added: [id])
                 let (index, phase, _) = worker.update { state in
                     state.touchedSinceScan.insert(id)
@@ -177,8 +282,11 @@ public final class LibraryController {
     /// leaves its empty snapshot alone.
     nonisolated public func save(_ text: String, to id: NoteID) throws -> Date {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        let modifiedAt = try AtomicWriter().write(text, to: store.url(for: id))
-        ownWrites.record(id, modifiedAt: modifiedAt)
+        let modifiedAt = try writes.sync {
+            let modifiedAt = try AtomicWriter().write(text, to: store.url(for: id))
+            ownWrites.record(id, modifiedAt: modifiedAt)
+            return modifiedAt
+        }
         queue.async { [self] in
             let (index, phase, generation) = worker.update { state in
                 guard state.phase != .idle else { return }

@@ -6,6 +6,11 @@ import XCTest
 
 /// Headless smoke tests for `LibraryController`: it populates the list progressively from a
 /// synthetic library (PF-7) and publishes every snapshot on the main thread (PF-6).
+///
+/// Every controller here is built without a file-system watcher: these tests count publishes
+/// and play the watcher's part through `apply(_:)`, and FSEvents may replay the fixture writes
+/// made just before `start()` as a first event, which would add a publish of its own. The
+/// watcher and its own-write filter are exercised in `AutosaveSmokeTests` (E-6).
 @MainActor
 final class LibraryControllerSmokeTests: XCTestCase {
     private var root: URL = FileManager.default.temporaryDirectory
@@ -69,7 +74,7 @@ final class LibraryControllerSmokeTests: XCTestCase {
     func testPF7_listCountReachesNWithSyntheticLibrary() async throws {
         let n = 1000
         let generated = try SyntheticLibrary.generate(at: root, options: .init(noteCount: n, largeNoteCount: 1))
-        let controller = LibraryController(root: root, batchSize: 128)
+        let controller = LibraryController(root: root, batchSize: 128, watchesFileSystem: false)
         let publishes = await run(controller)
 
         XCTAssertEqual(controller.phase, .ready)
@@ -101,7 +106,7 @@ final class LibraryControllerSmokeTests: XCTestCase {
                 [.modificationDate: base.addingTimeInterval(Double(i) * 60)],
                 ofItemAtPath: root.appendingPathComponent("note \(i).md").path)
         }
-        let controller = LibraryController(root: root, batchSize: 4)
+        let controller = LibraryController(root: root, batchSize: 4, watchesFileSystem: false)
         var needleHits: [Int] = []
         var newestHitAt: Int?
         var oldestHitAt: Int?
@@ -125,7 +130,7 @@ final class LibraryControllerSmokeTests: XCTestCase {
 
     func testPF6_everySnapshotIsPublishedOnTheMainThread() async throws {
         try SyntheticLibrary.generate(at: root, options: .init(noteCount: 50, largeNoteCount: 0))
-        let controller = LibraryController(root: root, batchSize: 10)
+        let controller = LibraryController(root: root, batchSize: 10, watchesFileSystem: false)
         let publishes = await run(controller)
         XCTAssertEqual(publishes.count, 6)
         XCTAssertTrue(publishes.allSatisfy(\.onMainThread))
@@ -134,7 +139,7 @@ final class LibraryControllerSmokeTests: XCTestCase {
 
     func testPF6_startReturnsBeforeTheScanHasPublished() throws {
         try SyntheticLibrary.generate(at: root, options: .init(noteCount: 50, largeNoteCount: 0))
-        let controller = LibraryController(root: root)
+        let controller = LibraryController(root: root, watchesFileSystem: false)
         controller.start()
         // Nothing reaches the main thread until it spins the run loop.
         XCTAssertEqual(controller.phase, .scanning)
@@ -146,14 +151,14 @@ final class LibraryControllerSmokeTests: XCTestCase {
 
     func testEmptyRootIsReadyWithNoNotes() async throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let controller = LibraryController(root: root)
+        let controller = LibraryController(root: root, watchesFileSystem: false)
         let publishes = await run(controller)
         XCTAssertEqual(publishes.map(\.count), [0])
         XCTAssertEqual(controller.phase, .ready)
     }
 
     func testMissingRootFails() async {
-        let controller = LibraryController(root: root)
+        let controller = LibraryController(root: root, watchesFileSystem: false)
         let publishes = await run(controller)
         XCTAssertEqual(publishes.count, 1)
         XCTAssertEqual(controller.snapshot.count, 0)
@@ -164,7 +169,7 @@ final class LibraryControllerSmokeTests: XCTestCase {
 
     func testStopDropsSnapshotsInFlight() async throws {
         try SyntheticLibrary.generate(at: root, options: .init(noteCount: 200, largeNoteCount: 0))
-        let controller = LibraryController(root: root, batchSize: 20)
+        let controller = LibraryController(root: root, batchSize: 20, watchesFileSystem: false)
         var published = 0
         controller.onSnapshotChange = { _ in published += 1 }
         controller.start()
@@ -186,7 +191,7 @@ final class LibraryControllerSmokeTests: XCTestCase {
 
     func testX1_appliedChangesPublishANewSnapshot() async throws {
         try SyntheticLibrary.generate(at: root, options: .init(noteCount: 30, largeNoteCount: 0))
-        let controller = LibraryController(root: root)
+        let controller = LibraryController(root: root, watchesFileSystem: false)
         _ = await run(controller)
         XCTAssertEqual(controller.snapshot.count, 30)
 
@@ -219,7 +224,7 @@ final class LibraryControllerSmokeTests: XCTestCase {
                 [.modificationDate: base.addingTimeInterval(Double(i) * 60)],
                 ofItemAtPath: root.appendingPathComponent("n\(i).md").path)
         }
-        let controller = LibraryController(root: root, batchSize: 10)
+        let controller = LibraryController(root: root, batchSize: 10, watchesFileSystem: false)
         let target = NoteID(relativePath: "n0.md")
         try write("n0.md", body: "rewritten quokka")
         try FileManager.default.setAttributes(
