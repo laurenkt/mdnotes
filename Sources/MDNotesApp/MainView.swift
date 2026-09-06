@@ -17,7 +17,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public let searchField: NSSearchField
     public let splitView: NSSplitView
     public let listScrollView: NSScrollView
-    public let tableView: NSTableView
+    public let tableView: NoteTableView
     public let editorScrollView: NSScrollView
     public let textView: NSTextView
     public let backlinksStrip: NSView
@@ -70,6 +70,33 @@ public final class MainView: NSView, NSSplitViewDelegate {
         restoreSplitPosition()
     }
 
+    // MARK: - Keyboard (S-7)
+
+    /// Moves focus to the search field and selects its text. Cmd-L reaches this from anywhere
+    /// in the window; the menu item and the global hotkey (W-3) route here too.
+    public func focusSearchField() {
+        guard let window else { return }
+        if window.makeFirstResponder(searchField) {
+            searchField.currentEditor()?.selectAll(nil)
+        }
+    }
+
+    /// Cmd-L focuses the search field wherever focus is (S-7). The window tries the content
+    /// view's key equivalents before the menu and before the first responder's `keyDown`, so
+    /// this holds whichever view has focus.
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if Self.isCommandL(event) {
+            focusSearchField()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private static func isCommandL(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return modifiers == .command && event.charactersIgnoringModifiers?.lowercased() == "l"
+    }
+
     // MARK: - Split persistence (W-1)
 
     /// The persisted list height, or nil if nothing has been saved yet or the value is unusable.
@@ -107,8 +134,8 @@ public final class MainView: NSView, NSSplitViewDelegate {
         return field
     }
 
-    private static func makeList() -> (NSScrollView, NSTableView) {
-        let table = NSTableView()
+    private static func makeList() -> (NSScrollView, NoteTableView) {
+        let table = NoteTableView()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("note"))
         column.title = "Note"
         column.resizingMask = .autoresizingMask

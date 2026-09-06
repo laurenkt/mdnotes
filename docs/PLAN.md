@@ -47,7 +47,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M2.4 Search field wiring: every keystroke re-queries and reloads the table (S-1, S-5).
       `ListPerfTests`: PF-2 keystroke-to-reload measured around the real controller path with
       20k notes.
-- [ ] M2.5 Keyboard flow S-7 and S-8. Smoke test drives `keyDown` / responder chain and asserts
+- [x] M2.5 Keyboard flow S-7 and S-8. Smoke test drives `keyDown` / responder chain and asserts
       first responder.
 - [ ] M2.6 Create on Enter: C-1 to C-4 including nested `/` paths and illegal characters. Smoke
       tests for each rule.

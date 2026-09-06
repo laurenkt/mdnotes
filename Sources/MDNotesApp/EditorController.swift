@@ -4,9 +4,15 @@ import MDNotesCore
 /// Loads notes into the editor's text view (S-8). The body is read on a background queue
 /// (PF-6) and applied on the main thread; a load that finishes after a newer one started is
 /// dropped. Loading never touches first responder, so selecting rows leaves focus in the list.
+///
+/// It is also the text view's delegate: Escape in the editor is handed to `onCancel` (S-7)
+/// instead of the text view's default, which offers completions.
 @MainActor
-public final class EditorController {
+public final class EditorController: NSObject, NSTextViewDelegate {
     public let textView: NSTextView
+
+    /// Called on Escape in the editor (S-7: clear the query and return to the search field).
+    public var onCancel: (@MainActor () -> Void)?
 
     /// The note the editor shows, or is about to show once its read completes.
     public private(set) var noteID: NoteID?
@@ -23,7 +29,19 @@ public final class EditorController {
 
     public init(textView: NSTextView) {
         self.textView = textView
+        super.init()
         textView.isEditable = false
+        textView.delegate = self
+    }
+
+    // MARK: - NSTextViewDelegate
+
+    public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)), let onCancel {
+            onCancel()
+            return true
+        }
+        return false
     }
 
     /// Reads `id` from `store` in the background and shows it. A body that must not be written

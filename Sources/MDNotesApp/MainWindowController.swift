@@ -8,6 +8,11 @@ import MDNotesCore
 /// snapshot on the main thread and reloads the list (S-5). Both routes a change can take, the
 /// field editor's text-change notification for keystrokes and the field's action for the
 /// cancel button, land in `searchQueryDidChange()`, which reloads once per distinct query.
+///
+/// The keyboard flow between the field, the list and the editor (S-7, S-8) is wired here too:
+/// the field's command selectors arrive through the delegate, the list's through
+/// `NoteTableView`'s closures, the editor's through `EditorController`, and Cmd-L is a key
+/// equivalent of `MainView`.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -46,6 +51,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.searchField.delegate = self
         view.searchField.target = self
         view.searchField.action = #selector(searchFieldDidSendAction(_:))
+        // S-7 and S-8 keyboard flow between the field, the list and the editor.
+        view.tableView.onMoveUpFromFirstRow = { [weak self] in self?.focusSearchField(nil) }
+        view.tableView.onActivateSelectedRow = { [weak self] in self?.focusEditor() }
+        view.tableView.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
+        editorController.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
         // the name must be set after the content view exists so a restored frame lays it out.
         shouldCascadeWindows = false
@@ -86,6 +96,56 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// The cancel button, and `sendsSearchStringImmediately` for good measure.
     @objc private func searchFieldDidSendAction(_ sender: Any?) {
         searchQueryDidChange()
+    }
+
+    // MARK: - Keyboard flow (S-7, S-8)
+
+    /// Command selectors the search field's editor receives. Down arrow selects the first row
+    /// and moves focus to the list; Escape clears the query and leaves focus in the field
+    /// (S-7). Anything else, Enter included, keeps the field's own behaviour.
+    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === mainView.searchField else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.moveDown(_:)):
+            selectFirstRowAndFocusList()
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            clearQueryAndFocusSearchField()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// S-7: Cmd-L, the menu item and the hotkey. Focuses the search field, selecting its text.
+    @objc public func focusSearchField(_ sender: Any?) {
+        mainView.focusSearchField()
+    }
+
+    /// S-7: Down from the search field. Selects the first row, which loads it into the editor
+    /// (S-8), and moves focus to the list. With nothing listed the key is consumed and nothing
+    /// changes.
+    public func selectFirstRowAndFocusList() {
+        let table = mainView.tableView
+        guard table.numberOfRows > 0 else { return }
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        table.scrollRowToVisible(0)
+        window?.makeFirstResponder(table)
+    }
+
+    /// S-7: Escape from anywhere. Empties the query, so the list shows every note again, and
+    /// returns focus to the search field. The selected note, if still listed, stays selected.
+    public func clearQueryAndFocusSearchField() {
+        mainView.searchField.stringValue = ""
+        searchQueryDidChange()
+        mainView.focusSearchField()
+    }
+
+    /// S-8: Tab or Enter on a selected row. Focus moves to the editor; the note it shows, or is
+    /// about to show, is the selected one.
+    public func focusEditor() {
+        guard listController.selectedEntry != nil else { return }
+        window?.makeFirstResponder(mainView.textView)
     }
 
     private func libraryDidPublish(_ snapshot: SearchIndex) {
