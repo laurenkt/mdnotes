@@ -81,7 +81,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       (T-1), inline and fenced code. Paragraph-scoped API: given a text and an edited range,
       return the paragraph range to re-scan. Tests: every token kind, code-span exclusion,
       trailing punctuation, embeds.
-- [ ] M4.2 `LinkIndex` and `TagIndex` (K-5, T-2), built alongside the search index and updated
+- [x] M4.2 `LinkIndex` and `TagIndex` (K-5, T-2), built alongside the search index and updated
       incrementally. Resolution K-2 including ambiguity. Tests: unique, ambiguous, path-qualified.
 - [ ] M4.3 Editor styling E-2, E-3 via `NSTextStorage` delegate on the edited paragraphs only.
       `EditorPerfTests`: PF-3 keystroke-to-redraw on a 1 MB note.

@@ -66,18 +66,22 @@ public struct SearchIndex: Sendable {
         public subscript(position: Int) -> Entry { index.entries[Int(positions[position])] }
     }
 
-    /// A note's folded text, plus its display preview, before it is packed into a snapshot.
+    /// A note's folded text, plus its display preview and the links and tags the body carries
+    /// (K-5, T-2), before it is packed into a snapshot. Everything derived from the body is
+    /// computed here, in one place, so a body is read and scanned once.
     struct FoldedNote: Sendable {
         let modifiedAt: Date
         let title: [UInt8]
         let body: [UInt8]
         let preview: [UInt8]
+        let references: NoteReferences
 
         init(id: NoteID, modifiedAt: Date, body: String) {
             self.modifiedAt = modifiedAt
             title = Array(CaseFolding.fold(id.title).utf8)
             self.body = Array(CaseFolding.fold(body).utf8)
             preview = Array(BodySnippet.make(from: body).utf8)
+            references = NoteReferences(scanning: body)
         }
     }
 
@@ -101,17 +105,36 @@ public struct SearchIndex: Sendable {
             for (id, note) in folded { notes[id] = note }
         }
 
-        /// Freezes the accumulated notes into a snapshot.
+        /// Freezes the accumulated notes into a snapshot, link and tag indexes included (K-5, T-2).
         public func build() -> SearchIndex {
-            SearchIndex(ordered: notes.map { Item(id: $0.key, note: $0.value) }.sorted(by: SearchIndex.precedesInList))
+            SearchIndex(
+                ordered: notes.map { Item(id: $0.key, note: $0.value) }.sorted(by: SearchIndex.precedesInList),
+                links: LinkIndex.empty.applying(upserts: SearchIndex.linkUpserts(notes), removing: []),
+                tags: TagIndex.empty.applying(upserts: SearchIndex.tagUpserts(notes), removing: []))
         }
     }
 
     /// A snapshot with no notes.
-    public static let empty = SearchIndex(ordered: [])
+    public static let empty = SearchIndex(ordered: [], links: .empty, tags: .empty)
 
     /// Every note, most recently modified first.
     public let entries: [Entry]
+
+    /// Each note's outgoing links and each target's incoming notes (K-5), over the same notes as
+    /// `entries` and updated with them.
+    public let links: LinkIndex
+
+    /// Each tag's notes and each note's tags (T-2), over the same notes as `entries` and
+    /// updated with them.
+    public let tags: TagIndex
+
+    static func linkUpserts(_ notes: [NoteID: FoldedNote]) -> [(id: NoteID, modifiedAt: Date, links: [LinkTarget])] {
+        notes.map { ($0.key, $0.value.modifiedAt, $0.value.references.links) }
+    }
+
+    static func tagUpserts(_ notes: [NoteID: FoldedNote]) -> [(id: NoteID, tags: [String])] {
+        notes.map { ($0.key, $0.value.references.tags) }
+    }
 
     /// Where each entry's folded text sits in the arena, in `entries` order. A plain-value copy
     /// of the ranges in `Entry` so the query loop never touches reference counts. The preview
@@ -159,8 +182,11 @@ public struct SearchIndex: Sendable {
     }
 
     /// Packs `items`, which must already be in list order, into a fresh arena: for each note its
-    /// folded title, folded body and display preview, back to back.
-    init(ordered items: [Item]) {
+    /// folded title, folded body and display preview, back to back. `links` and `tags` must
+    /// cover exactly the notes in `items`.
+    init(ordered items: [Item], links: LinkIndex, tags: TagIndex) {
+        self.links = links
+        self.tags = tags
         var bytes: [UInt8] = []
         bytes.reserveCapacity(items.reduce(0) { $0 + $1.title.count + $1.body.count + $1.preview.count })
         var ranges: [(title: Range<Int>, body: Range<Int>, preview: Range<Int>)] = []
@@ -211,7 +237,10 @@ public struct SearchIndex: Sendable {
             merged.append(kept)
         }
         merged.append(contentsOf: incoming[next...])
-        return SearchIndex(ordered: merged)
+        return SearchIndex(
+            ordered: merged,
+            links: links.applying(upserts: SearchIndex.linkUpserts(fresh), removing: removing),
+            tags: tags.applying(upserts: SearchIndex.tagUpserts(fresh), removing: removing))
     }
 
     /// Number of notes in the snapshot.

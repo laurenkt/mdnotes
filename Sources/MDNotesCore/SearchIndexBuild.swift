@@ -24,11 +24,15 @@ extension SearchIndex {
             if seconds[a] != seconds[b] { return seconds[a] > seconds[b] }
             return notes[a].id.relativePath < notes[b].id.relativePath
         }
+        // Every note is filed by title and path so links resolve before bodies are read (K-2);
+        // there are no links or tags yet to record.
         return SearchIndex(
             ordered: order.map { position in
                 let note = notes[position]
                 return Item(id: note.id, note: FoldedNote(id: note.id, modifiedAt: note.modifiedAt, body: ""))
-            })
+            },
+            links: LinkIndex.empty.applying(upserts: notes.map { ($0.id, $0.modifiedAt, []) }, removing: []),
+            tags: .empty)
     }
 
     /// A new snapshot with the bodies of `notes` read from `store` and folded in, replacing any
