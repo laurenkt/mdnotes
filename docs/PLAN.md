@@ -23,7 +23,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M1.2 `NoteStore`: read a note's body as UTF-8 with L-7 and L-8 handling (dataless files
       via `URLResourceValues.ubiquitousItemDownloadingStatus`; invalid UTF-8 flagged). Tests
       with a fabricated non-UTF-8 file.
-- [ ] M1.3 `SearchIndex`: in-memory, immutable snapshot type + a builder. Holds lowercase title and
+- [x] M1.3 `SearchIndex`: in-memory, immutable snapshot type + a builder. Holds lowercase title and
       body per note. `query(_:)` implements S-2, S-3, S-4. Tests: word order, case, title-first
       ordering, empty query, tag words.
 - [ ] M1.4 `IndexPerfTests`: PF-4 (full build of 20k under 2 s) and PF-2 at the core level
