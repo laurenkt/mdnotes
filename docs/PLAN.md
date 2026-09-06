@@ -77,7 +77,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 
 ## M4: Links, tags, highlighting
 
-- [ ] M4.1 `MarkdownScanner`: single pass producing ranges for headings, wikilinks (K-1), tags
+- [x] M4.1 `MarkdownScanner`: single pass producing ranges for headings, wikilinks (K-1), tags
       (T-1), inline and fenced code. Paragraph-scoped API: given a text and an edited range,
       return the paragraph range to re-scan. Tests: every token kind, code-span exclusion,
       trailing punctuation, embeds.
