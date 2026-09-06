@@ -9,6 +9,10 @@ gates in release. A git pre-commit hook runs it. Claude Code hooks block hook by
 pushes, hook-path changes, history rewriting, Xcode tooling, and writes to the real notes
 folder. A Stop hook refuses to end a turn with a dirty working tree.
 
+Execution is one fresh subagent per task, driven by `/loop /next-task` from an orchestrator
+session that only verifies and tags. No branches, merges, or worktrees: the plan is serial and
+`PLAN.md` checkboxes would be the first merge conflict.
+
 ## Why
 The agent runs unattended on a task list, and the owner reviews at milestone boundaries.
 With no CI, the only defence against a red commit is making a red commit impossible locally,

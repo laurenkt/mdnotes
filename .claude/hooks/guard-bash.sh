@@ -19,6 +19,8 @@ case "$cmd" in
     *"git commit --amend"*)   deny "history is append-only; make a new commit." ;;
     *"git rebase"*|*"git filter-branch"*)
                               deny "history is append-only." ;;
+    *"git merge"*|*"git branch"*|*"git worktree"*|*"git checkout -b"*|*"git switch"*)
+                              deny "single linear main only: no branches, merges, or worktrees (docs/adr/0006)." ;;
     *"rm -rf docs"*|*"rm -rf .claude"*|*"rm -rf .githooks"*|*"rm -rf scripts"*)
                               deny "guardrail files may not be deleted." ;;
 esac

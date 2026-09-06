@@ -8,6 +8,8 @@ files, one field that searches and creates, a list, an editor. Built to be insta
 - Decisions: [docs/adr/](docs/adr/)
 - Agent protocol: [CLAUDE.md](CLAUDE.md)
 
+To run the agent: open a Claude Code session in this directory and type `/loop /next-task`.
+
 ```
 scripts/setup.sh         once
 scripts/check.sh quick   build and test

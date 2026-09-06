@@ -4,13 +4,22 @@ Native macOS notes app in the Notational Velocity / nvALT tradition: one folder 
 one search-or-create field, a list, an editor. The only thing that matters is that it feels
 instant. Read `docs/SPEC.md` before writing code. The plan is `docs/PLAN.md`.
 
-## Loop protocol
+## Orchestration
 
-You are working unattended through `docs/PLAN.md`. Repeat:
+The human runs `/loop /next-task` in one session. That session is the orchestrator: each tick
+it spawns a fresh subagent for exactly one plan task, verifies the commit landed, tags
+milestones, and never implements anything itself (`.claude/commands/next-task.md`). Fresh
+context per task is deliberate: the spec, the plan and git history are the memory, not the
+conversation. The loop ends when the plan is complete or every remaining task is blocked on
+`docs/QUESTIONS.md`.
+
+## Loop protocol (what a task session does)
+
+You are working unattended through `docs/PLAN.md`:
 
 1. Run `scripts/setup.sh` if `git config core.hooksPath` is not `.githooks` (first run only).
-2. Take the first `[ ]` task in `docs/PLAN.md` whose dependencies are done. Do not skip ahead
-   for a more interesting task. Do not bundle tasks.
+2. Take the task you were given, or if none, the first `[ ]` task in `docs/PLAN.md`. Do not
+   skip ahead for a more interesting task. Do not bundle tasks.
 3. Read the spec IDs the task cites. If the spec does not decide something you need, append an
    entry to `docs/QUESTIONS.md`, mark the task `[?]`, commit that, and take the next task that
    does not depend on it. Never guess at product behaviour.
@@ -20,7 +29,8 @@ You are working unattended through `docs/PLAN.md`. Repeat:
 6. Commit: `git commit -m "M2.4: search field drives list reload (S-1, S-5, PF-2)"`. The
    pre-commit hook runs `scripts/check.sh full`; a red gate means the task is not done.
    Fix forward. Never bypass the hook.
-7. At the end of a milestone, `git tag m<N>` and stop; the human reviews.
+7. Stop after one task. The orchestrator tags milestones (`m<N>`) and starts the next task;
+   the human reviews the tags at their leisure. Do not stop the loop at a milestone.
 
 If a task turns out to be too large for one commit, split it in `docs/PLAN.md` (sub-tasks
 M2.4a, M2.4b) in the commit that lands the first part.
@@ -50,6 +60,7 @@ xcrun swift-format format --in-place <file>    (a PostToolUse hook does this on 
 - The real library at `~/Documents/MDnotes` is read-only to you (hooks enforce it). Tests use
   `SyntheticLibrary` in a temp directory or a copy.
 - History is append-only: no amend, rebase, reset, or hook bypass. Fix with a new commit.
+- One linear `main`. No branches, merges, or worktrees; decline worktree isolation if offered.
 - Never end a turn with a dirty working tree (a Stop hook enforces it). Commit or record a
   question and commit that.
 - Product behaviour lives in `docs/SPEC.md` and changes only through an ADR in `docs/adr/`.
@@ -68,6 +79,6 @@ Tests/MDNotesCoreTests/      unit tests and *PerfTests for the core.
 Tests/MDNotesAppTests/       headless smoke tests and *PerfTests for the app layer.
 scripts/                     check.sh, bundle.sh, setup.sh
 .githooks/pre-commit         runs scripts/check.sh full
-.claude/                     settings.json (permissions + hooks), hooks/
+.claude/                     settings.json (permissions + hooks), hooks/, commands/next-task.md
 docs/                        SPEC.md, PLAN.md, QUESTIONS.md, adr/
 ```

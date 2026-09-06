@@ -9,6 +9,7 @@
       "Bash(scripts/check.sh:*)",
       "Bash(scripts/bundle.sh:*)",
       "Bash(scripts/setup.sh:*)",
+      "Bash(scripts/info-plist.sh:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -16,14 +17,20 @@
       "Bash(git commit:*)",
       "Bash(git tag:*)",
       "Bash(git show:*)",
+      "Bash(git rev-parse:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(grep:*)",
       "Bash(find:*)",
-      "Bash(jq:*)"
+      "Bash(jq:*)",
+      "Bash(plutil:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": [
       "Bash(git push:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(git worktree:*)",
       "Bash(xcodebuild:*)",
       "Bash(xcodegen:*)",
       "Bash(sudo:*)",
@@ -50,6 +57,13 @@
       }
     ],
     "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-gate.sh" }
+        ]
+      }
+    ],
+    "SubagentStop": [
       {
         "hooks": [
           { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-gate.sh" }
