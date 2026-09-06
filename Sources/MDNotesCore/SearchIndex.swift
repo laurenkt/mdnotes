@@ -68,8 +68,8 @@ public struct SearchIndex: Sendable {
 
         init(id: NoteID, modifiedAt: Date, body: String) {
             self.modifiedAt = modifiedAt
-            title = Array(SearchIndex.fold(id.title).utf8)
-            self.body = Array(SearchIndex.fold(body).utf8)
+            title = Array(CaseFolding.fold(id.title).utf8)
+            self.body = Array(CaseFolding.fold(body).utf8)
         }
     }
 
@@ -213,7 +213,7 @@ public struct SearchIndex: Sendable {
     /// `#tag` is an ordinary word: it matches wherever those characters occur.
     public func query(_ text: String) -> Results {
         guard let first = entries.first else { return Results(index: self, positions: []) }
-        let words = SearchIndex.words(of: text)
+        let words = WordSplitter.foldedWords(of: text).map { Array($0.utf8) }
         if words.isEmpty { return Results(index: self, positions: (0..<Int32(entries.count)).map { $0 }) }
 
         let arena = first.arena
@@ -254,17 +254,7 @@ public struct SearchIndex: Sendable {
         return Results(index: self, positions: titleMatches + bodyMatches)
     }
 
-    // MARK: - Folding and matching
-
-    /// The case folding applied to indexed text and query words alike.
-    static func fold(_ text: String) -> String {
-        text.lowercased()
-    }
-
-    /// Splits a query into case-folded words on whitespace (S-2), as UTF-8 bytes.
-    static func words(of text: String) -> [[UInt8]] {
-        fold(text).split(whereSeparator: \.isWhitespace).map { Array($0.utf8) }
-    }
+    // MARK: - Matching
 
     /// A query word prepared for byte-wise search: `memchr` for its rarest byte, then `memcmp`
     /// the whole word at each candidate. Far faster than `memmem` on prose, where the anchor

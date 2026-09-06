@@ -32,7 +32,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M1.5 Incremental update API on the index: `applying(changes:)` for added / modified /
       removed IDs, building a new snapshot without a full rescan. Tests: each change kind.
 - [x] M1.6 `AtomicWriter`: E-5 semantics. Test: interrupted write leaves the old file intact.
-- [ ] M1.7 `WordSplitter` and the case-folding used everywhere, shared with link/tag parsing.
+- [x] M1.7 `WordSplitter` and the case-folding used everywhere, shared with link/tag parsing.
 
 ## M2: Window, list, editor, create, autosave
 
