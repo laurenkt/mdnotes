@@ -26,7 +26,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M1.3 `SearchIndex`: in-memory, immutable snapshot type + a builder. Holds lowercase title and
       body per note. `query(_:)` implements S-2, S-3, S-4. Tests: word order, case, title-first
       ordering, empty query, tag words.
-- [ ] M1.4 `IndexPerfTests`: PF-4 (full build of 20k under 2 s) and PF-2 at the core level
+- [x] M1.4 `IndexPerfTests`: PF-4 (full build of 20k under 2 s) and PF-2 at the core level
       (query over 20k under 4 ms, leaving 12 ms for the table). PF-5 memory via `task_info`
       resident size.
 - [ ] M1.5 Incremental update API on the index: `applying(changes:)` for added / modified /

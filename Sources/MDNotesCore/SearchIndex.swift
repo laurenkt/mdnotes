@@ -5,49 +5,142 @@ import Foundation
 ///
 /// Snapshots are values: build one with `SearchIndex.Builder`, hand it to the main thread, and
 /// query it there without locks (PF-6). Titles and bodies are stored case-folded once at build
-/// time so a query only lowercases its own words.
+/// time so a query only lowercases its own words. All folded text lives in one contiguous byte
+/// arena, packed in list order, so a query is a single sweep over memory (PF-2, PF-5).
 public struct SearchIndex: Sendable {
+    /// The packed, case-folded UTF-8 of every indexed note, plus how often each byte value occurs
+    /// (used to pick the rarest byte of a query word as its search anchor).
+    final class Arena: Sendable {
+        let bytes: [UInt8]
+        let byteFrequency: [Int]
+
+        init(bytes: [UInt8]) {
+            self.bytes = bytes
+            var frequency = [Int](repeating: 0, count: 256)
+            for byte in bytes { frequency[Int(byte)] += 1 }
+            byteFrequency = frequency
+        }
+
+        static let empty = Arena(bytes: [])
+    }
+
     /// One indexed note. `title` and `body` are lowercase; the note's display title is `id.title`.
     public struct Entry: Hashable, Sendable {
         public let id: NoteID
         public let modifiedAt: Date
+        let titleRange: Range<Int>
+        let bodyRange: Range<Int>
+        let arena: Arena
+
         /// The title (L-5), case-folded.
-        public let title: String
+        public var title: String { String(decoding: arena.bytes[titleRange], as: UTF8.self) }
+
         /// The body text, case-folded. Empty when the file is unreadable (L-7): such a note is
         /// indexed by title only.
-        public let body: String
+        public var body: String { String(decoding: arena.bytes[bodyRange], as: UTF8.self) }
+
+        public static func == (lhs: Entry, rhs: Entry) -> Bool {
+            lhs.id == rhs.id && lhs.modifiedAt == rhs.modifiedAt && lhs.title == rhs.title && lhs.body == rhs.body
+        }
+
+        public func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+            hasher.combine(modifiedAt)
+        }
+    }
+
+    /// The notes matching a query, in list order (S-3). A lightweight view onto the snapshot:
+    /// building one records positions only, so a 20k-note result costs no per-entry copying.
+    public struct Results: RandomAccessCollection, Sendable {
+        public let index: SearchIndex
+        let positions: [Int32]
+
+        public var startIndex: Int { 0 }
+        public var endIndex: Int { positions.count }
+        public subscript(position: Int) -> Entry { index.entries[Int(positions[position])] }
+    }
+
+    /// A note's folded text before it is packed into a snapshot.
+    struct FoldedNote: Sendable {
+        let modifiedAt: Date
+        let title: [UInt8]
+        let body: [UInt8]
+
+        init(id: NoteID, modifiedAt: Date, body: String) {
+            self.modifiedAt = modifiedAt
+            title = Array(SearchIndex.fold(id.title).utf8)
+            self.body = Array(SearchIndex.fold(body).utf8)
+        }
     }
 
     /// Accumulates notes and produces a snapshot. Adding an id twice keeps the last version.
     public struct Builder: Sendable {
-        private var entries: [NoteID: Entry] = [:]
+        private var notes: [NoteID: FoldedNote] = [:]
 
         public init() {}
 
         /// Number of distinct notes added so far.
-        public var count: Int { entries.count }
+        public var count: Int { notes.count }
 
         /// Adds or replaces a note. The title is taken from `id` (L-5); `body` is the file's text,
         /// or empty for a note whose body cannot be read yet (L-7, L-8).
         public mutating func add(id: NoteID, modifiedAt: Date, body: String = "") {
-            entries[id] = Entry(
-                id: id, modifiedAt: modifiedAt, title: SearchIndex.fold(id.title), body: SearchIndex.fold(body))
+            notes[id] = FoldedNote(id: id, modifiedAt: modifiedAt, body: body)
+        }
+
+        /// Adds notes that were folded elsewhere (for example on a worker thread).
+        mutating func add(folded: [(id: NoteID, note: FoldedNote)]) {
+            for (id, note) in folded { notes[id] = note }
         }
 
         /// Freezes the accumulated notes into a snapshot.
         public func build() -> SearchIndex {
-            SearchIndex(unsorted: Array(entries.values))
+            SearchIndex(notes: notes)
         }
     }
 
     /// A snapshot with no notes.
-    public static let empty = SearchIndex(unsorted: [])
+    public static let empty = SearchIndex(notes: [:])
 
     /// Every note, most recently modified first.
     public let entries: [Entry]
 
-    private init(unsorted: [Entry]) {
-        entries = unsorted.sorted(by: SearchIndex.isOrderedBefore)
+    /// Where each entry's folded text sits in the arena, in `entries` order. A plain-value copy
+    /// of the ranges in `Entry` so the query loop never touches reference counts.
+    struct Span {
+        let titleStart: Int32
+        let bodyStart: Int32
+        let end: Int32
+    }
+    let spans: [Span]
+
+    private init(notes: [NoteID: FoldedNote]) {
+        let ordered = notes.sorted { a, b in
+            if a.value.modifiedAt != b.value.modifiedAt { return a.value.modifiedAt > b.value.modifiedAt }
+            return a.key.relativePath < b.key.relativePath
+        }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(ordered.reduce(0) { $0 + $1.value.title.count + $1.value.body.count })
+        var ranges: [(title: Range<Int>, body: Range<Int>)] = []
+        ranges.reserveCapacity(ordered.count)
+        for (_, note) in ordered {
+            let titleStart = bytes.count
+            bytes.append(contentsOf: note.title)
+            let bodyStart = bytes.count
+            bytes.append(contentsOf: note.body)
+            ranges.append((titleStart..<bodyStart, bodyStart..<bytes.count))
+        }
+        let arena = ordered.isEmpty ? Arena.empty : Arena(bytes: bytes)
+        entries = zip(ordered, ranges).map { item, range in
+            Entry(
+                id: item.key, modifiedAt: item.value.modifiedAt, titleRange: range.title, bodyRange: range.body,
+                arena: arena)
+        }
+        spans = ranges.map { range in
+            Span(
+                titleStart: Int32(range.title.lowerBound), bodyStart: Int32(range.body.lowerBound),
+                end: Int32(range.body.upperBound))
+        }
     }
 
     /// Number of notes in the snapshot.
@@ -65,22 +158,47 @@ public struct SearchIndex: Sendable {
     /// contains every word come first, then the remaining matches; each group is ordered most
     /// recently modified first. An empty or blank query returns every note by modified date.
     /// `#tag` is an ordinary word: it matches wherever those characters occur.
-    public func query(_ text: String) -> [Entry] {
+    public func query(_ text: String) -> Results {
+        guard let first = entries.first else { return Results(index: self, positions: []) }
         let words = SearchIndex.words(of: text)
-        if words.isEmpty { return entries }
+        if words.isEmpty { return Results(index: self, positions: (0..<Int32(entries.count)).map { $0 }) }
 
-        var titleMatches: [Entry] = []
-        var bodyMatches: [Entry] = []
-        for entry in entries {
-            if words.allSatisfy({ SearchIndex.contains(entry.title, $0) }) {
-                titleMatches.append(entry)
-            } else if words.allSatisfy({
-                SearchIndex.contains(entry.title, $0) || SearchIndex.contains(entry.body, $0)
-            }) {
-                bodyMatches.append(entry)
+        let arena = first.arena
+        // Search the rarest word first so a non-matching note is rejected as early as possible.
+        let needles = words.map { Needle(word: $0, frequency: arena.byteFrequency) }
+            .sorted { $0.anchorFrequency < $1.anchorFrequency }
+
+        var titleMatches: [Int32] = []
+        var bodyMatches: [Int32] = []
+        needles.withUnsafeBufferPointer { needles in
+            arena.bytes.withUnsafeBufferPointer { buffer in
+                spans.withUnsafeBufferPointer { spans in
+                    guard let base = buffer.baseAddress else { return }
+                    for position in spans.indices {
+                        let span = spans[position]
+                        let title = UnsafeBufferPointer(
+                            start: base + Int(span.titleStart), count: Int(span.bodyStart - span.titleStart))
+                        let body = UnsafeBufferPointer(
+                            start: base + Int(span.bodyStart), count: Int(span.end - span.bodyStart))
+                        var inTitle = true
+                        var inEither = true
+                        for needle in needles {
+                            if needle.isFound(in: title) { continue }
+                            inTitle = false
+                            if needle.isFound(in: body) { continue }
+                            inEither = false
+                            break
+                        }
+                        if inTitle {
+                            titleMatches.append(Int32(position))
+                        } else if inEither {
+                            bodyMatches.append(Int32(position))
+                        }
+                    }
+                }
             }
         }
-        return titleMatches + bodyMatches
+        return Results(index: self, positions: titleMatches + bodyMatches)
     }
 
     // MARK: - Folding and matching
@@ -95,21 +213,47 @@ public struct SearchIndex: Sendable {
         fold(text).split(whereSeparator: \.isWhitespace).map { Array($0.utf8) }
     }
 
-    /// Byte-wise substring test on the UTF-8 of `haystack`; both sides are already folded.
-    static func contains(_ haystack: String, _ needle: [UInt8]) -> Bool {
-        if needle.isEmpty { return true }
-        let found = haystack.utf8.withContiguousStorageIfAvailable { bytes -> Bool in
-            guard let base = bytes.baseAddress, bytes.count >= needle.count else { return false }
-            return needle.withUnsafeBufferPointer { pattern in
-                memmem(base, bytes.count, pattern.baseAddress, pattern.count) != nil
-            }
-        }
-        return found ?? (haystack.utf8.firstRange(of: needle) != nil)
-    }
+    /// A query word prepared for byte-wise search: `memchr` for its rarest byte, then `memcmp`
+    /// the whole word at each candidate. Far faster than `memmem` on prose, where the anchor
+    /// byte is missed by the SIMD scan far more often than it is hit.
+    final class Needle {
+        let length: Int
+        /// Offset within the word of the byte that occurs least often in the arena.
+        let anchor: Int
+        let anchorFrequency: Int
+        private let bytes: UnsafeMutablePointer<UInt8>
 
-    /// Most recently modified first; ties are broken by relative path so the order is stable.
-    private static func isOrderedBefore(_ a: Entry, _ b: Entry) -> Bool {
-        if a.modifiedAt != b.modifiedAt { return a.modifiedAt > b.modifiedAt }
-        return a.id.relativePath < b.id.relativePath
+        init(word: [UInt8], frequency: [Int]) {
+            length = word.count
+            bytes = UnsafeMutablePointer<UInt8>.allocate(capacity: max(1, word.count))
+            bytes.initialize(from: word, count: word.count)
+            var best = 0
+            for (offset, byte) in word.enumerated() where frequency[Int(byte)] < frequency[Int(word[best])] {
+                best = offset
+            }
+            anchor = best
+            anchorFrequency = word.isEmpty ? 0 : frequency[Int(word[best])]
+        }
+
+        deinit {
+            bytes.deallocate()
+        }
+
+        @inline(__always)
+        func isFound(in haystack: UnsafeBufferPointer<UInt8>) -> Bool {
+            if length == 0 { return true }
+            guard let hay = haystack.baseAddress, haystack.count >= length else { return false }
+            let wanted = Int32(bytes[anchor])
+            var cursor = hay + anchor
+            var remaining = haystack.count - length + 1
+            while remaining > 0 {
+                guard let hit = memchr(cursor, wanted, remaining) else { return false }
+                let candidate = UnsafePointer(hit.assumingMemoryBound(to: UInt8.self))
+                if memcmp(candidate - anchor, bytes, length) == 0 { return true }
+                remaining -= candidate - cursor + 1
+                cursor = candidate + 1
+            }
+            return false
+        }
     }
 }

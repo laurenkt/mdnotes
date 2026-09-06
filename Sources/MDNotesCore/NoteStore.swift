@@ -60,11 +60,40 @@ public struct NoteStore: Sendable {
     public func read(_ id: NoteID) throws -> NoteBody {
         let url = self.url(for: id)
         guard isAvailable(url) else { return .notDownloaded }
-        let data = try Data(contentsOf: url)
-        if let text = String(validating: data, as: UTF8.self) {
+        let bytes = try NoteStore.readBytes(at: url.path)
+        if let text = String(validating: bytes, as: UTF8.self) {
             return .text(text)
         }
-        return .invalidUTF8(lossyText: String(decoding: data, as: UTF8.self))
+        return .invalidUTF8(lossyText: String(decoding: bytes, as: UTF8.self))
+    }
+
+    /// Reads a whole file into a buffer sized exactly to the file.
+    ///
+    /// `Data(contentsOf:)` rounds each read up to a page, and with tens of thousands of small
+    /// notes those pages stay resident in the allocator long after the `Data` is gone (PF-5).
+    static func readBytes(at path: String) throws -> [UInt8] {
+        let fd = open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { throw NoteStore.posixError() }
+        defer { close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { throw NoteStore.posixError() }
+        let size = Int(info.st_size)
+        return try [UInt8](unsafeUninitializedCapacity: size) { buffer, initialized in
+            initialized = 0
+            guard let base = buffer.baseAddress else { return }
+            while initialized < size {
+                let got = Darwin.read(fd, base + initialized, size - initialized)
+                if got < 0 { throw NoteStore.posixError() }
+                if got == 0 { break }
+                initialized += got
+            }
+        }
+    }
+
+    private static func posixError() -> any Error {
+        let code = errno
+        if code == ENOENT { return CocoaError(.fileReadNoSuchFile) }
+        return POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
     }
 
     /// Asks iCloud to start downloading an evicted file (L-7). Returns immediately; the file
@@ -79,9 +108,12 @@ public struct NoteStore: Sendable {
     /// iCloud container. As a second line, the APFS dataless flag catches placeholders that the
     /// ubiquity APIs do not report (for example a root synced by another provider).
     public static func isDownloaded(_ url: URL) -> Bool {
-        if let status = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
-            .ubiquitousItemDownloadingStatus
-        {
+        // The resource-value lookup autoreleases several KB per call; without a pool of its own,
+        // a tight loop over 20k notes on one thread holds 100+ MB until the caller returns (PF-5).
+        let status = autoreleasepool {
+            try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus
+        }
+        if let status {
             return status != .notDownloaded
         }
         var info = stat()

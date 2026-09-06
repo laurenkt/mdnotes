@@ -16,7 +16,7 @@ final class SearchIndexTests: XCTestCase {
         return builder.build()
     }
 
-    private func paths(_ results: [SearchIndex.Entry]) -> [String] {
+    private func paths<Entries: Collection<SearchIndex.Entry>>(_ results: Entries) -> [String] {
         results.map(\.id.relativePath)
     }
 
@@ -131,9 +131,9 @@ final class SearchIndexTests: XCTestCase {
 
     func testS3_emptyIndexReturnsNothing() {
         XCTAssertEqual(SearchIndex.empty.count, 0)
-        XCTAssertEqual(SearchIndex.empty.query(""), [])
-        XCTAssertEqual(SearchIndex.empty.query("anything"), [])
-        XCTAssertEqual(SearchIndex.Builder().build().query(""), [])
+        XCTAssertEqual(paths(SearchIndex.empty.query("")), [])
+        XCTAssertEqual(paths(SearchIndex.empty.query("anything")), [])
+        XCTAssertEqual(paths(SearchIndex.Builder().build().query("")), [])
     }
 
     // MARK: S-4 tags
