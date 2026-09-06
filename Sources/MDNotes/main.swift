@@ -1,0 +1,3 @@
+import MDNotesApp
+
+App.run()

@@ -1,0 +1,10 @@
+.build/
+build/
+*.xcodeproj
+*.xcworkspace
+.swiftpm/
+DerivedData/
+.DS_Store
+*.swp
+/Package.resolved
+.claude/settings.local.json

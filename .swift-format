@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "indentation": { "spaces": 4 },
+  "lineLength": 120,
+  "maximumBlankLines": 1,
+  "respectsExistingLineBreaks": true,
+  "lineBreakBeforeEachArgument": false,
+  "indentConditionalCompilationBlocks": false,
+  "rules": {
+    "AlwaysUseLowerCamelCase": true,
+    "AmbiguousTrailingClosureOverload": true,
+    "DoNotUseSemicolons": true,
+    "FullyIndirectEnum": true,
+    "NeverForceUnwrap": true,
+    "NeverUseForceTry": true,
+    "NeverUseImplicitlyUnwrappedOptionals": true,
+    "NoAccessLevelOnExtensionDeclaration": true,
+    "NoEmptyTrailingClosureParentheses": true,
+    "NoLeadingUnderscores": false,
+    "OrderedImports": true,
+    "ReturnVoidInsteadOfEmptyTuple": true,
+    "UseEarlyExits": true,
+    "UseSingleLinePropertyGetter": true,
+    "UseWhereClausesInForLoops": true,
+    "ValidateDocumentationComments": true
+  }
+}
