@@ -130,6 +130,40 @@ final class FSEventsWatcherTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(watcher).knownNotes.contains(id("doomed.md")))
     }
 
+    // MARK: lifetime
+
+    /// The owner may let go of the watcher while its handler is running, as `LibraryController`
+    /// does when it is released on the main thread mid-callback. The callback's own reference is
+    /// then the last one, and dropping it must not run `deinit`, and so `stop()`, on the
+    /// watcher's queue: waiting for that queue from itself is a deadlock libdispatch traps on.
+    func testX1_ownerMayDropTheWatcherWhileItsHandlerRuns() throws {
+        /// Held only by the handler, so it goes when the watcher does.
+        final class Token: Sendable {
+            let onDeinit: @Sendable () -> Void
+            init(onDeinit: @escaping @Sendable () -> Void) { self.onDeinit = onDeinit }
+            deinit { onDeinit() }
+        }
+        let owner = Mutex<FSEventsWatcher?>(nil)
+        let handled = expectation(description: "handler ran")
+        handled.assertForOverFulfill = false
+        let deallocated = expectation(description: "watcher deallocated")
+        func startOwnedWatcher() throws {
+            let token = Token { deallocated.fulfill() }
+            let watcher = FSEventsWatcher(root: root, knownNotes: [], latency: 0.05) { _ in
+                withExtendedLifetime(token) {}
+                // The owner lets go while this callback is on the watcher's queue.
+                owner.withLock { $0 = nil }
+                handled.fulfill()
+            }
+            try watcher.start()
+            owner.withLock { $0 = watcher }
+        }
+        try startOwnedWatcher()
+        try write("fresh.md")
+        wait(for: [handled, deallocated], timeout: timeout)
+        XCTAssertNil(owner.withLock { $0 })
+    }
+
     func testX1_renameIsRemovalPlusAddition() throws {
         try write("before.md")
         try startWatching()

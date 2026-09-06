@@ -69,7 +69,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       events. Test: autosave does not trigger a reload.
 - [x] M3.3 External edit rules X-2, X-3, X-4. Smoke tests for each, including the dirty-editor
       case where the editor's text overwrites disk at next autosave.
-- [ ] M3.4 Delete D-1, D-2 via `NSWorkspace.shared.recycle`. Smoke test asserts the file is gone
+- [x] M3.4 Delete D-1, D-2 via `NSWorkspace.shared.recycle`. Smoke test asserts the file is gone
       from the library and the list updates before the watcher fires.
 - [ ] M3.5 Inline rename R-1, R-2 without link rewriting. Smoke tests: rename, collision, illegal.
 - [ ] M3.6 Preferences window: library folder chooser (PR-1 part). Changing the folder tears down

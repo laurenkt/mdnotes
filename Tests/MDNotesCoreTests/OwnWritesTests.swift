@@ -111,6 +111,50 @@ final class OwnWritesTests: XCTestCase {
         XCTAssertEqual(writes.suppressing(echo, store: store), echo)
     }
 
+    // MARK: our own removals (D-1)
+
+    func testD1_aRecordedRemovalSuppressesTheWatchersEchoWhileTheFileIsGone() {
+        let writes = OwnWrites()
+        writes.record(alpha, modifiedAt: t1)
+        writes.recordRemoval(alpha)
+        XCTAssertTrue(writes.removed(alpha))
+        XCTAssertNil(writes.lastWrite(of: alpha), "the removal replaced the write record")
+        XCTAssertFalse(writes.contains(alpha, modifiedAt: t1))
+        XCTAssertEqual(writes.count, 1)
+
+        let echo = LibraryChanges(removed: [alpha, beta])
+        let external = writes.suppressing(echo) { _ in throw CocoaError(.fileNoSuchFile) }
+        XCTAssertEqual(external, LibraryChanges(removed: [beta]), "our removal is dropped; beta's is someone else's")
+        XCTAssertTrue(writes.removed(alpha), "matching keeps the record: the same removal may echo more than once")
+
+        // The file is back on disk: whoever put it there, its removal was not the one we made.
+        XCTAssertEqual(writes.suppressing(echo) { _ in t2 }, echo)
+    }
+
+    func testD1_aNoteRecreatedBySomeoneElseIsExternalAndClearsTheRemovalRecord() {
+        let writes = OwnWrites()
+        writes.recordRemoval(alpha)
+        let recreated = LibraryChanges(added: [alpha])
+        XCTAssertEqual(writes.suppressing(recreated) { _ in t1 }, recreated, "not our write, whatever its date")
+        XCTAssertFalse(writes.removed(alpha))
+        XCTAssertEqual(writes.count, 0)
+        // Its next removal is theirs too.
+        XCTAssertEqual(
+            writes.suppressing(LibraryChanges(removed: [alpha])) { _ in throw CocoaError(.fileNoSuchFile) },
+            LibraryChanges(removed: [alpha]))
+    }
+
+    func testD1_ourOwnRecreateReplacesTheRemovalRecord() {
+        let writes = OwnWrites()
+        writes.recordRemoval(alpha)
+        writes.record(alpha, modifiedAt: t2)
+        XCTAssertFalse(writes.removed(alpha))
+        XCTAssertEqual(writes.lastWrite(of: alpha), t2)
+        XCTAssertEqual(writes.suppressing(LibraryChanges(added: [alpha])) { _ in t2 }, LibraryChanges())
+        writes.forget(alpha)
+        XCTAssertEqual(writes.count, 0)
+    }
+
     func testE6_isSafeFromManyThreads() {
         let writes = OwnWrites()
         let ids = (0..<64).map { NoteID(relativePath: "n\($0).md") }

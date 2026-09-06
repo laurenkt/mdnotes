@@ -24,6 +24,11 @@ import MDNotesCore
 /// is not replaced by another note (S-8 loads a selected row into the editor). External
 /// modifications reported by the library reread the note when the editor is clean (X-2) and
 /// are left to the next autosave to overwrite when it is not (X-3).
+///
+/// Deletion (D-1) is Cmd-Delete, a key equivalent of `MainView`, and later the menu item: the
+/// selected note goes to the Trash through the library with no confirmation. The snapshot the
+/// library publishes when the move has landed no longer lists the note (D-2), so the same path
+/// as an external deletion (X-4) clears the editor and moves the selection to the next row.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -46,6 +51,10 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// Called on the main thread once Enter's create-or-open has settled: with the note that
     /// was opened or created, or nil when the query was rejected or the write failed.
     public var onCommitQuery: (@MainActor (NoteID?) -> Void)?
+
+    /// Called on the main thread once a deletion begun by `deleteSelectedNote()` has settled:
+    /// with the note and where it went in the Trash, or the error that kept it in place.
+    public var onDeleteNote: (@MainActor (NoteID, Result<URL, any Error>) -> Void)?
 
     /// `autosaveClock` times the editor's autosave delay (E-4); tests pass one they advance
     /// by hand.
@@ -81,6 +90,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.tableView.onActivateSelectedRow = { [weak self] in self?.focusEditor() }
         view.tableView.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         editorController.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
+        // D-1: Cmd-Delete from anywhere in the window.
+        view.onDeleteNote = { [weak self] in self?.deleteSelectedNote() ?? false }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
         // the name must be set after the content view exists so a restored frame lays it out.
         shouldCascadeWindows = false
@@ -215,6 +226,38 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             editorController.load(id, from: library)
             window?.makeFirstResponder(mainView.textView)
         }
+    }
+
+    // MARK: - Delete (D-1, D-2)
+
+    /// Cmd-Delete, and the menu item. Moves the selected row's note to the Trash with no
+    /// confirmation (D-1). Returns false, doing nothing, when no row is selected. Unsaved
+    /// edits to the note are written first (E-4 treats leaving a note as a save), so the file
+    /// in the Trash holds what the editor showed. The move is asynchronous; once it lands the
+    /// library's snapshot drops the note (D-2), which clears the editor and moves the selection
+    /// to the next row through the X-4 path. A failure leaves the note listed and shows the
+    /// reason under the search field. `onDeleteNote` reports the outcome.
+    @discardableResult
+    public func deleteSelectedNote() -> Bool {
+        guard let entry = listController.selectedEntry, let library else { return false }
+        let id = entry.id
+        hideInlineMessage()
+        let recycle: @MainActor () -> Void = { [weak self] in
+            library.delete(id) { [weak self] outcome in
+                guard let self else { return }
+                if case .failure(let error) = outcome {
+                    FileHandle.standardError.write(Data("MDNotes: could not delete \(id): \(error)\n".utf8))
+                    showInlineMessage(error.localizedDescription)
+                }
+                onDeleteNote?(id, outcome)
+            }
+        }
+        if editorController.noteID == id {
+            editorController.flush(completion: recycle)
+        } else {
+            recycle()
+        }
+        return true
     }
 
     // MARK: - Autosave on focus loss (E-4)

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MDNotesCore
 import Synchronization
@@ -15,8 +16,9 @@ import Synchronization
 /// Once the root has been walked an `FSEventsWatcher` covers it (X-1). Every batch it reports
 /// is first stripped of the echoes of this controller's own writes (E-6): an added or modified
 /// note whose file carries exactly the modification date `save` or `create` recorded in
-/// `ownWrites` was written by us and is not reread. What remains is external, is folded into
-/// the snapshot like `apply(_:)` does, and is then reported through `onExternalChanges`.
+/// `ownWrites` was written by us and is not reread, and a removed note that `delete` moved to
+/// the Trash is not reported. What remains is external, is folded into the snapshot like
+/// `apply(_:)` does, and is then reported through `onExternalChanges`.
 @MainActor
 public final class LibraryController {
     /// Where the controller is in populating the index.
@@ -59,7 +61,7 @@ public final class LibraryController {
 
     /// Called on the main thread with each batch of file-system changes that were not this
     /// process's own writes (E-6, X-1), after the snapshot reflecting them has been published.
-    /// Never called for an autosave or a `create` of ours.
+    /// Never called for an autosave, a `create` or a `delete` of ours.
     public var onExternalChanges: (@MainActor (LibraryChanges) -> Void)?
 
     private let batchSize: Int
@@ -266,6 +268,49 @@ public final class LibraryController {
                 MainActor.assumeIsolated {
                     guard generation == self.generation else { return }
                     completion(outcome)
+                }
+            }
+        }
+    }
+
+    // MARK: - Deletion (D-1, D-2)
+
+    /// Moves the file backing `id` to the macOS Trash through `NSWorkspace.recycle` (D-1). The
+    /// move runs asynchronously; once it has landed the note is dropped from the snapshot without
+    /// waiting for the watcher (D-2), the result is published, and then `completion` runs on the
+    /// main thread with the file's new location in the Trash. By the time it runs the published
+    /// snapshot no longer lists the note. The removal is recorded in `ownWrites` first, so the
+    /// watcher's report of it, which may arrive before the completion handler, is recognised as
+    /// ours and not reported as external (E-6). If the move fails the record is dropped, the
+    /// snapshot is left alone, and `completion` gets the error. If the library is stopped or
+    /// restarted before the move lands, `completion` is never called.
+    public func delete(_ id: NoteID, completion: @escaping @MainActor (Result<URL, any Error>) -> Void) {
+        let generation = generation
+        let url = store.url(for: id)
+        ownWrites.recordRemoval(id)
+        // Called on the queue that made the call: the main one.
+        NSWorkspace.shared.recycle([url]) { [self] trashed, error in
+            let outcome: Result<URL, any Error>
+            if let trashedURL = trashed[url] {
+                outcome = .success(trashedURL)
+            } else {
+                ownWrites.forget(id)
+                outcome = .failure(error ?? CocoaError(.fileWriteUnknown, userInfo: [NSURLErrorKey: url]))
+            }
+            queue.async { [self] in
+                guard worker.isCurrent(generation) else { return }
+                if case .success = outcome {
+                    let (index, phase, _) = worker.update { state in
+                        state.touchedSinceScan.insert(id)
+                        state.index = state.index.applying(changes: LibraryChanges(removed: [id])) { _ in nil }
+                    }
+                    publish(index, phase: phase, generation: generation)
+                }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard generation == self.generation else { return }
+                        completion(outcome)
+                    }
                 }
             }
         }

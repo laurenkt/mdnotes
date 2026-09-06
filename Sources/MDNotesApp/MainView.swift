@@ -23,6 +23,11 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public let editorScrollView: NSScrollView
     public let textView: NSTextView
     public let backlinksStrip: NSView
+
+    /// Cmd-Delete (D-1). Returns true if a note was selected and its deletion begun; false
+    /// lets the key go on to whatever has focus. Installed by the window controller.
+    public var onDeleteNote: (@MainActor () -> Bool)?
+
     private let stack: NSStackView
     private let defaults: UserDefaults
     private var isRestoringSplit = false
@@ -119,20 +124,27 @@ public final class MainView: NSView, NSSplitViewDelegate {
         }
     }
 
-    /// Cmd-L focuses the search field wherever focus is (S-7). The window tries the content
-    /// view's key equivalents before the menu and before the first responder's `keyDown`, so
-    /// this holds whichever view has focus.
+    /// Cmd-L focuses the search field wherever focus is (S-7), and Cmd-Delete deletes the
+    /// selected note wherever focus is (D-1). The window tries the content view's key
+    /// equivalents before the menu and before the first responder's `keyDown`, so both hold
+    /// whichever view has focus; Cmd-Delete with no row selected is left to the focused view.
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if Self.isCommandL(event) {
+        if Self.isCommand(event, key: "l") {
             focusSearchField()
+            return true
+        }
+        if Self.isCommand(event, key: Self.deleteKey), let onDeleteNote, onDeleteNote() {
             return true
         }
         return super.performKeyEquivalent(with: event)
     }
 
-    private static func isCommandL(_ event: NSEvent) -> Bool {
+    /// The Delete (backspace) key's character.
+    private static let deleteKey = "\u{7F}"
+
+    private static func isCommand(_ event: NSEvent, key: String) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        return modifiers == .command && event.charactersIgnoringModifiers?.lowercased() == "l"
+        return modifiers == .command && event.charactersIgnoringModifiers?.lowercased() == key
     }
 
     // MARK: - Split persistence (W-1)

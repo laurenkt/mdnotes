@@ -15,7 +15,8 @@ import Synchronization
 /// Paths a full scan would skip (L-3, L-6) are ignored. The handler runs on a private serial
 /// queue, never the main thread (PF-6), with a non-empty batch per callback. Own writes are
 /// not filtered here; that is `OwnWrites` (E-6). Safe to start and stop from any thread, but
-/// not from inside the handler.
+/// not from inside the handler. The last reference may be dropped from anywhere, the handler
+/// included: `deinit` stops the stream, and never runs on the watcher's own queue.
 public final class FSEventsWatcher: Sendable {
     /// How long the kernel may hold events to coalesce them before delivery. The first event
     /// after a quiet period is delivered without waiting, so a single change arrives well within
@@ -133,6 +134,11 @@ public final class FSEventsWatcher: Sendable {
     private static let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
         guard let info else { return }
         let watcher = Unmanaged<FSEventsWatcher>.fromOpaque(info).takeUnretainedValue()
+        // The reference taken for this call is released on another queue afterwards. If the
+        // owner let go of the watcher while this callback ran, this reference is the last one,
+        // and releasing it here would run `deinit`, and so `stop()`, on the watcher's own queue,
+        // where waiting for that queue to drain is a deadlock libdispatch traps on.
+        defer { DispatchQueue.global(qos: .utility).async { withExtendedLifetime(watcher) {} } }
         let cStrings = paths.assumingMemoryBound(to: UnsafePointer<CChar>?.self)
         var events: [(path: String, flags: FSEventStreamEventFlags)] = []
         events.reserveCapacity(count)
