@@ -100,7 +100,9 @@ public struct NoteStore: Sendable {
         }
     }
 
-    private static func posixError() -> any Error {
+    /// The current `errno` as a thrown error, mapping a missing file to the Cocoa error callers
+    /// already check for.
+    static func posixError() -> any Error {
         let code = errno
         if code == ENOENT { return CocoaError(.fileReadNoSuchFile) }
         return POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
