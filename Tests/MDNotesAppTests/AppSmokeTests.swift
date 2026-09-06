@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class AppSmokeTests: XCTestCase {
     func testMainWindowControllerCreatesWindow() {
-        let controller = MainWindowController()
+        let controller = makeMainWindowController()
         XCTAssertNotNil(controller.window)
         XCTAssertEqual(controller.window?.title, "MDNotes")
     }

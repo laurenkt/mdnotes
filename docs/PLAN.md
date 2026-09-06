@@ -36,7 +36,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 
 ## M2: Window, list, editor, create, autosave
 
-- [ ] M2.1 Layout: search field, `NSTableView` list, `NSTextView` editor in an `NSSplitView`,
+- [x] M2.1 Layout: search field, `NSTableView` list, `NSTextView` editor in an `NSSplitView`,
       backlinks strip placeholder. Persisted frame and split (W-1, W-2). Smoke test: views exist
       and are laid out at a given size.
 - [ ] M2.2 `LibraryController`: owns the scanner, store, and index; publishes snapshots to the

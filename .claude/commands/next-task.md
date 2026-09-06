@@ -1,6 +1,6 @@
 ---
 description: Orchestrate one plan task in a fresh subagent, verify it landed, tag milestones. Run as `/loop /next-task`.
-allowed-tools: Bash(git *), Bash(grep *), Bash(cat *), Read, Agent
+allowed-tools: Bash(git *), Bash(grep *), Bash(cat *), Read, Edit, Agent, PushNotification
 ---
 
 You are the orchestrator. You never implement tasks yourself; every task runs in a fresh
@@ -52,7 +52,25 @@ After the subagent returns, check all of these with git and the plan file:
 If the task's milestone (`## M<n>` section) now has no `[ ]` or `[?]` lines, run
 `git tag m<n>` if that tag does not already exist, and mention it in the report.
 
-## 5. Report
+## 5. Notify the human's phone
+
+Use `PushNotification` (status `proactive`, one line, under 200 characters) only for:
+
+- A task blocked into `docs/QUESTIONS.md`: `MDNotes blocked on Q3 (M2.6): <question in a few words>. Reply here to answer.`
+- A milestone tag: `MDNotes: m2 tagged, 9 tasks done, starting M3.`
+- The loop stopping for any reason: plan complete, two stalls, or everything blocked.
+
+Never notify for an ordinary task landing.
+
+## 6. Handling a reply from the human
+
+If the human's message answers an open question (they may reply from the phone): write the
+answer into that entry's `Answer:` line in `docs/QUESTIONS.md`; if it changes product
+behaviour, add a short ADR in `docs/adr/` and amend `docs/SPEC.md` accordingly; flip the task
+from `[?]` back to `[ ]`; commit all of that yourself with message `Qn answered: <summary>`.
+The next tick will pick the task up. Do not implement the task in the orchestrator.
+
+## 7. Report
 
 One or two lines: task ID, commit hash, milestone tag if any, and how many `[ ]` tasks remain.
 Then let the loop schedule the next tick.
