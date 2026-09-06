@@ -7,7 +7,7 @@ import XCTest
 
 /// Headless smoke tests for autosave (E-4), its atomic write (E-5) and the record it leaves
 /// for the watcher (E-6). Edits go through the real text view, so they take the same
-/// `textDidChange` path a keystroke does, and the autosave delay runs on a clock the test
+/// text-storage path a keystroke does, and the autosave delay runs on a clock the test
 /// advances by hand.
 @MainActor
 final class AutosaveSmokeTests: XCTestCase {

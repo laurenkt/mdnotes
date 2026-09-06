@@ -60,6 +60,10 @@ public final class MainView: NSView, NSSplitViewDelegate {
         backlinksStrip.setContentHuggingPriority(.required, for: .vertical)
         splitView.setContentHuggingPriority(.defaultLow, for: .vertical)
         splitView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        // E-8: the editor font follows the preference for as long as the view lives.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(defaultsDidChange(_:)), name: UserDefaults.didChangeNotification,
+            object: defaults)
     }
 
     @available(*, unavailable)
@@ -87,6 +91,21 @@ public final class MainView: NSView, NSSplitViewDelegate {
         guard !messageLabel.isHidden else { return }
         messageLabel.stringValue = ""
         messageLabel.isHidden = true
+    }
+
+    // MARK: - Editor font (E-8)
+
+    /// Sets the editor's font from the preference if it differs from the font in use. Called
+    /// whenever the defaults change; the check keeps unrelated writes, such as the split
+    /// position persisting during a drag, from relaying out the text.
+    public func applyEditorFont() {
+        let font = EditorFontPreference.font(from: defaults)
+        guard textView.font != font else { return }
+        textView.font = font
+    }
+
+    @objc private func defaultsDidChange(_ notification: Notification) {
+        applyEditorFont()
     }
 
     // MARK: - Keyboard (S-7)
@@ -200,7 +219,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
         text.isAutomaticDashSubstitutionEnabled = false
         text.isAutomaticTextReplacementEnabled = false
         text.isAutomaticSpellingCorrectionEnabled = false
-        text.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        text.font = EditorFontPreference.font(from: .standard)
         text.textContainerInset = NSSize(width: 8, height: 8)
         return (scroll, text)
     }

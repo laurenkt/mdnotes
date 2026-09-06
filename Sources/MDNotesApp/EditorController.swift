@@ -14,10 +14,17 @@ import MDNotesCore
 /// ignore (E-6). Reads and writes share one serial queue, so a note reopened right after a
 /// switch shows what was just written.
 ///
+/// Undo is per note (E-7): each note the editor has shown owns an `UndoManager`, handed to the
+/// text view through the delegate, so Cmd-Z in one note never touches another and a note's
+/// stack is still there after switching away and back within the session. Loading replaces
+/// the text without registering anything. A stack only replays against the text it was
+/// recorded on, so if a note's text has changed on disk while it was away the stack is
+/// discarded rather than applied to the wrong ranges.
+///
 /// It is also the text view's delegate: Escape in the editor is handed to `onCancel` (S-7)
 /// instead of the text view's default, which offers completions.
 @MainActor
-public final class EditorController: NSObject, NSTextViewDelegate {
+public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
     /// How long after the last edit the note is written (E-4).
     nonisolated public static let autosaveDelay: TimeInterval = 0.3
 
@@ -53,12 +60,40 @@ public final class EditorController: NSObject, NSTextViewDelegate {
     /// is dropped.
     private var generation = 0
 
+    /// The undo stack of one note (E-7), kept for the session.
+    @MainActor
+    private final class NoteUndo {
+        let manager = UndoManager()
+        /// The text the view showed when the note was last switched away from; nil while the
+        /// note is shown or has never been shown. Checked on reload before the stack is reused.
+        var textWhenLeft: String?
+    }
+    private var undoStacks: [NoteID: NoteUndo] = [:]
+    /// The note whose text the view holds: set once a read lands, nil while one is in flight.
+    /// Edits made in the gap register nowhere that matters.
+    private var shownNoteID: NoteID?
+    /// Collects registrations made while no note is shown; thrown away on the next load.
+    private var scratchUndoManager: UndoManager
+    /// True while the controller itself is replacing the text, so the storage's edit
+    /// notification is not taken for a user edit.
+    private var isReplacingText = false
+
     public init(textView: NSTextView, clock: any AutosaveClock = SystemAutosaveClock()) {
         self.textView = textView
         self.clock = clock
+        scratchUndoManager = UndoManager()
         super.init()
         textView.isEditable = false
+        textView.allowsUndo = true
         textView.delegate = self
+        textView.textStorage?.delegate = self
+    }
+
+    /// Replaces the whole text without it counting as an edit or registering with undo (E-7).
+    private func replaceText(with text: String) {
+        isReplacingText = true
+        defer { isReplacingText = false }
+        textView.string = text
     }
 
     // MARK: - NSTextViewDelegate
@@ -71,10 +106,51 @@ public final class EditorController: NSObject, NSTextViewDelegate {
         return false
     }
 
-    /// An edit by the user. Programmatic replacement of the text, as `load` does, never
-    /// arrives here. Restarts the autosave delay (E-4).
-    public func textDidChange(_ notification: Notification) {
-        guard noteID != nil, body?.isWritable == true else { return }
+    /// E-7: the text view registers its edits with the shown note's own manager, so Cmd-Z and
+    /// Cmd-Shift-Z (which reach the window and ask the first responder for its manager) act on
+    /// that note alone.
+    public func undoManager(for view: NSTextView) -> UndoManager? {
+        guard let shownNoteID else { return scratchUndoManager }
+        return undoStack(for: shownNoteID).manager
+    }
+
+    private func undoStack(for id: NoteID) -> NoteUndo {
+        if let stack = undoStacks[id] { return stack }
+        let stack = NoteUndo()
+        undoStacks[id] = stack
+        return stack
+    }
+
+    /// Closes the shown note's typing run and remembers the text its stack was recorded on,
+    /// before the view moves on to another note or to nothing.
+    private func leaveShownNote() {
+        textView.breakUndoCoalescing()
+        if let shownNoteID {
+            undoStack(for: shownNoteID).textWhenLeft = textView.string
+        }
+        shownNoteID = nil
+        scratchUndoManager = UndoManager()
+    }
+
+    // MARK: - NSTextStorageDelegate
+
+    /// An edit to the text: typing, paste, undo and redo all pass through here, which is why
+    /// the signal is the storage's and not the text view's `textDidChange` (undo does not post
+    /// that). Attribute-only changes, such as the font preference (E-8), are not edits.
+    /// Programmatic replacement of the text, as `load` does, is masked off. Restarts the
+    /// autosave delay (E-4). The protocol is not main-actor isolated in the SDK, but the
+    /// storage belongs to a view that is only ever edited on the main thread.
+    nonisolated public func textStorage(
+        _ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
+        range editedRange: NSRange,
+        changeInLength delta: Int
+    ) {
+        guard editedMask.contains(.editedCharacters) else { return }
+        MainActor.assumeIsolated { textDidEdit() }
+    }
+
+    private func textDidEdit() {
+        guard !isReplacingText, noteID != nil, body?.isWritable == true else { return }
         hasUnsavedEdits = true
         pendingSave?.cancel()
         pendingSave = clock.schedule(at: clock.now.addingTimeInterval(Self.autosaveDelay)) { [weak self] in
@@ -89,6 +165,7 @@ public final class EditorController: NSObject, NSTextViewDelegate {
     /// downloaded, unreadable) is shown read-only (L-7, L-8).
     public func load(_ id: NoteID, from library: LibraryController) {
         flush()
+        leaveShownNote()
         generation += 1
         let generation = generation
         noteID = id
@@ -109,11 +186,12 @@ public final class EditorController: NSObject, NSTextViewDelegate {
     /// Writes any unsaved edits (E-4), then empties the editor. Any read in flight is dropped.
     public func clear() {
         flush()
+        leaveShownNote()
         generation += 1
         noteID = nil
         body = nil
         library = nil
-        textView.string = ""
+        replaceText(with: "")
         textView.isEditable = false
         onLoad?(nil)
     }
@@ -124,11 +202,24 @@ public final class EditorController: NSObject, NSTextViewDelegate {
         // The text is being replaced, so nothing typed into the old text is pending any more.
         cancelPendingSave()
         hasUnsavedEdits = false
-        textView.string = body?.displayText ?? ""
+        let text = body?.displayText ?? ""
+        replaceText(with: text)
         textView.isEditable = body?.isWritable ?? false
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        resumeUndo(for: id, showing: text)
         onLoad?(id)
+    }
+
+    /// E-7: makes `id`'s stack the one the view registers with. If the note has changed since
+    /// it was left, its stack was recorded against text the view no longer holds and is dropped.
+    private func resumeUndo(for id: NoteID, showing text: String) {
+        let stack = undoStack(for: id)
+        if let left = stack.textWhenLeft, left != text {
+            stack.manager.removeAllActions()
+        }
+        stack.textWhenLeft = nil
+        shownNoteID = id
     }
 
     // MARK: - Autosave (E-4)
