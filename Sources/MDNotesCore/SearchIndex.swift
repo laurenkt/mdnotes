@@ -24,12 +24,14 @@ public struct SearchIndex: Sendable {
         static let empty = Arena(bytes: [])
     }
 
-    /// One indexed note. `title` and `body` are lowercase; the note's display title is `id.title`.
+    /// One indexed note. `title` and `body` are lowercase; the note's display title is `id.title`
+    /// and its display snippet is `preview`.
     public struct Entry: Hashable, Sendable {
         public let id: NoteID
         public let modifiedAt: Date
         let titleRange: Range<Int>
         let bodyRange: Range<Int>
+        let previewRange: Range<Int>
         let arena: Arena
 
         /// The title (L-5), case-folded.
@@ -38,6 +40,10 @@ public struct SearchIndex: Sendable {
         /// The body text, case-folded. Empty when the file is unreadable (L-7): such a note is
         /// indexed by title only.
         public var body: String { String(decoding: arena.bytes[bodyRange], as: UTF8.self) }
+
+        /// The single-line, original-case snippet of the body a list row shows (S-6). Empty when
+        /// the body is empty or unreadable. Not searched: it duplicates the start of `body`.
+        public var preview: String { String(decoding: arena.bytes[previewRange], as: UTF8.self) }
 
         public static func == (lhs: Entry, rhs: Entry) -> Bool {
             lhs.id == rhs.id && lhs.modifiedAt == rhs.modifiedAt && lhs.title == rhs.title && lhs.body == rhs.body
@@ -60,16 +66,18 @@ public struct SearchIndex: Sendable {
         public subscript(position: Int) -> Entry { index.entries[Int(positions[position])] }
     }
 
-    /// A note's folded text before it is packed into a snapshot.
+    /// A note's folded text, plus its display preview, before it is packed into a snapshot.
     struct FoldedNote: Sendable {
         let modifiedAt: Date
         let title: [UInt8]
         let body: [UInt8]
+        let preview: [UInt8]
 
         init(id: NoteID, modifiedAt: Date, body: String) {
             self.modifiedAt = modifiedAt
             title = Array(CaseFolding.fold(id.title).utf8)
             self.body = Array(CaseFolding.fold(body).utf8)
+            preview = Array(BodySnippet.make(from: body).utf8)
         }
     }
 
@@ -106,7 +114,8 @@ public struct SearchIndex: Sendable {
     public let entries: [Entry]
 
     /// Where each entry's folded text sits in the arena, in `entries` order. A plain-value copy
-    /// of the ranges in `Entry` so the query loop never touches reference counts.
+    /// of the ranges in `Entry` so the query loop never touches reference counts. The preview
+    /// bytes that follow each body are not covered: they are display text, not searched.
     struct Span {
         let titleStart: Int32
         let bodyStart: Int32
@@ -121,12 +130,14 @@ public struct SearchIndex: Sendable {
         let modifiedAt: Date
         let title: ArraySlice<UInt8>
         let body: ArraySlice<UInt8>
+        let preview: ArraySlice<UInt8>
 
         init(id: NoteID, note: FoldedNote) {
             self.id = id
             modifiedAt = note.modifiedAt
             title = note.title[...]
             body = note.body[...]
+            preview = note.preview[...]
         }
 
         init(entry: Entry) {
@@ -134,6 +145,7 @@ public struct SearchIndex: Sendable {
             modifiedAt = entry.modifiedAt
             title = entry.arena.bytes[entry.titleRange]
             body = entry.arena.bytes[entry.bodyRange]
+            preview = entry.arena.bytes[entry.previewRange]
         }
     }
 
@@ -144,23 +156,27 @@ public struct SearchIndex: Sendable {
         return a.id.relativePath < b.id.relativePath
     }
 
-    /// Packs `items`, which must already be in list order, into a fresh arena.
+    /// Packs `items`, which must already be in list order, into a fresh arena: for each note its
+    /// folded title, folded body and display preview, back to back.
     private init(ordered items: [Item]) {
         var bytes: [UInt8] = []
-        bytes.reserveCapacity(items.reduce(0) { $0 + $1.title.count + $1.body.count })
-        var ranges: [(title: Range<Int>, body: Range<Int>)] = []
+        bytes.reserveCapacity(items.reduce(0) { $0 + $1.title.count + $1.body.count + $1.preview.count })
+        var ranges: [(title: Range<Int>, body: Range<Int>, preview: Range<Int>)] = []
         ranges.reserveCapacity(items.count)
         for item in items {
             let titleStart = bytes.count
             bytes.append(contentsOf: item.title)
             let bodyStart = bytes.count
             bytes.append(contentsOf: item.body)
-            ranges.append((titleStart..<bodyStart, bodyStart..<bytes.count))
+            let previewStart = bytes.count
+            bytes.append(contentsOf: item.preview)
+            ranges.append((titleStart..<bodyStart, bodyStart..<previewStart, previewStart..<bytes.count))
         }
         let arena = items.isEmpty ? Arena.empty : Arena(bytes: bytes)
         entries = zip(items, ranges).map { item, range in
             Entry(
-                id: item.id, modifiedAt: item.modifiedAt, titleRange: range.title, bodyRange: range.body, arena: arena)
+                id: item.id, modifiedAt: item.modifiedAt, titleRange: range.title, bodyRange: range.body,
+                previewRange: range.preview, arena: arena)
         }
         spans = ranges.map { range in
             Span(

@@ -12,6 +12,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController = controller
 
         let library = LibraryController(root: LibraryController.defaultRoot)
+        controller.attach(library)
         library.start()
         libraryController = library
     }

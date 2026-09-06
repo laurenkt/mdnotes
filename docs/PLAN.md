@@ -42,7 +42,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M2.2 `LibraryController`: owns the scanner, store, and index; publishes snapshots to the
       main thread (PF-6). Progressive population during initial scan (PF-7). Smoke test with
       synthetic library: list count reaches N.
-- [ ] M2.3 List data source and row view (S-6). Selection loads the editor (S-8). Smoke test:
+- [x] M2.3 List data source and row view (S-6). Selection loads the editor (S-8). Smoke test:
       select row, editor text equals file body.
 - [ ] M2.4 Search field wiring: every keystroke re-queries and reloads the table (S-1, S-5).
       `ListPerfTests`: PF-2 keystroke-to-reload measured around the real controller path with
