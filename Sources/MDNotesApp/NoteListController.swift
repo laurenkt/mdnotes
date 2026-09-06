@@ -67,6 +67,19 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
         syncSelection()
     }
 
+    /// Selects the row showing `id` and scrolls it into view. Returns false, changing nothing,
+    /// when the note is not listed.
+    @discardableResult
+    public func select(_ id: NoteID) -> Bool {
+        guard let row = results.firstIndex(where: { $0.id == id }) else { return false }
+        if tableView.selectedRow != row {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        tableView.scrollRowToVisible(row)
+        syncSelection()
+        return true
+    }
+
     // MARK: - NSTableViewDataSource
 
     public func numberOfRows(in tableView: NSTableView) -> Int {

@@ -28,6 +28,14 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// The query the list currently shows: the search field's text as of the last reload.
     public private(set) var query = ""
 
+    /// The message shown under the search field (C-3), or nil while none is shown. Cleared
+    /// by the next change to the query.
+    public private(set) var inlineMessage: String?
+
+    /// Called on the main thread once Enter's create-or-open has settled: with the note that
+    /// was opened or created, or nil when the query was rejected or the write failed.
+    public var onCommitQuery: (@MainActor (NoteID?) -> Void)?
+
     public init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
@@ -85,6 +93,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         let text = mainView.searchField.stringValue
         guard text != query else { return }
         query = text
+        hideInlineMessage()
         reloadList()
     }
 
@@ -102,7 +111,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
 
     /// Command selectors the search field's editor receives. Down arrow selects the first row
     /// and moves focus to the list; Escape clears the query and leaves focus in the field
-    /// (S-7). Anything else, Enter included, keeps the field's own behaviour.
+    /// (S-7); Enter opens or creates the note the query names (C-1). Anything else keeps the
+    /// field's own behaviour.
     public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard control === mainView.searchField else { return false }
         switch commandSelector {
@@ -112,9 +122,91 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         case #selector(NSResponder.cancelOperation(_:)):
             clearQueryAndFocusSearchField()
             return true
+        case #selector(NSResponder.insertNewline(_:)):
+            return commitQuery()
         default:
             return false
         }
+    }
+
+    // MARK: - Create on Enter (C-1 to C-4)
+
+    /// Enter in the search field (C-1). With a blank query nothing happens and false is
+    /// returned. Otherwise the query, trimmed (C-2), is compared case-insensitively with every
+    /// listed note's title; a match is opened and the editor focused. With no match the note
+    /// is created (C-2) unless the query cannot name a file, in which case the reason is shown
+    /// under the field and nothing is written (C-3). Creation is asynchronous: the file is
+    /// written off the main thread, and once the snapshot lists the note it is selected and
+    /// the empty editor focused, with the query left in the field (C-4). `onCommitQuery`
+    /// reports the outcome.
+    @discardableResult
+    public func commitQuery() -> Bool {
+        let text = mainView.searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let library else { return false }
+        hideInlineMessage()
+        if let existing = existingNote(matching: text, in: library.snapshot) {
+            open(existing)
+            onCommitQuery?(existing)
+            return true
+        }
+        let id: NoteID
+        do {
+            id = try NoteCreation.noteID(forQuery: text)
+        } catch {
+            showInlineMessage(error.message)
+            onCommitQuery?(nil)
+            return true
+        }
+        library.create(id) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .success:
+                open(id)
+                onCommitQuery?(id)
+            case .failure(let error):
+                showInlineMessage(error.localizedDescription)
+                onCommitQuery?(nil)
+            }
+        }
+        return true
+    }
+
+    /// The note Enter opens instead of creating (C-1): the note at exactly the path the query
+    /// would create, if there is one, so an existing file is never written over; otherwise
+    /// the most recently modified note whose title equals the query. Both comparisons ignore
+    /// case, like the file system does.
+    private func existingNote(matching text: String, in snapshot: SearchIndex) -> NoteID? {
+        var titleMatch: NoteID?
+        // Entries are in list order, so the first title match is the most recently modified.
+        for entry in snapshot.entries {
+            if CaseFolding.areEqual(NoteCreation.queryForm(of: entry.id), text) { return entry.id }
+            if titleMatch == nil, CaseFolding.areEqual(entry.id.title, text) { titleMatch = entry.id }
+        }
+        return titleMatch
+    }
+
+    /// Selects `id` in the list, which loads it into the editor (S-8), and focuses the editor.
+    /// A note the current query does not list is loaded into the editor directly, with the
+    /// list's selection cleared so the two never disagree.
+    private func open(_ id: NoteID) {
+        if listController.select(id) {
+            focusEditor()
+        } else if let library {
+            mainView.tableView.deselectAll(nil)
+            editorController.load(id, from: library.store)
+            window?.makeFirstResponder(mainView.textView)
+        }
+    }
+
+    private func showInlineMessage(_ text: String) {
+        inlineMessage = text
+        mainView.showMessage(text)
+    }
+
+    private func hideInlineMessage() {
+        guard inlineMessage != nil else { return }
+        inlineMessage = nil
+        mainView.hideMessage()
     }
 
     /// S-7: Cmd-L, the menu item and the hotkey. Focuses the search field, selecting its text.

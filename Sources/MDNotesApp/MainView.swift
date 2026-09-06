@@ -15,6 +15,8 @@ public final class MainView: NSView, NSSplitViewDelegate {
     nonisolated public static let backlinksStripHeight: CGFloat = 28
 
     public let searchField: NSSearchField
+    /// The inline message under the search field (C-3). Hidden until `showMessage(_:)`.
+    public let messageLabel: NSTextField
     public let splitView: NSSplitView
     public let listScrollView: NSScrollView
     public let tableView: NoteTableView
@@ -29,11 +31,12 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public override init(frame frameRect: NSRect) {
         defaults = .standard
         searchField = Self.makeSearchField()
+        messageLabel = Self.makeMessageLabel()
         (listScrollView, tableView) = Self.makeList()
         (editorScrollView, textView) = Self.makeEditor()
         backlinksStrip = Self.makeBacklinksStrip()
         splitView = Self.makeSplitView(top: listScrollView, bottom: editorScrollView)
-        stack = NSStackView(views: [searchField, splitView, backlinksStrip])
+        stack = NSStackView(views: [searchField, messageLabel, splitView, backlinksStrip])
         super.init(frame: frameRect)
 
         splitView.delegate = self
@@ -53,6 +56,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
         ])
         // The split view takes every point the search field and strip do not need.
         searchField.setContentHuggingPriority(.required, for: .vertical)
+        messageLabel.setContentHuggingPriority(.required, for: .vertical)
         backlinksStrip.setContentHuggingPriority(.required, for: .vertical)
         splitView.setContentHuggingPriority(.defaultLow, for: .vertical)
         splitView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
@@ -68,6 +72,21 @@ public final class MainView: NSView, NSSplitViewDelegate {
         guard window != nil, !hasRestoredSplit else { return }
         hasRestoredSplit = true
         restoreSplitPosition()
+    }
+
+    // MARK: - Inline message (C-3)
+
+    /// Shows `text` under the search field. Shown until `hideMessage()`; the stack view
+    /// gives it a line of height only while it is visible.
+    public func showMessage(_ text: String) {
+        messageLabel.stringValue = text
+        messageLabel.isHidden = false
+    }
+
+    public func hideMessage() {
+        guard !messageLabel.isHidden else { return }
+        messageLabel.stringValue = ""
+        messageLabel.isHidden = true
     }
 
     // MARK: - Keyboard (S-7)
@@ -132,6 +151,16 @@ public final class MainView: NSView, NSSplitViewDelegate {
         field.sendsWholeSearchString = false
         field.translatesAutoresizingMaskIntoConstraints = false
         return field
+    }
+
+    private static func makeMessageLabel() -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .systemRed
+        label.maximumNumberOfLines = 2
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isHidden = true
+        return label
     }
 
     private static func makeList() -> (NSScrollView, NoteTableView) {

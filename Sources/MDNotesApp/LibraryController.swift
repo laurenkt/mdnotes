@@ -122,6 +122,48 @@ public final class LibraryController {
         }
     }
 
+    // MARK: - Creation (C-2)
+
+    /// Creates the empty file for `id` on the background queue (PF-6), folds the new note
+    /// into the snapshot without rereading disk, publishes it, and then calls `completion` on
+    /// the main thread. By the time `completion` runs the published snapshot already lists
+    /// the note, so the caller can select it at once (C-4). A file that already exists is left
+    /// untouched and still reported as a success (C-1 opens it instead). If the library is
+    /// stopped or restarted before the write lands, `completion` is never called.
+    public func create(_ id: NoteID, completion: @escaping @MainActor (Result<NoteStore.Creation, any Error>) -> Void) {
+        let generation = generation
+        let store = store
+        queue.async { [self] in
+            guard worker.isCurrent(generation) else { return }
+            let outcome: Result<NoteStore.Creation, any Error>
+            do {
+                let creation = try store.create(id)
+                let changes = LibraryChanges(added: [id])
+                let (index, phase) = worker.update { state in
+                    state.touchedSinceScan.insert(id)
+                    if creation.created {
+                        // The body is known to be empty; no need to read the file back.
+                        state.index = state.index.applying(changes: changes) { _ in
+                            (modifiedAt: creation.modifiedAt, body: "")
+                        }
+                    } else {
+                        state.index = state.index.applying(changes: changes, store: store)
+                    }
+                }
+                publish(index, phase: phase, generation: generation)
+                outcome = .success(creation)
+            } catch {
+                outcome = .failure(error)
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard generation == self.generation else { return }
+                    completion(outcome)
+                }
+            }
+        }
+    }
+
     // MARK: - Progressive population (PF-7)
 
     /// Reads one batch of bodies on the queue, publishes, and queues the next batch. Each batch

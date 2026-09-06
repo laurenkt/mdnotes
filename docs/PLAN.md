@@ -49,8 +49,11 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       20k notes.
 - [x] M2.5 Keyboard flow S-7 and S-8. Smoke test drives `keyDown` / responder chain and asserts
       first responder.
-- [ ] M2.6 Create on Enter: C-1 to C-4 including nested `/` paths and illegal characters. Smoke
-      tests for each rule.
+- [x] M2.6a Create on Enter: C-1 to C-4 including nested `/` paths on disk and illegal
+      characters. Smoke tests for each rule. (Split from M2.6: the list and selection after a
+      nested-path create or open is M2.6b.)
+- [?] M2.6b Nested-path create/open in the list (C-4 vs S-2, L-5): after Enter on `daily/foo`
+      the kept query does not list the new note, so it cannot be selected. Blocked on Q1.
 - [ ] M2.7 Autosave E-4, E-5, E-6 with a testable clock. Smoke test: edit, advance clock, file
       updated; switch note, file updated immediately.
 - [ ] M2.8 Undo per note (E-7). Font preference (E-8) read from `UserDefaults`.
