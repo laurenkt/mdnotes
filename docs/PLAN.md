@@ -67,7 +67,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       file operations, with timeouts.
 - [x] M3.2 Own-write suppression (E-6): writer records (path, mtime) and watcher drops matching
       events. Test: autosave does not trigger a reload.
-- [ ] M3.3 External edit rules X-2, X-3, X-4. Smoke tests for each, including the dirty-editor
+- [x] M3.3 External edit rules X-2, X-3, X-4. Smoke tests for each, including the dirty-editor
       case where the editor's text overwrites disk at next autosave.
 - [ ] M3.4 Delete D-1, D-2 via `NSWorkspace.shared.recycle`. Smoke test asserts the file is gone
       from the library and the list updates before the watcher fires.

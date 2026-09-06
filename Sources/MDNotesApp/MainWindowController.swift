@@ -16,6 +16,14 @@ import MDNotesCore
 ///
 /// Autosave (E-4) lives in `EditorController`; this controller adds the window-level trigger,
 /// writing unsaved edits when the window stops being key.
+///
+/// External changes to the open note (X-2 to X-4) are wired here too. A snapshot that no
+/// longer lists the editor's note means its file is gone: the editor is told (X-4), and the
+/// list selection moves to the row that took the deleted one's place, unless the editor is
+/// holding unsaved edits, in which case the list is left with no selection so the held text
+/// is not replaced by another note (S-8 loads a selected row into the editor). External
+/// modifications reported by the library reread the note when the editor is clean (X-2) and
+/// are left to the next autosave to overwrite when it is not (X-3).
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -88,8 +96,10 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// selected note is read from its store. Replaces any library attached before.
     public func attach(_ library: LibraryController) {
         self.library?.onSnapshotChange = nil
+        self.library?.onExternalChanges = nil
         self.library = library
         library.onSnapshotChange = { [weak self] snapshot in self?.libraryDidPublish(snapshot) }
+        library.onExternalChanges = { [weak self] changes in self?.libraryDidChangeExternally(changes) }
         libraryDidPublish(library.snapshot)
     }
 
@@ -258,6 +268,10 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     }
 
     private func libraryDidPublish(_ snapshot: SearchIndex) {
+        if let id = editorController.noteID, snapshot.entry(for: id) == nil {
+            openNoteWasDeleted(id, snapshot: snapshot)
+            return
+        }
         // A fresh snapshot is shown through the query the user has typed; it is never reset.
         reloadList()
     }
@@ -267,14 +281,50 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     private func reloadList() {
         let snapshot = library?.snapshot ?? .empty
         listController.show(snapshot.query(query))
+        // The editor shows a note that is listed but not selected: it was opened while the
+        // query did not list it, or X-4 held its edits until typing recreated the file. The
+        // list catches up so the two agree (S-8); the editor is not reloaded for it.
+        if listController.selectedID == nil, let id = editorController.noteID, !editorController.holdsEditsOfDeletedNote
+        {
+            listController.select(id)
+        }
+    }
+
+    // MARK: - External changes to the open note (X-2, X-3, X-4)
+
+    /// The snapshot has stopped listing the editor's note: its file was deleted (X-4). The
+    /// editor is told first, so that the list's selection change cannot load another note
+    /// over unsaved edits. With none, the selection moves to the row that now sits where the
+    /// deleted note's row was (or the last row), which loads that note; a deleted note that was
+    /// open without being listed leaves nothing selected. With unsaved edits the list is left
+    /// with no selection and the editor keeps the text until the user types again.
+    private func openNoteWasDeleted(_ id: NoteID, snapshot: SearchIndex) {
+        let row = listController.selectedID == id ? mainView.tableView.selectedRow : -1
+        editorController.noteWasDeleted()
+        let fallbackRow = row >= 0 && !editorController.holdsEditsOfDeletedNote ? row : nil
+        listController.show(snapshot.query(query), fallbackRow: fallbackRow)
+    }
+
+    /// The library reports changes that were not ours (E-6). If the editor's note is among the
+    /// files changed on disk it is reread when there are no unsaved edits (X-2); with unsaved
+    /// edits the editor's text stands and the pending autosave writes it over the disk version
+    /// (X-3), so nothing is done here. Deletions are handled from the snapshot instead.
+    private func libraryDidChangeExternally(_ changes: LibraryChanges) {
+        guard let id = editorController.noteID, changes.modified.contains(id) || changes.added.contains(id) else {
+            return
+        }
+        editorController.reloadFromDisk()
     }
 
     /// S-8: the selected row's note goes into the editor. Focus is left where it is.
     private func showInEditor(_ entry: SearchIndex.Entry?) {
         guard let entry, let library else {
-            editorController.clear()
+            // X-4: the deleted note's row is gone, but its unsaved edits stay in the view.
+            if !editorController.holdsEditsOfDeletedNote { editorController.clear() }
             return
         }
+        // The note is already in the editor (see `reloadList`); reloading would move the caret.
+        if entry.id == editorController.noteID { return }
         editorController.load(entry.id, from: library)
     }
 }

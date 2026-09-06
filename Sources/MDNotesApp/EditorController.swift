@@ -21,6 +21,14 @@ import MDNotesCore
 /// recorded on, so if a note's text has changed on disk while it was away the stack is
 /// discarded rather than applied to the wrong ranges.
 ///
+/// External changes to the shown note (X-2 to X-4) are reported by the window controller, which
+/// hears about them from the library. A change on disk with no unsaved edits is reread through
+/// `reloadFromDisk()`, keeping the selection where it still fits (X-2); with unsaved edits
+/// nothing happens here, and the pending autosave writes the editor's text over the disk
+/// version (X-3). A deletion goes through `noteWasDeleted()` (X-4): a clean editor is cleared;
+/// one with unsaved edits keeps them in the view, `holdsEditsOfDeletedNote` is set, and no
+/// write happens until the user types again, which recreates the file.
+///
 /// It is also the text view's delegate: Escape in the editor is handed to `onCancel` (S-7)
 /// instead of the text view's default, which offers completions.
 @MainActor
@@ -42,6 +50,12 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     /// True while the text view holds edits that have not been handed to a write.
     public private(set) var hasUnsavedEdits = false
+
+    /// X-4: true while the view holds unsaved edits of a note whose file was deleted on disk.
+    /// They are written, recreating the file, only once the user types again; until then a
+    /// `flush()` (note switch, focus loss, quit) writes nothing, and loading another note or
+    /// clearing the editor drops them.
+    public private(set) var holdsEditsOfDeletedNote = false
 
     /// Called on the main thread once the text view shows `noteID` (or nothing, after `clear()`).
     public var onLoad: (@MainActor (NoteID?) -> Void)?
@@ -151,6 +165,8 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     private func textDidEdit() {
         guard !isReplacingText, noteID != nil, body?.isWritable == true else { return }
+        // X-4: typing again is what brings a deleted note's file back.
+        holdsEditsOfDeletedNote = false
         hasUnsavedEdits = true
         pendingSave?.cancel()
         pendingSave = clock.schedule(at: clock.now.addingTimeInterval(Self.autosaveDelay)) { [weak self] in
@@ -165,19 +181,37 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// downloaded, unreadable) is shown read-only (L-7, L-8).
     public func load(_ id: NoteID, from library: LibraryController) {
         flush()
+        holdsEditsOfDeletedNote = false
         leaveShownNote()
+        noteID = id
+        self.library = library
+        read(id, from: library, restoring: nil)
+    }
+
+    /// X-2: the shown note changed on disk and the editor has no unsaved edits, so the file is
+    /// reread and shown, with the selection kept where it still fits in the new text. With
+    /// unsaved edits nothing is read: the editor's text is what the next autosave writes (X-3).
+    public func reloadFromDisk() {
+        guard let noteID, let library, !hasUnsavedEdits else { return }
+        // The undo stack was recorded against the old text; `resumeUndo` keeps it only if the
+        // reread text turns out to be the same (E-7).
+        leaveShownNote()
+        read(noteID, from: library, restoring: textView.selectedRange())
+    }
+
+    /// Reads `id` in the background and shows it; `selection` is what the view selects once
+    /// the text is in, clamped to it, or the start when nil.
+    private func read(_ id: NoteID, from library: LibraryController, restoring selection: NSRange?) {
         generation += 1
         let generation = generation
-        noteID = id
         body = nil
-        self.library = library
         let store = library.store
         queue.async { [self] in
             let body = try? store.read(id)
             if body == .notDownloaded { store.requestDownload(of: id) }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    self.receive(body, for: id, generation: generation)
+                    self.receive(body, for: id, generation: generation, restoring: selection)
                 }
             }
         }
@@ -186,6 +220,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// Writes any unsaved edits (E-4), then empties the editor. Any read in flight is dropped.
     public func clear() {
         flush()
+        holdsEditsOfDeletedNote = false
         leaveShownNote()
         generation += 1
         noteID = nil
@@ -196,7 +231,21 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         onLoad?(nil)
     }
 
-    private func receive(_ body: NoteBody?, for id: NoteID, generation: Int) {
+    /// X-4: the shown note's file is gone from disk. With no unsaved edits the editor is
+    /// cleared, as `clear()` does. With unsaved edits the text stays in the view and the
+    /// pending autosave is cancelled, so the file is not recreated behind the deletion; only
+    /// typing again schedules a write, which recreates it. Does nothing while no note is shown.
+    public func noteWasDeleted() {
+        guard noteID != nil else { return }
+        if hasUnsavedEdits {
+            cancelPendingSave()
+            holdsEditsOfDeletedNote = true
+        } else {
+            clear()
+        }
+    }
+
+    private func receive(_ body: NoteBody?, for id: NoteID, generation: Int, restoring selection: NSRange?) {
         guard generation == self.generation else { return }
         self.body = body
         // The text is being replaced, so nothing typed into the old text is pending any more.
@@ -205,10 +254,19 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         let text = body?.displayText ?? ""
         replaceText(with: text)
         textView.isEditable = body?.isWritable ?? false
-        textView.setSelectedRange(NSRange(location: 0, length: 0))
-        textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        let range = Self.clamp(selection ?? NSRange(location: 0, length: 0), to: text)
+        textView.setSelectedRange(range)
+        textView.scrollRangeToVisible(range)
         resumeUndo(for: id, showing: text)
         onLoad?(id)
+    }
+
+    /// `range` moved and shortened as needed to lie within `text` (X-2: "preserving selection
+    /// where possible").
+    private static func clamp(_ range: NSRange, to text: String) -> NSRange {
+        let length = (text as NSString).length
+        let location = min(range.location, length)
+        return NSRange(location: location, length: min(range.length, length - location))
     }
 
     /// E-7: makes `id`'s stack the one the view registers with. If the note has changed since
@@ -227,9 +285,11 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// Writes the note now if it has unsaved edits: on note switch, window focus loss and quit
     /// (E-4). `completion` runs on the main thread once the write has landed or failed, or at
     /// once when there was nothing to write. The write itself runs off the main thread (PF-6).
+    /// The edits of a deleted note are not written here: X-4 has them re-saved only once the
+    /// user types again.
     public func flush(completion: (@MainActor () -> Void)? = nil) {
         cancelPendingSave()
-        guard hasUnsavedEdits, let noteID, let library else {
+        guard hasUnsavedEdits, !holdsEditsOfDeletedNote, let noteID, let library else {
             completion?()
             return
         }

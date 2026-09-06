@@ -53,14 +53,21 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     }
 
     /// Replaces the list's contents. The selected note stays selected if it is still listed,
-    /// wherever it moved to; if it is gone the selection clears.
-    public func show(_ results: SearchIndex.Results) {
+    /// wherever it moved to. If it is gone the selection clears, unless `fallbackRow` is given:
+    /// then the row now at that index is selected, or the last row when the list has become
+    /// shorter than that. Passing the vanished note's old row makes the selection move to the
+    /// next row, as X-4 and D-1 want after a deletion.
+    public func show(_ results: SearchIndex.Results, fallbackRow: Int? = nil) {
         self.results = results
         tableView.reloadData()
         if let selectedID, let row = results.firstIndex(where: { $0.id == selectedID }) {
             if tableView.selectedRow != row {
                 tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             }
+        } else if let fallbackRow, !results.isEmpty {
+            let row = min(max(fallbackRow, 0), results.count - 1)
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            tableView.scrollRowToVisible(row)
         } else if tableView.selectedRow >= 0 {
             tableView.deselectAll(nil)
         }
