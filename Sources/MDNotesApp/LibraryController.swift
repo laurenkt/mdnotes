@@ -79,18 +79,16 @@ public final class LibraryController {
         let root = root
         queue.async { [self] in
             guard worker.isCurrent(generation) else { return }
-            let notes: [ScannedNote]
+            let titlesOnly: SearchIndex
             do {
-                notes = try LibraryScanner.scan(root: root).sorted(by: Self.mostRecentFirst)
+                titlesOnly = SearchIndex.titlesOnly(try LibraryScanner.scan(root: root))
             } catch {
                 publish(.empty, phase: .failed(error.localizedDescription), generation: generation)
                 return
             }
-            var builder = SearchIndex.Builder()
-            for note in notes {
-                builder.add(id: note.id, modifiedAt: note.modifiedAt)
-            }
-            let titlesOnly = builder.build()
+            // Bodies are read in list order, most recently modified first, so the rows at the
+            // top of the list, the ones on screen at launch, get their snippets first (S-3, PF-7).
+            let notes = titlesOnly.entries.map { ScannedNote(id: $0.id, modifiedAt: $0.modifiedAt) }
             let phase: Phase = notes.isEmpty ? .ready : .indexing(bodiesRead: 0, of: notes.count)
             worker.replace(titlesOnly, phase: phase)
             publish(titlesOnly, phase: phase, generation: generation)
@@ -213,13 +211,6 @@ public final class LibraryController {
             publish(index, phase: phase, generation: generation)
             enqueueBatch(of: notes, from: end, generation: generation)
         }
-    }
-
-    /// Bodies are read most recently modified first so the rows at the top of the list, which
-    /// are the ones on screen at launch, get their snippets first (S-3, PF-7).
-    nonisolated private static func mostRecentFirst(_ a: ScannedNote, _ b: ScannedNote) -> Bool {
-        if a.modifiedAt != b.modifiedAt { return a.modifiedAt > b.modifiedAt }
-        return a.id.relativePath < b.id.relativePath
     }
 
     // MARK: - Publishing (PF-6)

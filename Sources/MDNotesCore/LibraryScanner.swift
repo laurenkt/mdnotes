@@ -38,6 +38,7 @@ public enum LibraryScanner {
     private static let resourceKeys: [URLResourceKey] = [
         .nameKey, .isDirectoryKey, .contentModificationDateKey,
     ]
+    private static let resourceKeySet = Set(resourceKeys)
 
     private static func walk(
         directory: URL, relativePrefix: String, isRoot: Bool, into notes: inout [ScannedNote]
@@ -52,7 +53,7 @@ public enum LibraryScanner {
         }
 
         for entry in entries {
-            let values = try? entry.resourceValues(forKeys: Set(resourceKeys))
+            let values = try? entry.resourceValues(forKeys: resourceKeySet)
             let name = values?.name ?? entry.lastPathComponent
             if name.hasPrefix(".") { continue }
             if isRoot && skippedRootFolders.contains(name) { continue }

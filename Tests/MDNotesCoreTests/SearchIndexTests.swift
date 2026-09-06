@@ -208,4 +208,27 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertEqual(paths(snapshot.query("beta")), [])
         XCTAssertEqual(builder.build().count, 2)
     }
+
+    // MARK: PF-7 titles-only launch snapshot
+
+    func testPF7_titlesOnlySnapshotMatchesTheBuilderWithEmptyBodies() {
+        // Two notes share a modification date so the path tie-break is exercised.
+        let scanned = [
+            ScannedNote(id: NoteID(relativePath: "b.md"), modifiedAt: at(2)),
+            ScannedNote(id: NoteID(relativePath: "daily/2026/Kupka.md"), modifiedAt: at(5)),
+            ScannedNote(id: NoteID(relativePath: "a.md"), modifiedAt: at(2)),
+            ScannedNote(id: NoteID(relativePath: "Zebra.md"), modifiedAt: at(1)),
+        ]
+        let titlesOnly = SearchIndex.titlesOnly(scanned)
+        let built = index(scanned.map { ($0.id.relativePath, Int($0.modifiedAt.timeIntervalSince(epoch) / 60), "") })
+
+        XCTAssertEqual(titlesOnly.count, 4)
+        XCTAssertEqual(paths(titlesOnly.entries), ["daily/2026/Kupka.md", "a.md", "b.md", "Zebra.md"])
+        XCTAssertEqual(titlesOnly.entries, built.entries, "same entries, same order, same folded text")
+        XCTAssertEqual(titlesOnly.entries.map(\.title), ["kupka", "a", "b", "zebra"])
+        XCTAssertTrue(titlesOnly.entries.allSatisfy { $0.body.isEmpty && $0.preview.isEmpty })
+        XCTAssertEqual(paths(titlesOnly.query("kupka")), ["daily/2026/Kupka.md"])
+        XCTAssertEqual(paths(titlesOnly.query("ZEB")), ["Zebra.md"])
+        XCTAssertEqual(SearchIndex.titlesOnly([]).count, 0)
+    }
 }

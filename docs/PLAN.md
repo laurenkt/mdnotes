@@ -57,7 +57,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M2.7 Autosave E-4, E-5, E-6 with a testable clock. Smoke test: edit, advance clock, file
       updated; switch note, file updated immediately.
 - [x] M2.8 Undo per note (E-7). Font preference (E-8) read from `UserDefaults`.
-- [ ] M2.9 Launch perf: `LaunchPerfTests` measuring PF-1 (app delegate finish-launching to list
+- [x] M2.9 Launch perf: `LaunchPerfTests` measuring PF-1 (app delegate finish-launching to list
       populated with first page and window key) against the 20k library.
 
 ## M3: Watcher, external edits, rename, delete

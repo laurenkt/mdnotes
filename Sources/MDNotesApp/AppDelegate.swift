@@ -11,13 +11,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         $0.reply(toApplicationShouldTerminate: $1)
     }
 
+    /// The folder `applicationDidFinishLaunching` opens as the library (L-1).
+    public let libraryRoot: URL
+
     public override init() {
+        libraryRoot = LibraryController.defaultRoot
         super.init()
     }
 
-    /// Uses `mainWindowController` instead of building one at launch. For tests.
-    public init(mainWindowController: MainWindowController) {
+    /// Uses `mainWindowController` instead of building one at launch, and opens `libraryRoot`
+    /// instead of the default library. For tests.
+    public init(mainWindowController: MainWindowController, libraryRoot: URL = LibraryController.defaultRoot) {
         self.mainWindowController = mainWindowController
+        self.libraryRoot = libraryRoot
         super.init()
     }
 
@@ -27,7 +33,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.showWindow(nil)
         mainWindowController = controller
 
-        let library = LibraryController(root: LibraryController.defaultRoot)
+        let library = LibraryController(root: libraryRoot)
         controller.attach(library)
         library.start()
         libraryController = library

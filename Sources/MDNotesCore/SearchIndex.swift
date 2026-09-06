@@ -150,15 +150,17 @@ public struct SearchIndex: Sendable {
     }
 
     /// List order (S-3): most recently modified first, ties broken by path so the order is
-    /// deterministic.
+    /// deterministic. Dates are compared as seconds: sorting 20k notes through `Date`'s own
+    /// `Comparable` measured tens of milliseconds slower on the launch path (PF-1).
     static func precedesInList(_ a: Item, _ b: Item) -> Bool {
-        if a.modifiedAt != b.modifiedAt { return a.modifiedAt > b.modifiedAt }
+        let (first, second) = (a.modifiedAt.timeIntervalSinceReferenceDate, b.modifiedAt.timeIntervalSinceReferenceDate)
+        if first != second { return first > second }
         return a.id.relativePath < b.id.relativePath
     }
 
     /// Packs `items`, which must already be in list order, into a fresh arena: for each note its
     /// folded title, folded body and display preview, back to back.
-    private init(ordered items: [Item]) {
+    init(ordered items: [Item]) {
         var bytes: [UInt8] = []
         bytes.reserveCapacity(items.reduce(0) { $0 + $1.title.count + $1.body.count + $1.preview.count })
         var ranges: [(title: Range<Int>, body: Range<Int>, preview: Range<Int>)] = []

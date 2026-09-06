@@ -11,6 +11,26 @@ extension SearchIndex {
         return builder.build()
     }
 
+    /// A snapshot indexing `notes` by title only, every body empty: what the list shows while
+    /// bodies are still being read (PF-7). Packed straight into list order (S-3) without the
+    /// `Builder`'s per-note dictionary or a sort of the packed items, which together cost more
+    /// than the directory walk at 20k notes (PF-1). A scan lists each note once, so `notes`
+    /// must not repeat an id.
+    public static func titlesOnly(_ notes: [ScannedNote]) -> SearchIndex {
+        // The order `precedesInList` defines, computed over indices and plain seconds so the
+        // sort moves integers rather than reference-counted notes.
+        let seconds = notes.map(\.modifiedAt.timeIntervalSinceReferenceDate)
+        let order = Array(notes.indices).sorted { a, b in
+            if seconds[a] != seconds[b] { return seconds[a] > seconds[b] }
+            return notes[a].id.relativePath < notes[b].id.relativePath
+        }
+        return SearchIndex(
+            ordered: order.map { position in
+                let note = notes[position]
+                return Item(id: note.id, note: FoldedNote(id: note.id, modifiedAt: note.modifiedAt, body: ""))
+            })
+    }
+
     /// A new snapshot with the bodies of `notes` read from `store` and folded in, replacing any
     /// entry with the same id; modification dates are taken from `notes` as scanned. This is
     /// how a titles-only launch snapshot fills in progressively (PF-7). A body that cannot be
