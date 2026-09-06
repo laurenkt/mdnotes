@@ -18,7 +18,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 
 ## M1: Core index and search (no UI)
 
-- [ ] M1.1 `LibraryScanner`: recursive walk of a root, applying L-2, L-3, L-4, L-5, L-6. Returns
+- [x] M1.1 `LibraryScanner`: recursive walk of a root, applying L-2, L-3, L-4, L-5, L-6. Returns
       `[NoteID]` plus modification dates. Tests: synthetic library counts, skip rules, nested paths.
 - [ ] M1.2 `NoteStore`: read a note's body as UTF-8 with L-7 and L-8 handling (dataless files
       via `URLResourceValues.ubiquitousItemDownloadingStatus`; invalid UTF-8 flagged). Tests
