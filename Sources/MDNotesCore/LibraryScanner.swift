@@ -35,6 +35,46 @@ public enum LibraryScanner {
         return notes
     }
 
+    /// Lists the notes under one folder of `root`, given as a `/`-separated relative path
+    /// (`""` is the root itself). Ids are relative to `root`, as `scan(root:)` reports them.
+    /// Throws if the folder cannot be listed. Applies L-3 to the folder path first: a folder the
+    /// full scan would skip lists nothing.
+    public static func scan(root: URL, folder: String) throws -> [ScannedNote] {
+        if folder.isEmpty { return try scan(root: root) }
+        guard isScannedFolder(relativePath: folder) else { return [] }
+        let directory = root.appendingPathComponent(folder, isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue
+        else { throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: directory.path]) }
+        var notes: [ScannedNote] = []
+        try walk(directory: directory, relativePrefix: folder, isRoot: false, into: &notes)
+        notes.sort { $0.id.relativePath < $1.id.relativePath }
+        return notes
+    }
+
+    /// The id of the note a full scan would list at `relativePath`, or nil if the scan would
+    /// skip that path (L-2, L-3, L-6). The path uses `/` separators, relative to the root.
+    public static func noteID(forRelativePath relativePath: String) -> NoteID? {
+        guard relativePath.hasSuffix(noteExtension), isScannedPath(relativePath) else { return nil }
+        return NoteID(relativePath: relativePath)
+    }
+
+    /// True if a full scan would descend into the folder at `relativePath` (L-3). `""` is the
+    /// root, which is always scanned.
+    public static func isScannedFolder(relativePath: String) -> Bool {
+        relativePath.isEmpty || isScannedPath(relativePath)
+    }
+
+    private static func isScannedPath(_ relativePath: String) -> Bool {
+        var first = true
+        for component in relativePath.split(separator: "/", omittingEmptySubsequences: false) {
+            if component.isEmpty || component.hasPrefix(".") { return false }
+            if first && skippedRootFolders.contains(String(component)) { return false }
+            first = false
+        }
+        return true
+    }
+
     private static let resourceKeys: [URLResourceKey] = [
         .nameKey, .isDirectoryKey, .contentModificationDateKey,
     ]

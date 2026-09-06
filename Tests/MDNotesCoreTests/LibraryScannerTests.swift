@@ -147,4 +147,48 @@ final class LibraryScannerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(byID["old.md"]).timeIntervalSince1970, oldDate.timeIntervalSince1970, accuracy: 1)
         XCTAssertEqual(try XCTUnwrap(byID["new.md"]).timeIntervalSince1970, newDate.timeIntervalSince1970, accuracy: 1)
     }
+
+    // MARK: folder scan and path classification (used by the watcher, X-1)
+
+    func testL3_folderScanListsOnlyThatFolderWithRootRelativeIDs() throws {
+        try touch("top.md")
+        try touch("daily/2026/a.md")
+        try touch("daily/2026/b.txt")
+        try touch("daily/other.md")
+        try touch("daily/.hidden/c.md")
+        XCTAssertEqual(
+            try LibraryScanner.scan(root: root, folder: "daily").map(\.id.relativePath),
+            ["daily/2026/a.md", "daily/other.md"])
+        XCTAssertEqual(
+            try LibraryScanner.scan(root: root, folder: "daily/2026").map(\.id.relativePath), ["daily/2026/a.md"])
+        XCTAssertEqual(try LibraryScanner.scan(root: root, folder: "").map(\.id.relativePath), try scannedPaths())
+    }
+
+    func testL3_folderScanOfSkippedFolderListsNothing() throws {
+        try touch("Trash/old.md")
+        try touch(".obsidian/x.md")
+        try touch("templates/t.md")
+        try touch("a/.hidden/h.md")
+        for folder in ["Trash", ".obsidian", "templates", "a/.hidden"] {
+            XCTAssertEqual(try LibraryScanner.scan(root: root, folder: folder), [], folder)
+            XCTAssertFalse(LibraryScanner.isScannedFolder(relativePath: folder), folder)
+        }
+        XCTAssertTrue(LibraryScanner.isScannedFolder(relativePath: ""))
+        XCTAssertTrue(LibraryScanner.isScannedFolder(relativePath: "a/Trash"))
+        XCTAssertThrowsError(try LibraryScanner.scan(root: root, folder: "missing"))
+    }
+
+    func testL2_noteIDForRelativePathMirrorsTheScan() {
+        XCTAssertEqual(LibraryScanner.noteID(forRelativePath: "note.md"), NoteID(relativePath: "note.md"))
+        XCTAssertEqual(
+            LibraryScanner.noteID(forRelativePath: "daily/2026/06-sunday.md"),
+            NoteID(relativePath: "daily/2026/06-sunday.md"))
+        XCTAssertEqual(LibraryScanner.noteID(forRelativePath: "a/Trash/x.md"), NoteID(relativePath: "a/Trash/x.md"))
+        for rejected in [
+            "readme.txt", "note.md.bak", "note.MD", ".hidden.md", ".obsidian/x.md", "a/.h/x.md", "Trash/x.md",
+            "templates/x.md", "", ".md", "a//b.md", "/a.md",
+        ] {
+            XCTAssertNil(LibraryScanner.noteID(forRelativePath: rejected), rejected)
+        }
+    }
 }

@@ -62,7 +62,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 
 ## M3: Watcher, external edits, rename, delete
 
-- [ ] M3.1 `FSEventsWatcher` wrapping `FSEventStreamCreate` with file-level events, coalesced,
+- [x] M3.1 `FSEventsWatcher` wrapping `FSEventStreamCreate` with file-level events, coalesced,
       mapped to added / modified / removed `NoteID`s (X-1). Tests using a temp library and real
       file operations, with timeouts.
 - [ ] M3.2 Own-write suppression (E-6): writer records (path, mtime) and watcher drops matching
