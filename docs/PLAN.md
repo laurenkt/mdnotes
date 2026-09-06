@@ -13,7 +13,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M0.3 Empty main window launches; headless smoke test constructs it.
 - [x] M0.4 Synthetic library generator and `PerfGate` helper in TestSupport.
 - [x] M0.5 SPEC, PLAN, ADRs, CLAUDE.md, QUESTIONS.md.
-- [ ] M0.6 `scripts/bundle.sh` produces a launchable `build/MDNotes.app`; add a test that the
+- [x] M0.6 `scripts/bundle.sh` produces a launchable `build/MDNotes.app`; add a test that the
       Info.plist it generates is valid (`plutil -lint`).
 
 ## M1: Core index and search (no UI)
