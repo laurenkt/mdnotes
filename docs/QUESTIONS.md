@@ -39,4 +39,7 @@ Options:
      the query changes. No spec change, but C-4 is knowingly unmet for nested paths.
   Recommendation: option 1, scoped to path-form matching only when a query word contains `/`,
   so flat queries are unchanged and PF-2 is unaffected for the common case.
-Answer:
+Answer: Option 1 (2026-09-07). A query word containing `/` also matches the note's relative
+  path without `.md`; words without `/` are unchanged. The derived C-1 (path-equal opens,
+  exact path beats same-title, newest among title matches) and C-3 (unlistable segments
+  rejected) rules are confirmed. Recorded in ADR-0008; S-2, C-1 and C-3 amended.

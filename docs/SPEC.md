@@ -37,7 +37,10 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
 
 - **S-1** One search field at the top of the window. It is both the search box and the new-note box.
 - **S-2** The query is split on whitespace into words. A note matches when every word is a
-  case-insensitive substring of the title or the body. Order of words is irrelevant.
+  case-insensitive substring of the title or the body. Order of words is irrelevant. A word
+  that contains `/` also matches as a substring of the note's relative path without `.md`
+  (`daily/foo` matches `daily/foo.md`); such a path match counts as a title match for S-3
+  (ADR-0008).
 - **S-3** Result order: notes whose title contains all words first, then the rest; within each
   group, most recently modified first. Empty query lists all notes by modified date.
 - **S-4** `#tag` is matched as an ordinary word. No special tag syntax in the query.
@@ -52,12 +55,16 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
 
 ## 4. Creation
 
-- **C-1** Enter in the search field with a non-empty query: if a note's title equals the query
-  (case-insensitive), open it and focus the editor. Otherwise create it.
+- **C-1** Enter in the search field with a non-empty query: if a note's title, or its relative
+  path without `.md`, equals the query (case-insensitive), open it and focus the editor.
+  Otherwise create it. An exact-path match wins over other notes with the same title; among
+  title-only matches the most recently modified opens (ADR-0008).
 - **C-2** Creation writes `<query>.md` at the root. If the query contains `/`, the segments before
   the last `/` are folders under the root, created as needed. The query is trimmed.
 - **C-3** Characters illegal in filenames (`:` and `/` within a segment, NUL) are rejected with an
-  inline message; nothing is created.
+  inline message; nothing is created. So are queries that cannot make a listable note: an
+  empty segment (`a//b`, `/a`, `a/`), a `.` or `..` segment, a segment starting with `.`, and
+  a first segment of `Trash` or `templates` (L-3, ADR-0008).
 - **C-4** After creation the new note is selected, the editor is focused and empty, and the search
   field keeps the query so the list still shows the new note.
 
