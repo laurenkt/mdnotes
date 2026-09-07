@@ -41,11 +41,17 @@ M2.4a, M2.4b) in the commit that lands the first part.
 
 ## Issues (what you notice but were not asked to fix)
 
-Anything wrong that is outside your task, whether a bug against the spec, a flaky test, or
-debt that will bite, goes into `docs/ISSUES.md` via
-`scripts/record-issue.sh <bug|debt> "<where>" "<what you saw>"`, in the same commit as your
-task. Do not fix it, do not widen your task, do not leave it in a comment. The orchestrator
-drains the queue before the next plan task (ADR-0016). `scripts/check.sh` records perf
+When you see something wrong outside your task, whether a bug against the spec, a flaky test,
+or debt that will bite, decide between two things and never a third:
+
+- **Fix it in place** if it is in code this task already changes, the fix is a few lines, and
+  this commit's tests exercise it. Say so in the commit message ("also fixes: ...").
+- **Record it** with `scripts/record-issue.sh <bug|debt> "<where>" "<what you saw>"` in the
+  same commit as your task if it needs a file you were not going to touch, needs its own
+  test to reproduce, or changes behaviour beyond your task's spec IDs.
+
+Never leave it in a comment, and never widen the task to chase it. The orchestrator drains
+the queue before the next plan task (ADR-0016). `scripts/check.sh` records perf
 flakes there itself: a gate that fails once and passes on retry lets your commit through and
 adds a `flaky` entry; a gate that fails twice is a regression and blocks you.
 

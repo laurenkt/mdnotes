@@ -39,8 +39,10 @@ against the spec and the design canvas in ADR-0013 before committing. Mark the t
 docs/PLAN.md and commit with a message of the form "M1.1: <summary> (<spec IDs>)". The pre-commit hook runs the
 full gate; if it fails, fix the code and commit again. Do not touch other tasks. If the spec
 does not decide something you need, append a question to docs/QUESTIONS.md, mark the task
-[?], and commit that instead. Finish with a clean working tree. Reply with one line: the
-commit hash and what landed, or the question number if blocked.
+[?], and commit that instead. Problems you notice outside the task follow the Issues rule in
+CLAUDE.md: fix in place only if small, in code you already change, and covered by this
+commit's tests; otherwise record with scripts/record-issue.sh. Finish with a clean working
+tree. Reply with one line: the commit hash and what landed, or the question number if blocked.
 ```
 
 For an issue entry, use this prompt instead, substituting the entry line:
@@ -55,9 +57,10 @@ Reproduce it first with a test that fails, then fix it, then mark the entry [x] 
 docs/ISSUES.md and commit with a message of the form "I-3: <summary>". A flaky entry is fixed
 by reducing variance, never by raising a budget. If the fix is larger than one commit, add a
 task at the top of the current milestone in docs/PLAN.md describing it, mark the entry
-[x] -> M<n>.<k>, and commit that instead. If you notice other problems, record them with
-scripts/record-issue.sh; do not fix them. Finish with a clean working tree. Reply with one
-line: the commit hash and what landed.
+[x] -> M<n>.<k>, and commit that instead. Other problems you notice follow the Issues rule
+in CLAUDE.md: a few-line fix in code you already touch and cover with tests may go in this
+commit, named in the message; anything else is recorded with scripts/record-issue.sh, not
+fixed. Finish with a clean working tree. Reply with one line: the commit hash and what landed.
 ```
 
 ## 3. Verify

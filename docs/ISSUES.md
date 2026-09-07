@@ -6,8 +6,10 @@ fresh subagent and one commit per entry, so nothing noticed is lost and nothing 
 
 Rules:
 
-- A task subagent that notices a problem outside its task **records it here and does not fix
-  it**, in the same commit as its task. `scripts/record-issue.sh <kind> <where> <text>`.
+- A task subagent that notices a problem outside its task fixes it in place only when it is
+  in code the task already changes, is a few lines, and is covered by the commit's tests
+  (named in the commit message). Otherwise it **records it here and does not fix it**, in the
+  same commit as its task: `scripts/record-issue.sh <kind> <where> <text>`.
 - Kinds: `flaky` (a gate that failed then passed; `check.sh` records these itself), `bug`
   (observed wrong behaviour against `SPEC.md`), `debt` (something that will bite: duplication,
   a missing test, a workaround).
