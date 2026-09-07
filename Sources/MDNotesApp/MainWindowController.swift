@@ -44,6 +44,9 @@ import MDNotesCore
 /// intercepted by `EditorTextView` and handed here: the editor names the link's target, the
 /// snapshot's link index resolves it (K-2), and the note is opened as Enter in the search
 /// field opens one, or created first as Enter creates one (C-2, C-3) when nothing resolves.
+///
+/// The `[[` completion popover (K-4) lives in the editor controller; this controller dismisses
+/// it when the window stops being key and refreshes its list when a snapshot arrives.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -432,8 +435,10 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     // MARK: - Autosave on focus loss (E-4)
 
     /// The window stopped being key: another window or app took over. Unsaved edits are
-    /// written now rather than 300 ms from the last keystroke.
+    /// written now rather than 300 ms from the last keystroke, and a completion popover (K-4)
+    /// left up in the editor is dismissed.
     @objc private func windowDidResignKey(_ notification: Notification) {
+        editorController.linkCompletion.dismiss()
         editorController.flush()
     }
 
@@ -493,6 +498,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         }
         // A fresh snapshot is shown through the query the user has typed; it is never reset.
         reloadList()
+        // K-4: a completion list left showing lists the titles the new snapshot has.
+        editorController.linkCompletion.refresh()
     }
 
     /// Queries the current snapshot with `query` and hands the results to the list. The

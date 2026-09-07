@@ -31,6 +31,12 @@ import MDNotesCore
 ///
 /// It is also the text view's delegate: Escape in the editor is handed to `onCancel` (S-7)
 /// instead of the text view's default, which offers completions.
+///
+/// The `[[` completion popover (K-4) is `linkCompletion`. The delegate feeds it: every change
+/// to the text may open or re-filter a session, every caret move may re-filter or end one, and
+/// while its list is showing the command selectors it takes (Return, Escape, Up, Down) go to
+/// it before Escape can reach `onCancel`. Its titles come from the snapshot of the library the
+/// shown note belongs to. Replacing the editor's text or losing focus dismisses it.
 @MainActor
 public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
     /// How long after the last edit the note is written (E-4).
@@ -40,6 +46,9 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     /// E-2, E-3: styles the text view's storage, paragraph by paragraph as it is edited.
     public let styler: EditorStyler
+
+    /// K-4: the `[[` completion popover over this editor's text.
+    public let linkCompletion: LinkCompletionController
 
     /// Called on Escape in the editor (S-7: clear the query and return to the search field).
     public var onCancel: (@MainActor () -> Void)?
@@ -99,29 +108,53 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         self.textView = textView
         self.clock = clock
         styler = EditorStyler(textView: textView, baseFont: textView.font ?? EditorFontPreference.font())
+        linkCompletion = LinkCompletionController(textView: textView)
         scratchUndoManager = UndoManager()
         super.init()
         textView.isEditable = false
         textView.allowsUndo = true
         textView.delegate = self
         textView.textStorage?.delegate = self
+        // K-4: the popover lists the titles of the library the shown note belongs to.
+        linkCompletion.index = { [weak self] in self?.library?.snapshot ?? .empty }
     }
 
     /// Replaces the whole text without it counting as an edit or registering with undo (E-7).
     private func replaceText(with text: String) {
         isReplacingText = true
         defer { isReplacingText = false }
+        // K-4: the brackets a session was anchored to are going with the text.
+        linkCompletion.dismiss()
         textView.string = text
     }
 
     // MARK: - NSTextViewDelegate
 
     public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // K-4: while the completion list is showing, its keys are the popover's.
+        if linkCompletion.handle(commandSelector) { return true }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)), let onCancel {
             onCancel()
             return true
         }
         return false
+    }
+
+    /// K-4: the text changed under the caret, by typing, paste or a completion. Opens the
+    /// completion when `[[` was just typed, and re-filters or ends an open session.
+    public func textDidChange(_ notification: Notification) {
+        linkCompletion.textDidChange()
+    }
+
+    /// K-4: the caret moved. An open completion session re-filters, or ends if the caret left
+    /// the brackets.
+    public func textViewDidChangeSelection(_ notification: Notification) {
+        linkCompletion.selectionDidChange()
+    }
+
+    /// K-4: the editor lost focus, so the completion is dismissed.
+    public func textDidEndEditing(_ notification: Notification) {
+        linkCompletion.dismiss()
     }
 
     /// E-7: the text view registers its edits with the shown note's own manager, so Cmd-Z and

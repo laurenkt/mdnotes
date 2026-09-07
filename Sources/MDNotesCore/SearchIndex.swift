@@ -259,6 +259,17 @@ public struct SearchIndex: Sendable {
     /// recently modified first. An empty or blank query returns every note by modified date.
     /// `#tag` is an ordinary word: it matches wherever those characters occur.
     public func query(_ text: String) -> Results {
+        match(text, titlesOnly: false)
+    }
+
+    /// The notes whose title alone matches `text` by the S-2 rules, most recently modified first
+    /// (S-3): the first group `query(_:)` returns, without the body matches that follow it.
+    /// What the `[[` completion lists (K-4). An empty or blank query returns every note.
+    public func queryTitles(_ text: String) -> Results {
+        match(text, titlesOnly: true)
+    }
+
+    private func match(_ text: String, titlesOnly: Bool) -> Results {
         guard let first = entries.first else { return Results(index: self, positions: []) }
         let words = WordSplitter.foldedWords(of: text).map { Array($0.utf8) }
         if words.isEmpty { return Results(index: self, positions: (0..<Int32(entries.count)).map { $0 }) }
@@ -285,7 +296,7 @@ public struct SearchIndex: Sendable {
                         for needle in needles {
                             if needle.isFound(in: title) { continue }
                             inTitle = false
-                            if needle.isFound(in: body) { continue }
+                            if !titlesOnly, needle.isFound(in: body) { continue }
                             inEither = false
                             break
                         }
