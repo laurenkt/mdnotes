@@ -8,6 +8,13 @@ import MDNotesCore
 /// the text and its layout metrics are untouched beyond weight and colour; nothing here reaches
 /// the file, whose content is the text view's plain string (E-1).
 ///
+/// A wikilink whose bare title several notes share is styled as ambiguous instead (K-2), in a
+/// warning tint. Which links those are is the library's `LinkIndex`, read through `linkIndex`
+/// every time links are styled, so a load or a keystroke sees the current snapshot. A new
+/// snapshot can change a link's resolution without the text changing (a note created, renamed
+/// or deleted), so `restyleLinks()` re-checks every link against the index then and re-styles
+/// only those whose style changed.
+///
 /// Re-styling after an edit is scoped (E-3): once the storage has processed an edit to its
 /// characters, the delegate hands the edited range over, `MarkdownScanner.paragraphRange(in:
 /// editedRange:)` widens it to the blank-line delimited paragraphs and fenced blocks it
@@ -31,14 +38,19 @@ public final class EditorStyler {
     /// styler, and tests, tell what a range was styled as without re-scanning.
     nonisolated public static let tokenAttribute = NSAttributedString.Key("MDNotesToken")
 
-    /// The kinds of styling E-2 applies.
+    /// The kinds of styling E-2 and K-2 apply.
     public enum TokenStyle: String, Sendable, CaseIterable {
         case heading
+        /// A wikilink or embed that is not ambiguous: unique, unresolved, by path, or an embed.
         case wikilink
+        /// K-2: a wikilink whose bare title several notes share.
+        case ambiguousLink
         case tag
         case inlineCode
         case fencedCode
 
+        /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
+        /// `.ambiguousLink` only once its target has been resolved (K-2).
         init(_ kind: MarkdownScanner.Kind) {
             switch kind {
             case .heading: self = .heading
@@ -64,6 +76,14 @@ public final class EditorStyler {
     /// The colour unstyled text is set in.
     public let baseColor: NSColor = .textColor
 
+    /// The warning tint an ambiguous link is set in (K-2).
+    public static let ambiguousLinkColor: NSColor = .systemOrange
+
+    /// K-2: the link index wikilink targets are resolved against, read whenever links are
+    /// styled. `EditorController` points it at the snapshot of the library the shown note
+    /// belongs to; until then nothing resolves and every link is styled as a plain wikilink.
+    public var linkIndex: @MainActor () -> LinkIndex = { .empty }
+
     /// The bold face of `baseFont` at the same size, or `baseFont` itself when the family has
     /// no bold face.
     public private(set) var headingFont: NSFont
@@ -86,6 +106,7 @@ public final class EditorStyler {
         switch style {
         case .heading: attributes[.font] = headingFont
         case .wikilink: attributes[.foregroundColor] = NSColor.linkColor
+        case .ambiguousLink: attributes[.foregroundColor] = Self.ambiguousLinkColor
         case .tag: attributes[.foregroundColor] = NSColor.systemPurple
         case .inlineCode, .fencedCode: attributes[.foregroundColor] = NSColor.secondaryLabelColor
         }
@@ -172,15 +193,55 @@ public final class EditorStyler {
         inner.location >= outer.location && inner.location + inner.length <= outer.location + outer.length
     }
 
+    /// K-2: the snapshot changed, so a link may now be ambiguous that was not, or the other
+    /// way round. Every link in the text is resolved against `linkIndex` again and only the
+    /// links whose style differs from what they carry are re-styled, in one attributes-only
+    /// pass; the text and every other run are untouched. Nothing happens when no link changed.
+    public func restyleLinks() {
+        guard let storage = textView.textStorage, !isRestyling else { return }
+        let whole = NSRange(location: 0, length: storage.length)
+        let index = linkIndex()
+        var changes: [(range: NSRange, style: TokenStyle)] = []
+        for token in MarkdownScanner.scan(Self.units(of: storage), in: whole) {
+            guard case .wikilink(let target, _, let isEmbed) = token.kind else { continue }
+            let style = linkStyle(target: target, isEmbed: isEmbed, in: storage, index: index)
+            let current = storage.attribute(Self.tokenAttribute, at: token.range.location, effectiveRange: nil)
+            if current as? String != style.rawValue { changes.append((token.range, style)) }
+        }
+        guard !changes.isEmpty else { return }
+        isRestyling = true
+        defer { isRestyling = false }
+        storage.beginEditing()
+        for change in changes {
+            storage.addAttributes(attributes(for: change.style), range: change.range)
+        }
+        storage.endEditing()
+    }
+
+    /// The style of a link token (K-2): an embed links to a non-note file and is never
+    /// ambiguous; any other target is ambiguous when the index says several notes share it.
+    private func linkStyle(target: NSRange, isEmbed: Bool, in storage: NSTextStorage, index: LinkIndex) -> TokenStyle {
+        guard !isEmbed else { return .wikilink }
+        return index.resolve(storage.mutableString.substring(with: target)).isAmbiguous ? .ambiguousLink : .wikilink
+    }
+
     /// Resets `range` to the base font and colour, then applies `tokens`. A heading line's
     /// links and tags are applied after the heading, so they take its weight and their colour.
+    /// Links are resolved against `linkIndex` as they are applied (K-2).
     private func apply(_ tokens: [MarkdownScanner.Token], in range: NSRange, to storage: NSTextStorage) {
         isRestyling = true
         defer { isRestyling = false }
         storage.removeAttribute(Self.tokenAttribute, range: range)
         storage.addAttributes([.font: baseFont, .foregroundColor: baseColor], range: range)
+        let index = linkIndex()
         for token in tokens {
-            storage.addAttributes(attributes(for: TokenStyle(token.kind)), range: token.range)
+            let style: TokenStyle
+            if case .wikilink(let target, _, let isEmbed) = token.kind {
+                style = linkStyle(target: target, isEmbed: isEmbed, in: storage, index: index)
+            } else {
+                style = TokenStyle(token.kind)
+            }
+            storage.addAttributes(attributes(for: style), range: token.range)
         }
     }
 }

@@ -402,4 +402,161 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertTrue(fixture.textView.isEditable)
         library.stop()
     }
+    // MARK: - K-2: ambiguous links
+
+    /// Main-actor box for an index a test swaps under the styler's `linkIndex` closure.
+    @MainActor
+    private final class IndexBox {
+        var index: LinkIndex
+        init(_ index: LinkIndex) { self.index = index }
+    }
+
+    /// A link index over `foo.md` alone: the title is unique.
+    private func oneFooIndex() -> LinkIndex {
+        LinkIndex.empty.applying(upserts: [(NoteID(relativePath: "foo.md"), Date(), [])], removing: [])
+    }
+
+    /// A link index over `foo.md`, `daily/foo.md` and `Bar.md`: the bare title `foo` is shared.
+    private func twoFooIndex() -> LinkIndex {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        return LinkIndex.empty.applying(
+            upserts: [
+                (NoteID(relativePath: "foo.md"), base, []),
+                (NoteID(relativePath: "daily/foo.md"), base.addingTimeInterval(60), []),
+                (NoteID(relativePath: "Bar.md"), base, []),
+            ], removing: [])
+    }
+
+    /// Two notes titled `foo`: a bare `[[foo]]`, however cased or labelled, is styled as
+    /// ambiguous in the warning tint; a path to one of them, a unique title, an unresolved
+    /// title and an embed keep the link style.
+    func testK2_ambiguousLinksAreStyledAsAmbiguous() throws {
+        let fixture = makeFixture()
+        let index = twoFooIndex()
+        fixture.styler.linkIndex = { index }
+        let text = "see [[foo]] [[Foo|label]] [[ foo ]] [[daily/foo]] [[Bar]] [[none]] ![[foo]]\n# Head [[foo]]\n"
+        fixture.show(text)
+
+        for needle in ["[[foo]]", "[[Foo|label]]", "[[ foo ]]"] {
+            let link = range(of: needle, in: text)
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["ambiguousLink"], needle)
+            XCTAssertEqual(fixture.color(at: link.location), EditorStyler.ambiguousLinkColor, needle)
+            XCTAssertEqual(fixture.font(at: link.location), base, "\(needle) keeps the base weight")
+        }
+        for needle in ["[[daily/foo]]", "[[Bar]]", "[[none]]", "![[foo]]"] {
+            let link = range(of: needle, in: text)
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"], needle)
+            XCTAssertEqual(fixture.color(at: link.location), NSColor.linkColor, needle)
+        }
+        XCTAssertNil(fixture.style(at: range(of: "see", in: text).location))
+
+        let heading = range(of: "[[foo]]", in: text, occurrence: 2)
+        XCTAssertEqual(fixture.style(at: heading.location), .ambiguousLink)
+        XCTAssertEqual(fixture.color(at: heading.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertTrue(isBold(fixture.font(at: heading.location)), "on a heading line it keeps the heading's weight")
+        XCTAssertEqual(fixture.textView.string, text)
+    }
+
+    /// The text does not change but the index does: `restyleLinks()` moves the links whose
+    /// resolution changed to their new style and touches nothing else.
+    func testK2_linksAreRestyledWhenTheIndexChangesTheirResolution() {
+        let fixture = makeFixture()
+        let box = IndexBox(oneFooIndex())
+        fixture.styler.linkIndex = { box.index }
+        let text = "one [[foo]] and [[Bar]] #tag\n\ntwo [[foo]]\n"
+        fixture.show(text)
+        let first = range(of: "[[foo]]", in: text)
+        let second = range(of: "[[foo]]", in: text, occurrence: 1)
+        let bar = range(of: "[[Bar]]", in: text)
+        XCTAssertEqual(fixture.style(at: first.location), .wikilink, "one note titled foo is unique")
+        XCTAssertEqual(fixture.style(at: second.location), .wikilink)
+
+        // Mark everything with a colour the styler never uses, so what it touched is visible.
+        let mark = NSColor.systemRed
+        let whole = NSRange(location: 0, length: fixture.storage.length)
+        fixture.storage.addAttribute(.foregroundColor, value: mark, range: whole)
+
+        box.index = twoFooIndex()
+        fixture.styler.restyleLinks()
+        XCTAssertEqual(Set(fixture.styles(in: first).map { $0?.rawValue }), ["ambiguousLink"])
+        XCTAssertEqual(fixture.color(at: first.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(Set(fixture.styles(in: second).map { $0?.rawValue }), ["ambiguousLink"])
+        XCTAssertEqual(fixture.color(at: second.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.color(at: bar.location), mark, "a link whose resolution did not change is untouched")
+        XCTAssertEqual(fixture.style(at: bar.location), .wikilink)
+        XCTAssertEqual(fixture.color(at: 0), mark, "plain text is untouched")
+        XCTAssertEqual(fixture.color(at: range(of: "#tag", in: text).location), mark, "a tag is untouched")
+        XCTAssertEqual(fixture.style(at: range(of: "#tag", in: text).location), .tag)
+        XCTAssertEqual(fixture.textView.string, text)
+
+        // Back to one foo: the links are plain wikilinks again.
+        box.index = oneFooIndex()
+        fixture.styler.restyleLinks()
+        XCTAssertEqual(fixture.style(at: first.location), .wikilink)
+        XCTAssertEqual(fixture.color(at: first.location), NSColor.linkColor)
+        XCTAssertEqual(fixture.style(at: second.location), .wikilink)
+        XCTAssertEqual(fixture.color(at: bar.location), mark)
+
+        // A link typed now is resolved against the current index as it arrives.
+        box.index = twoFooIndex()
+        let end = (text as NSString).length
+        fixture.type("[[foo]]", at: end)
+        XCTAssertEqual(fixture.style(at: end), .ambiguousLink)
+        XCTAssertEqual(fixture.style(at: first.location), .wikilink, "another paragraph is not re-styled by typing")
+    }
+
+    /// Through the library: `Linker.md` links to the one note titled `foo`, so the link is
+    /// unique. Creating a second `foo` publishes a snapshot that makes the title ambiguous, and
+    /// the link in the editor changes style without an edit.
+    func testK2_aSecondNoteTitledFooRestylesTheOpenNotesLink() async throws {
+        let body = "see [[foo]] and [[Bar]]\n"
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "first foo".write(to: root.appendingPathComponent("foo.md"), atomically: true, encoding: .utf8)
+        try body.write(to: root.appendingPathComponent("Linker.md"), atomically: true, encoding: .utf8)
+
+        let fixture = makeFixture()
+        let library = LibraryController(root: root)
+        fixture.controller.attach(library)
+        library.start()
+        let deadline = Date().addingTimeInterval(20)
+        while library.phase != .ready {
+            if Date() > deadline { return XCTFail("library did not become ready") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let linker = NoteID(relativePath: "Linker.md")
+        XCTAssertTrue(fixture.controller.listController.select(linker))
+        while fixture.controller.editorController.body == nil {
+            if Date() > deadline { return XCTFail("editor did not load the note") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(fixture.textView.string, body)
+        let foo = range(of: "[[foo]]", in: body)
+        let bar = range(of: "[[Bar]]", in: body)
+        XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["wikilink"], "one foo is unique")
+        XCTAssertEqual(fixture.color(at: foo.location), NSColor.linkColor)
+
+        let second = NoteID(relativePath: "daily/foo.md")
+        var created = false
+        library.create(second) { result in
+            if case .failure(let error) = result { XCTFail("create failed: \(error)") }
+            created = true
+        }
+        while !created {
+            if Date() > deadline { return XCTFail("second foo was not created") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertNotNil(library.snapshot.entry(for: second))
+        XCTAssertTrue(library.snapshot.links.resolve("foo").isAmbiguous)
+        XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["ambiguousLink"])
+        XCTAssertEqual(fixture.color(at: foo.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.style(at: bar.location), .wikilink)
+        XCTAssertEqual(fixture.textView.string, body, "the text is untouched")
+        XCTAssertFalse(fixture.controller.editorController.hasUnsavedEdits, "re-styling is not an edit")
+
+        // Typing another link to the shared title styles it as ambiguous as it arrives.
+        let end = (body as NSString).length
+        fixture.type("[[foo]]", at: end)
+        XCTAssertEqual(fixture.style(at: end), .ambiguousLink)
+        library.stop()
+    }
 }

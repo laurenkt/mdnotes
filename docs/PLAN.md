@@ -112,7 +112,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       enabled when `ImagePasteboard.hasImage` and the note is writable. Test:
       `ImageInsertSmokeTests` validates the Paste item against an image-only pasteboard and
       drives `paste` through `NSApp.sendAction`.
-- [ ] M5.6c Ambiguous wikilinks are styled like unique ones (K-2): `EditorStyler` has one
+- [x] M5.6c Ambiguous wikilinks are styled like unique ones (K-2): `EditorStyler` has one
       wikilink style. Give it the snapshot's `LinkIndex` (through `EditorController`) and an
       `ambiguous` `TokenStyle` (for instance the link colour with an underline or a warning
       tint), re-styling links when a snapshot changes resolution. Test:

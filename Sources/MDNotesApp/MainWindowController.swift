@@ -688,6 +688,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         reloadList()
         // K-4, T-3: a completion list left showing lists the titles or tags the new snapshot has.
         editorController.refreshCompletions()
+        // K-2: a note created, renamed or deleted may make a link in the editor ambiguous, or
+        // unique again.
+        editorController.refreshLinkStyling()
         // K-6: the new snapshot may link to the open note differently.
         refreshBacklinks()
     }

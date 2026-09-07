@@ -32,6 +32,11 @@ import MDNotesCore
 /// It is also the text view's delegate: Escape in the editor is handed to `onCancel` (S-7)
 /// instead of the text view's default, which offers completions.
 ///
+/// Wikilinks are styled by `styler` against the snapshot's link index (K-2): the one the
+/// library the shown note belongs to has published. When a new snapshot arrives the window
+/// controller calls `refreshLinkStyling()`, so a title that became ambiguous, or stopped being
+/// so, changes colour without an edit.
+///
 /// The `[[` completion popover (K-4) is `linkCompletion` and the `#` completion popover (T-3)
 /// is `tagCompletion`, one `CompletionController` each. The delegate feeds both: every change
 /// to the text may open or re-filter a session, every caret move may re-filter or end one, and
@@ -133,6 +138,15 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         for completion in completions {
             completion.index = { [weak self] in self?.library?.snapshot ?? .empty }
         }
+        // K-2: links are resolved against the same snapshot, so an ambiguous title is styled
+        // as ambiguous the moment it is loaded or typed.
+        styler.linkIndex = { [weak self] in self?.library?.snapshot.links ?? .empty }
+    }
+
+    /// K-2: the snapshot changed, so a link's resolution may have changed under text that did
+    /// not. Called when the library publishes; the styler re-styles the links it changed.
+    public func refreshLinkStyling() {
+        styler.restyleLinks()
     }
 
     /// Replaces the whole text without it counting as an edit or registering with undo (E-7).
