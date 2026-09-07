@@ -4,8 +4,8 @@ import Foundation
 /// An immutable, in-memory snapshot of every note's searchable text (S-2, S-3, S-4, ADR-0003).
 ///
 /// Snapshots are values: build one with `SearchIndex.Builder`, hand it to the main thread, and
-/// query it there without locks (PF-6). Titles and bodies are stored case-folded once at build
-/// time so a query only lowercases its own words. All folded text lives in one contiguous byte
+/// query it there without locks (PF-6). Titles, paths and bodies are stored case-folded once at
+/// build time so a query only lowercases its own words. All folded text lives in one contiguous byte
 /// arena, packed in list order, so a query is a single sweep over memory (PF-2, PF-5).
 public struct SearchIndex: Sendable {
     /// The packed, case-folded UTF-8 of every indexed note, plus how often each byte value occurs
@@ -24,18 +24,24 @@ public struct SearchIndex: Sendable {
         static let empty = Arena(bytes: [])
     }
 
-    /// One indexed note. `title` and `body` are lowercase; the note's display title is `id.title`
-    /// and its display snippet is `preview`.
+    /// One indexed note. `title`, `path` and `body` are lowercase; the note's display title is
+    /// `id.title` and its display snippet is `preview`.
     public struct Entry: Hashable, Sendable {
         public let id: NoteID
         public let modifiedAt: Date
         let titleRange: Range<Int>
+        let pathRange: Range<Int>
         let bodyRange: Range<Int>
         let previewRange: Range<Int>
         let arena: Arena
 
         /// The title (L-5), case-folded.
         public var title: String { String(decoding: arena.bytes[titleRange], as: UTF8.self) }
+
+        /// The relative path without `.md`, case-folded, for a note in a folder; what a query
+        /// word containing `/` is matched against (S-2, ADR-0008). Empty for a note at the root,
+        /// whose path without `.md` is its title and so can never contain `/`.
+        public var path: String { String(decoding: arena.bytes[pathRange], as: UTF8.self) }
 
         /// The body text, case-folded. Empty when the file is unreadable (L-7): such a note is
         /// indexed by title only.
@@ -72,6 +78,9 @@ public struct SearchIndex: Sendable {
     struct FoldedNote: Sendable {
         let modifiedAt: Date
         let title: [UInt8]
+        /// The folded relative path without `.md` for a note in a folder, empty for a root
+        /// note (see `Entry.path`).
+        let path: [UInt8]
         let body: [UInt8]
         let preview: [UInt8]
         let references: NoteReferences
@@ -79,6 +88,9 @@ public struct SearchIndex: Sendable {
         init(id: NoteID, modifiedAt: Date, body: String) {
             self.modifiedAt = modifiedAt
             title = Array(CaseFolding.fold(id.title).utf8)
+            path =
+                id.relativePath.utf8.contains(UInt8(ascii: "/"))
+                ? Array(CaseFolding.fold(NoteCreation.queryForm(of: id)).utf8) : []
             self.body = Array(CaseFolding.fold(body).utf8)
             preview = Array(BodySnippet.make(from: body).utf8)
             references = NoteReferences(scanning: body)
@@ -136,11 +148,13 @@ public struct SearchIndex: Sendable {
         notes.map { ($0.key, $0.value.references.tags) }
     }
 
-    /// Where each entry's folded text sits in the arena, in `entries` order. A plain-value copy
-    /// of the ranges in `Entry` so the query loop never touches reference counts. The preview
-    /// bytes that follow each body are not covered: they are display text, not searched.
+    /// Where each entry's folded text sits in the arena, in `entries` order: title, then path,
+    /// then body, back to back. A plain-value copy of the ranges in `Entry` so the query loop
+    /// never touches reference counts. The preview bytes that follow each body are not
+    /// covered: they are display text, not searched.
     struct Span {
         let titleStart: Int32
+        let pathStart: Int32
         let bodyStart: Int32
         let end: Int32
     }
@@ -152,6 +166,7 @@ public struct SearchIndex: Sendable {
         let id: NoteID
         let modifiedAt: Date
         let title: ArraySlice<UInt8>
+        let path: ArraySlice<UInt8>
         let body: ArraySlice<UInt8>
         let preview: ArraySlice<UInt8>
 
@@ -159,6 +174,7 @@ public struct SearchIndex: Sendable {
             self.id = id
             modifiedAt = note.modifiedAt
             title = note.title[...]
+            path = note.path[...]
             body = note.body[...]
             preview = note.preview[...]
         }
@@ -167,6 +183,7 @@ public struct SearchIndex: Sendable {
             id = entry.id
             modifiedAt = entry.modifiedAt
             title = entry.arena.bytes[entry.titleRange]
+            path = entry.arena.bytes[entry.pathRange]
             body = entry.arena.bytes[entry.bodyRange]
             preview = entry.arena.bytes[entry.previewRange]
         }
@@ -182,34 +199,38 @@ public struct SearchIndex: Sendable {
     }
 
     /// Packs `items`, which must already be in list order, into a fresh arena: for each note its
-    /// folded title, folded body and display preview, back to back. `links` and `tags` must
-    /// cover exactly the notes in `items`.
+    /// folded title, folded path, folded body and display preview, back to back. `links` and
+    /// `tags` must cover exactly the notes in `items`.
     init(ordered items: [Item], links: LinkIndex, tags: TagIndex) {
         self.links = links
         self.tags = tags
         var bytes: [UInt8] = []
-        bytes.reserveCapacity(items.reduce(0) { $0 + $1.title.count + $1.body.count + $1.preview.count })
-        var ranges: [(title: Range<Int>, body: Range<Int>, preview: Range<Int>)] = []
+        bytes.reserveCapacity(
+            items.reduce(0) { $0 + $1.title.count + $1.path.count + $1.body.count + $1.preview.count })
+        var ranges: [(title: Range<Int>, path: Range<Int>, body: Range<Int>, preview: Range<Int>)] = []
         ranges.reserveCapacity(items.count)
         for item in items {
             let titleStart = bytes.count
             bytes.append(contentsOf: item.title)
+            let pathStart = bytes.count
+            bytes.append(contentsOf: item.path)
             let bodyStart = bytes.count
             bytes.append(contentsOf: item.body)
             let previewStart = bytes.count
             bytes.append(contentsOf: item.preview)
-            ranges.append((titleStart..<bodyStart, bodyStart..<previewStart, previewStart..<bytes.count))
+            ranges.append(
+                (titleStart..<pathStart, pathStart..<bodyStart, bodyStart..<previewStart, previewStart..<bytes.count))
         }
         let arena = items.isEmpty ? Arena.empty : Arena(bytes: bytes)
         entries = zip(items, ranges).map { item, range in
             Entry(
-                id: item.id, modifiedAt: item.modifiedAt, titleRange: range.title, bodyRange: range.body,
-                previewRange: range.preview, arena: arena)
+                id: item.id, modifiedAt: item.modifiedAt, titleRange: range.title, pathRange: range.path,
+                bodyRange: range.body, previewRange: range.preview, arena: arena)
         }
         spans = ranges.map { range in
             Span(
-                titleStart: Int32(range.title.lowerBound), bodyStart: Int32(range.body.lowerBound),
-                end: Int32(range.body.upperBound))
+                titleStart: Int32(range.title.lowerBound), pathStart: Int32(range.path.lowerBound),
+                bodyStart: Int32(range.body.lowerBound), end: Int32(range.body.upperBound))
         }
     }
 
@@ -254,10 +275,12 @@ public struct SearchIndex: Sendable {
     /// Runs a query (S-2, S-3, S-4).
     ///
     /// The text is split on whitespace into words. A note matches when every word is a
-    /// case-insensitive substring of its title or its body, in any order. Notes whose title
-    /// contains every word come first, then the remaining matches; each group is ordered most
-    /// recently modified first. An empty or blank query returns every note by modified date.
-    /// `#tag` is an ordinary word: it matches wherever those characters occur.
+    /// case-insensitive substring of its title or its body, in any order. A word containing
+    /// `/` also matches as a substring of the note's relative path without `.md`, and such a
+    /// match counts as a title match (ADR-0008). Notes whose title contains every word come
+    /// first, then the remaining matches; each group is ordered most recently modified first.
+    /// An empty or blank query returns every note by modified date. `#tag` is an ordinary
+    /// word: it matches wherever those characters occur.
     public func query(_ text: String) -> Results {
         match(text, titlesOnly: false)
     }
@@ -288,13 +311,17 @@ public struct SearchIndex: Sendable {
                     for position in spans.indices {
                         let span = spans[position]
                         let title = UnsafeBufferPointer(
-                            start: base + Int(span.titleStart), count: Int(span.bodyStart - span.titleStart))
+                            start: base + Int(span.titleStart), count: Int(span.pathStart - span.titleStart))
+                        let path = UnsafeBufferPointer(
+                            start: base + Int(span.pathStart), count: Int(span.bodyStart - span.pathStart))
                         let body = UnsafeBufferPointer(
                             start: base + Int(span.bodyStart), count: Int(span.end - span.bodyStart))
                         var inTitle = true
                         var inEither = true
                         for needle in needles {
                             if needle.isFound(in: title) { continue }
+                            // A path match counts as a title match (S-3, ADR-0008).
+                            if needle.matchesPath, needle.isFound(in: path) { continue }
                             inTitle = false
                             if !titlesOnly, needle.isFound(in: body) { continue }
                             inEither = false
@@ -322,10 +349,14 @@ public struct SearchIndex: Sendable {
         /// Offset within the word of the byte that occurs least often in the arena.
         let anchor: Int
         let anchorFrequency: Int
+        /// Whether the word contains `/` and so is also matched against the note's relative
+        /// path (S-2, ADR-0008). A word without `/` never touches the path bytes.
+        let matchesPath: Bool
         private let bytes: UnsafeMutablePointer<UInt8>
 
         init(word: [UInt8], frequency: [Int]) {
             length = word.count
+            matchesPath = word.contains(UInt8(ascii: "/"))
             bytes = UnsafeMutablePointer<UInt8>.allocate(capacity: max(1, word.count))
             bytes.initialize(from: word, count: word.count)
             var best = 0

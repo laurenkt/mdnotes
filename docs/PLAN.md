@@ -52,7 +52,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M2.6a Create on Enter: C-1 to C-4 including nested `/` paths on disk and illegal
       characters. Smoke tests for each rule. (Split from M2.6: the list and selection after a
       nested-path create or open is M2.6b.)
-- [ ] M2.6b Nested-path create/open in the list (C-4, S-2, C-1, ADR-0008): a query word
+- [x] M2.6b Nested-path create/open in the list (C-4, S-2, C-1, ADR-0008): a query word
       containing `/` also matches the note's relative path without `.md`, counting as a title
       match for S-3, so after Enter on `daily/foo` the kept query lists and selects the new
       note. Words without `/` are unchanged. Tests: S-2 path-form match and non-match, S-3

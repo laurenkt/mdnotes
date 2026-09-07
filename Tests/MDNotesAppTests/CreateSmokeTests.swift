@@ -433,6 +433,56 @@ final class CreateSmokeTests: XCTestCase {
         XCTAssertEqual(controller.listController.selectedID, created)
     }
 
+    func testC4_afterANestedCreationTheKeptQueryListsAndSelectsTheNewNote() async throws {
+        let (controller, window) = try await makeController()
+        let table = controller.mainView.tableView
+        try type("daily/foo", into: controller)
+        XCTAssertEqual(controller.listController.results.count, 0)
+
+        let created = NoteID(relativePath: "daily/foo.md")
+        let reported = try await pressReturnAndSettle(controller, in: window)
+        XCTAssertEqual(reported, created)
+        XCTAssertEqual(try filesOnDisk(), ["Alpha.md", "Gamma.md", "daily/Beta.md", "daily/foo.md"])
+
+        // The query is kept and, matched against the path (S-2, ADR-0008), lists the new
+        // note, whose title is only `foo` (L-5), so it can be selected (C-4).
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "daily/foo")
+        XCTAssertEqual(controller.query, "daily/foo")
+        XCTAssertEqual(controller.listController.results.map(\.id), [created])
+        XCTAssertEqual(table.numberOfRows, 1)
+        XCTAssertEqual(table.selectedRow, 0)
+        XCTAssertEqual(controller.listController.selectedID, created)
+
+        // The editor is focused, shows the new note, and is empty and writable.
+        XCTAssertIdentical(window.firstResponder, controller.mainView.textView)
+        XCTAssertEqual(controller.editorController.noteID, created)
+        await waitForEditor(controller, toShow: created)
+        XCTAssertEqual(controller.mainView.textView.string, "")
+        XCTAssertTrue(controller.mainView.textView.isEditable)
+        XCTAssertIdentical(window.firstResponder, controller.mainView.textView, "the load did not move focus")
+        XCTAssertNil(controller.inlineMessage)
+    }
+
+    func testC4_openingANestedNoteByItsPathSelectsItInTheList() async throws {
+        let (controller, window) = try await makeController()
+        try type("daily/beta", into: controller)
+        XCTAssertEqual(
+            controller.listController.results.map(\.id), [beta], "the path-form query lists the note as typed (S-2)")
+
+        // C-1: the note at that path is opened, and since the kept query lists it, selected.
+        let reported = try await pressReturnAndSettle(controller, in: window)
+        XCTAssertEqual(reported, beta)
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "daily/beta", "the query is kept")
+        XCTAssertEqual(controller.listController.results.map(\.id), [beta])
+        XCTAssertEqual(controller.mainView.tableView.selectedRow, 0)
+        XCTAssertEqual(controller.listController.selectedID, beta)
+        XCTAssertIdentical(window.firstResponder, controller.mainView.textView)
+        XCTAssertEqual(controller.editorController.noteID, beta)
+        await waitForEditor(controller, toShow: beta)
+        XCTAssertEqual(controller.mainView.textView.string, "beta body")
+        XCTAssertEqual(try filesOnDisk(), fixtureFiles, "nothing was created")
+    }
+
     func testC4_enterOnAnAlreadyCreatedTitleReopensItInsteadOfCreatingAgain() async throws {
         let (controller, window) = try await makeController()
         try type("Twice", into: controller)

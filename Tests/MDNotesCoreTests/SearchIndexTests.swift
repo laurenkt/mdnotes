@@ -76,6 +76,56 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertEqual(paths(index.query("2026")), [])
     }
 
+    func testS2_wordWithSlashMatchesTheRelativePathWithoutTheExtension() {
+        // ADR-0008: `daily/foo` names `daily/foo.md`, whose title is only `foo` (L-5) and
+        // whose body is empty; the path-form word matches the path instead.
+        let index = self.index([("daily/foo.md", 1, "")])
+        XCTAssertEqual(index.entries.first?.path, "daily/foo")
+        XCTAssertEqual(paths(index.query("daily/foo")), ["daily/foo.md"])
+        XCTAssertEqual(paths(index.query("DAILY/Foo")), ["daily/foo.md"], "case-insensitive, like a title")
+        XCTAssertEqual(paths(index.query("ily/fo")), ["daily/foo.md"], "a substring, not the whole path")
+        XCTAssertEqual(paths(index.query("daily/")), ["daily/foo.md"])
+        XCTAssertEqual(paths(index.query("/foo")), ["daily/foo.md"])
+        XCTAssertEqual(paths(index.query("daily/ foo")), ["daily/foo.md"], "one word by path, one by title")
+        XCTAssertEqual(paths(index.query("daily/ bar")), [], "every word must still match")
+    }
+
+    func testS2_wordWithSlashDoesNotMatchAPathThatLacksIt() {
+        let index = self.index([
+            ("foo.md", 1, "a root note"),
+            ("daily/foo.md", 2, "notes on bar/baz"),
+            ("daily/other.md", 3, ""),
+        ])
+        XCTAssertEqual(index.entry(for: NoteID(relativePath: "foo.md"))?.path, "", "a root note has no path form")
+        XCTAssertEqual(paths(index.query("daily/foo")), ["daily/foo.md"], "neither the root foo nor daily/other")
+        XCTAssertEqual(paths(index.query("daily/foo.md")), [], "the extension is not part of the path form")
+        XCTAssertEqual(paths(index.query("weekly/foo")), [])
+        XCTAssertEqual(paths(index.query("/foo")), ["daily/foo.md"], "the root foo has no `/` to match")
+        XCTAssertEqual(paths(index.query("bar/baz")), ["daily/foo.md"], "a slash word still matches a body")
+    }
+
+    func testS2_wordsWithoutSlashAreNotMatchedAgainstThePath() {
+        // ADR-0008 scopes path matching to words that contain `/`; folder names alone are
+        // still not searched (L-4, L-5).
+        let index = self.index([("daily/2026/06-sunday.md", 1, "rest")])
+        XCTAssertEqual(paths(index.query("daily")), [])
+        XCTAssertEqual(paths(index.query("2026")), [])
+        XCTAssertEqual(paths(index.query("daily/2026")), ["daily/2026/06-sunday.md"])
+        XCTAssertEqual(paths(index.query("daily/2026 sunday")), ["daily/2026/06-sunday.md"])
+        XCTAssertEqual(paths(index.query("daily/2026 monday")), [])
+    }
+
+    func testS2_pathMatchSurvivesAnIncrementalUpdate() {
+        // The path bytes are carried over when the arena is repacked for an update.
+        let index = self.index([("daily/foo.md", 1, "")])
+        let updated = index.applying(changes: LibraryChanges(added: [NoteID(relativePath: "new.md")])) { _ in
+            (modifiedAt: at(2), body: "")
+        }
+        XCTAssertEqual(paths(updated.query("")), ["new.md", "daily/foo.md"])
+        XCTAssertEqual(paths(updated.query("daily/foo")), ["daily/foo.md"])
+        XCTAssertEqual(paths(updated.query("new")), ["new.md"])
+    }
+
     func testS2_nonASCIIMatchesCaseInsensitively() {
         let index = self.index([("kupka.md", 1, "František Kupka, painter")])
         XCTAssertEqual(paths(index.query("frantiŠek")), ["kupka.md"])
@@ -91,6 +141,22 @@ final class SearchIndexTests: XCTestCase {
             ("unrelated.md", 2, "nothing at all"),
         ])
         XCTAssertEqual(paths(index.query("swift")), ["swift notes.md", "body only.md"])
+    }
+
+    func testS3_pathMatchCountsAsATitleMatch() {
+        // ADR-0008: daily/foo.md matches `daily/foo` by path and sorts in the title group,
+        // ahead of two newer notes that only carry the words in their bodies.
+        let index = self.index([
+            ("body only.md", 3, "see daily/foo for details"),
+            ("daily/foo.md", 1, ""),
+            ("daily/bar.md", 2, "daily/foo is elsewhere"),
+        ])
+        XCTAssertEqual(paths(index.query("daily/foo")), ["daily/foo.md", "body only.md", "daily/bar.md"])
+        // Two path matches: most recently modified first within the group, then the body match.
+        XCTAssertEqual(paths(index.query("daily/")), ["daily/bar.md", "daily/foo.md", "body only.md"])
+        // The title-only view (K-4) includes path matches and nothing else.
+        XCTAssertEqual(paths(index.queryTitles("daily/foo")), ["daily/foo.md"])
+        XCTAssertEqual(paths(index.queryTitles("daily/")), ["daily/bar.md", "daily/foo.md"])
     }
 
     func testS3_titleGroupNeedsEveryWordInTheTitle() {
