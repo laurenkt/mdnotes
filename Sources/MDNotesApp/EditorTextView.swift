@@ -79,6 +79,17 @@ public final class EditorTextView: NSTextView {
 
     // MARK: - Image paste and drop (I-1)
 
+    /// `NSTextView` enables Paste only for the types it reads itself, which for a plain text
+    /// view are text types: with an image and nothing else on the clipboard the menu item is
+    /// disabled and Cmd-V, which goes through the same validation, is dead, so `paste(_:)` is
+    /// never reached. Paste is enabled here whenever the pasteboard carries an image the
+    /// handler could take and the shown note is writable; every other item, and Paste over
+    /// anything else, is validated as `NSTextView` validates it.
+    public override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(NSText.paste(_:)), acceptsImagePaste() { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
     /// Cmd-V and the menu item. An image on the pasteboard goes to `onInsertImage`; anything
     /// else, or an image the handler declines, is pasted as `NSTextView` pastes it.
     public override func paste(_ sender: Any?) {
@@ -134,6 +145,12 @@ public final class EditorTextView: NSTextView {
     /// drop it into.
     private func acceptsImageDrop(_ sender: any NSDraggingInfo) -> Bool {
         isEditable && onInsertImage != nil && ImagePasteboard.hasImage(on: sender.draggingPasteboard)
+    }
+
+    /// True when `pasteboard` carries an image and there is a handler and an editable text to
+    /// paste it into. Reads no data (PF-6): validation runs on every menu open and key press.
+    private func acceptsImagePaste() -> Bool {
+        isEditable && onInsertImage != nil && ImagePasteboard.hasImage(on: pasteboard)
     }
 
     /// True when Command is down and Shift, Control and Option are not. The function and

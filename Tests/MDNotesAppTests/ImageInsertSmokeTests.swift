@@ -431,6 +431,73 @@ final class ImageInsertSmokeTests: XCTestCase {
         XCTAssertEqual(try fileText(alpha), Self.alphaBody)
     }
 
+    // MARK: I-1 the Paste item is enabled for an image-only pasteboard
+
+    /// The Edit › Paste item as the menu bar builds it: no target, so the menu validates it
+    /// against the first responder, and Cmd-V goes through the same validation.
+    private func makePasteItem() throws -> NSMenuItem {
+        let edit = try XCTUnwrap(MainMenu.make().mainMenu.items.first { $0.title == MainMenu.editMenuTitle }?.submenu)
+        let paste = try XCTUnwrap(edit.items.first { $0.action == #selector(NSText.paste(_:)) }, "a Paste item")
+        XCTAssertNil(paste.target, "sent down the responder chain")
+        XCTAssertEqual(paste.keyEquivalent, "v")
+        return paste
+    }
+
+    func testI1_pasteItemIsEnabledForAnImageOnlyPasteboardAndReachesTheEditorThroughTheMenu() async throws {
+        let fixture = try await makeFixtureShowingAlpha()
+        let paste = try makePasteItem()
+        let png = try Self.generatedPNG(seed: 12)
+        let imageOnly = pasteboard(holding: png, as: .png)
+        // The pasteboard promotes PNG to TIFF on its own; what matters is that no text type is there.
+        let textTypes: [NSPasteboard.PasteboardType] = [.string, .rtf, .rtfd, .html]
+        XCTAssertNil(imageOnly.availableType(from: textTypes), "an image and nothing else: \(imageOnly.types ?? [])")
+        fixture.textView.pasteboard = imageOnly
+
+        XCTAssertTrue(fixture.textView.isEditable, "Alpha is writable")
+        XCTAssertTrue(fixture.textView.validateUserInterfaceItem(paste), "Paste is enabled for an image alone")
+        let tiffOnly = pasteboard(holding: try Self.generatedTIFF(seed: 12), as: .tiff)
+        fixture.textView.pasteboard = tiffOnly
+        XCTAssertTrue(fixture.textView.validateUserInterfaceItem(paste), "whatever image type it is")
+        fixture.textView.pasteboard = pasteboard(holdingFile: root.appendingPathComponent("assets/other.png"))
+        XCTAssertTrue(fixture.textView.validateUserInterfaceItem(paste), "or an image file")
+        fixture.textView.pasteboard = imageOnly
+
+        // The item's action, sent as the menu sends it, reaches `paste(_:)` and the image is taken.
+        let (settled, reported) = expectInsert(fixture)
+        let action = try XCTUnwrap(paste.action)
+        XCTAssertTrue(NSApp.sendAction(action, to: fixture.textView, from: paste), "the editor answers to Paste")
+        await fulfillment(of: [settled], timeout: 10)
+        let name = try XCTUnwrap(reported()).get()
+        XCTAssertEqual(try storedImages(), [name, "pic.png"].sorted())
+        XCTAssertEqual(try storedImage(name), png)
+        XCTAssertTrue(fixture.textView.string.hasPrefix("before ![[\(name)]] after"), "the embed is at the caret")
+        XCTAssertIdentical(fixture.window.firstResponder, fixture.textView, "focus stays in the editor")
+    }
+
+    func testI1_pasteItemIsDisabledForAnImageWhileTheShownNoteIsReadOnly() async throws {
+        let fixture = try await makeFixtureShowingAlpha()
+        let paste = try makePasteItem()
+        let bad = NoteID(relativePath: "Bad.md")
+        try Data([0xFF, 0xFE] + Array("hi".utf8)).write(to: root.appendingPathComponent(bad.relativePath))
+        fixture.editor.load(bad, from: fixture.library)
+        await waitUntil("editor shows Bad read-only") {
+            fixture.editor.noteID == bad && fixture.editor.body?.isWritable == false
+        }
+        XCTAssertFalse(fixture.textView.isEditable, "an undecodable note is read-only (L-8)")
+        var inserts = 0
+        fixture.controller.onInsertImage = { _ in inserts += 1 }
+        fixture.textView.pasteboard = pasteboard(holding: try Self.generatedPNG(seed: 13), as: .png)
+
+        XCTAssertFalse(fixture.textView.validateUserInterfaceItem(paste), "Paste stays disabled")
+        // Were it sent anyway, the paste is refused: nothing is written or inserted.
+        let action = try XCTUnwrap(paste.action)
+        _ = NSApp.sendAction(action, to: fixture.textView, from: paste)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(inserts, 0)
+        XCTAssertEqual(try storedImages(), ["pic.png"], "nothing was written")
+        XCTAssertTrue(fixture.textView.string.hasSuffix("hi"), "and the note is untouched")
+    }
+
     // MARK: I-1 dropping an image inserts the embed at the drop point
 
     func testI1_droppingImageDataInsertsTheEmbedAtTheDropPoint() async throws {

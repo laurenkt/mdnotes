@@ -106,7 +106,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       the bar can show (a small fixed cap, say 20, with the count in the summary), build none
       while collapsed, and keep `show` cheap for any count. Test: `BacklinksSmokeTests` with
       2,000 backlinks completes `show` within a few ms and lists at most the cap.
-- [ ] M5.6b Image paste is dead from the keyboard and the menu (I-1): with only an image on
+- [x] M5.6b Image paste is dead from the keyboard and the menu (I-1): with only an image on
       the clipboard `NSTextView` disables Paste, so `EditorTextView.paste(_:)` is never
       called. Override `validateUserInterfaceItem` (or `readablePasteboardTypes`) so Paste is
       enabled when `ImagePasteboard.hasImage` and the note is writable. Test:
