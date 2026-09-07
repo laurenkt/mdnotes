@@ -30,7 +30,26 @@ if [ "$MODE" = "full" ]; then
     swift build -c release --build-tests
     for class in $(grep -rhoE 'class [A-Za-z0-9_]+PerfTests' Tests | awk '{print $2}' | sort -u); do
         step "perf gate: $class"
-        swift test -c release --skip-build --filter "$class"
+        log="$(mktemp)"
+        if swift test -c release --skip-build --filter "$class" 2>&1 | tee "$log"; then
+            rm -f "$log"
+            continue
+        fi
+        # One retry. A gate that fails then passes is a flake: let the commit through but
+        # record it in docs/ISSUES.md so the flake gets its own task (ADR-0016). A gate that
+        # fails twice is a real regression and fails the check.
+        step "perf gate: $class failed, retrying once"
+        log2="$(mktemp)"
+        if swift test -c release --skip-build --filter "$class" 2>&1 | tee "$log2"; then
+            failed="$(grep -oE "\-\[[A-Za-z0-9_.]+ [A-Za-z0-9_]+\]' failed" "$log" | head -1 | sed -E "s/'.*//; s/^-\[//; s/\]$//")"
+            detail="$(grep -E 'XCTAssert|median|budget' "$log" | head -3 | tr '\n' ' ' | cut -c1-300)"
+            scripts/record-issue.sh flaky "$class" "${failed:-unknown test} failed once and passed on retry. First run: ${detail:-no detail captured}"
+            rm -f "$log" "$log2"
+            continue
+        fi
+        rm -f "$log" "$log2"
+        echo "perf gate $class failed twice" >&2
+        exit 1
     done
 fi
 

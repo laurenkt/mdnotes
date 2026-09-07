@@ -39,6 +39,16 @@ You are working unattended through `docs/PLAN.md`:
 If a task turns out to be too large for one commit, split it in `docs/PLAN.md` (sub-tasks
 M2.4a, M2.4b) in the commit that lands the first part.
 
+## Issues (what you notice but were not asked to fix)
+
+Anything wrong that is outside your task, whether a bug against the spec, a flaky test, or
+debt that will bite, goes into `docs/ISSUES.md` via
+`scripts/record-issue.sh <bug|debt> "<where>" "<what you saw>"`, in the same commit as your
+task. Do not fix it, do not widen your task, do not leave it in a comment. The orchestrator
+drains the queue before the next plan task (ADR-0016). `scripts/check.sh` records perf
+flakes there itself: a gate that fails once and passes on retry lets your commit through and
+adds a `flaky` entry; a gate that fails twice is a regression and blocks you.
+
 ## Commands
 
 ```
@@ -83,8 +93,8 @@ Sources/MDNotes/main.swift   the executable entry point. Nothing else goes here.
 Sources/MDNotesTestSupport/  SyntheticLibrary, PerfGate.
 Tests/MDNotesCoreTests/      unit tests and *PerfTests for the core.
 Tests/MDNotesAppTests/       headless smoke tests and *PerfTests for the app layer.
-scripts/                     check.sh, bundle.sh, setup.sh
+scripts/                     check.sh, bundle.sh, setup.sh, record-issue.sh
 .githooks/pre-commit         runs scripts/check.sh full
 .claude/                     settings.json (permissions + hooks), hooks/, commands/next-task.md
-docs/                        SPEC.md, PLAN.md, QUESTIONS.md, adr/
+docs/                        SPEC.md, PLAN.md, ISSUES.md, QUESTIONS.md, adr/
 ```

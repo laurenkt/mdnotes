@@ -8,7 +8,11 @@ subagent so it starts with clean context. Keep your own output to a few lines.
 
 ## 1. Find the next task
 
-Read `docs/PLAN.md`. The next task is the first line matching `- [ ] M<n>.<k>`.
+First read `docs/ISSUES.md`. Open entries are lines matching `- [ ] I-<n>`. Take the first
+open issue if any, except: when more than three are open, alternate one issue then one plan
+task (check the last commit message: if it starts with `I-`, take a plan task this tick).
+
+Otherwise read `docs/PLAN.md`. The next task is the first line matching `- [ ] M<n>.<k>`.
 
 - If there is none: report "plan complete" and, if running under `/loop`, stop the loop.
 - If every remaining `[ ]` task depends on a `[?]` task (same milestone, later number, or an
@@ -39,6 +43,23 @@ does not decide something you need, append a question to docs/QUESTIONS.md, mark
 commit hash and what landed, or the question number if blocked.
 ```
 
+For an issue entry, use this prompt instead, substituting the entry line:
+
+```
+You are working in /Users/laurenkt/Projects/mdnotes. Read CLAUDE.md, then docs/ISSUES.md, then
+the entry below. Fix exactly this one issue and nothing else:
+
+<ISSUE LINE>
+
+Reproduce it first with a test that fails, then fix it, then mark the entry [x] in
+docs/ISSUES.md and commit with a message of the form "I-3: <summary>". A flaky entry is fixed
+by reducing variance, never by raising a budget. If the fix is larger than one commit, add a
+task at the top of the current milestone in docs/PLAN.md describing it, mark the entry
+[x] -> M<n>.<k>, and commit that instead. If you notice other problems, record them with
+scripts/record-issue.sh; do not fix them. Finish with a clean working tree. Reply with one
+line: the commit hash and what landed.
+```
+
 ## 3. Verify
 
 After the subagent returns, check all of these with git and the plan file:
@@ -47,7 +68,9 @@ After the subagent returns, check all of these with git and the plan file:
 - `HEAD` differs from the recorded value. If not, the subagent made no commit. Count it as a
   stall. Two consecutive stalls on the same task: stop the loop and report the subagent's reply.
 - The task line is now `[x]` or `[?]`. If `[?]`, report the question and continue to the next
-  tick (the next task will be picked up automatically).
+  tick (the next task will be picked up automatically). For an issue, the entry is `[x]`.
+- If `docs/ISSUES.md` gained entries in the commit (`git diff HEAD~1 --stat`), mention the
+  count in the report.
 
 ## 4. Milestone tag
 
@@ -74,5 +97,6 @@ The next tick will pick the task up. Do not implement the task in the orchestrat
 
 ## 7. Report
 
-One or two lines: task ID, commit hash, milestone tag if any, and how many `[ ]` tasks remain.
+One or two lines: task or issue ID, commit hash, milestone tag if any, how many `[ ]` tasks
+remain and how many issues are open.
 Then let the loop schedule the next tick.

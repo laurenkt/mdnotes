@@ -10,6 +10,7 @@
       "Bash(scripts/bundle.sh:*)",
       "Bash(scripts/setup.sh:*)",
       "Bash(scripts/info-plist.sh:*)",
+      "Bash(scripts/record-issue.sh:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
