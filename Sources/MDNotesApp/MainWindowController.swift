@@ -136,6 +136,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         )
         window.title = "MDNotes"
         window.minSize = NSSize(width: 400, height: 300)
+        // W-1: one window, so no window tabbing; otherwise AppKit adds Show Tab Bar and Show
+        // All Tabs to the View menu.
+        window.tabbingMode = .disallowed
         // W-4: closing quits, so nothing ever needs the window released on close.
         window.isReleasedWhenClosed = false
         window.center()

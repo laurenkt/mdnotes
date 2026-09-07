@@ -122,7 +122,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       (reuse the inline message label or a dedicated bar) while such a body is loaded, cleared
       on the next load. Test: `ExternalEditSmokeTests` or a new `ReadOnlyNoticeSmokeTests`
       with a fabricated non-UTF-8 file.
-- [ ] M5.6e Window tabbing leaks into the View menu (W-1): AppKit adds Show Tab Bar / Show All
+- [x] M5.6e Window tabbing leaks into the View menu (W-1): AppKit adds Show Tab Bar / Show All
       Tabs because the main window allows tabbing. Set `window.tabbingMode = .disallowed` in
       `MainWindowController`. Test: `MenuSmokeTests` asserts the View menu holds only ours.
 - [x] M5.6 Manual acceptance pass against the checklist in `docs/ACCEPTANCE.md` (write it in this

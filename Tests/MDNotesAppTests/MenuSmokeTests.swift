@@ -381,6 +381,26 @@ final class MenuSmokeTests: XCTestCase {
         XCTAssertTrue(strip.isCollapsed, "shown collapsed, as left")
     }
 
+    // MARK: - W-1: one window, so no window tabbing and no tab items in the View menu
+
+    func testW1_viewMenuHoldsOnlyOurItemsBecauseTheWindowDisallowsTabbing() async throws {
+        let delegate = try await launch()
+        let window = try window(of: delegate)
+        XCTAssertEqual(window.tabbingMode, .disallowed, "one window: nothing to tab (W-1)")
+        XCTAssertNil(window.tabGroup, "the window is in no tab group")
+
+        // AppKit adds Show Tab Bar and Show All Tabs to the menu titled View when it is about
+        // to be shown, if any window allows tabbing; `update()` is what showing it does first.
+        let view = try submenu(titled: MainMenu.viewMenuTitle, of: delegate.mainMenu)
+        NSApp.mainMenu?.update()
+        view.update()
+        XCTAssertEqual(view.items.map(\.title), [MainMenu.hideBacklinksItemTitle], "only ours")
+        let tabActions = [#selector(NSWindow.toggleTabBar(_:)), #selector(NSWindow.toggleTabOverview(_:))]
+        XCTAssertEqual(
+            items(in: delegate.mainMenu).filter { item in tabActions.contains { $0 == item.action } }.map(\.title),
+            [], "no tab items anywhere in the menu bar")
+    }
+
     // MARK: - PR-1: Preferences, Cmd-,
 
     func testPR1_preferencesItemShowsThePreferencesWindowWithCommandComma() async throws {
