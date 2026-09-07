@@ -7,6 +7,29 @@ release tag; the setup and the driving scripts it needs are described at the end
 Result key: **pass**, **fail** (task named), **gate** (enforced by `scripts/check.sh full`,
 not checkable by hand), **n/a by hand** (why), **blocked** (question in `QUESTIONS.md`).
 
+## Release pass of 2026-09-07 (M5.7, `v0.1.0`)
+
+Build: `scripts/bundle.sh` at commit 96d28d4 (M5.6e); the plist reports 0.1.0 and the bundle
+is ad-hoc signed. Library: a stand-in (two notes titled `foo`, a Latin-1 note, a note with
+1,500 backlinks, an image-only clipboard), launched with `-LibraryRoot` and driven as the M5.6
+pass was; the defaults domain was removed afterwards. Scope: the five IDs whose code changed
+since the M5.6 pass (M5.6a to M5.6e). Every other ID stands as recorded in that pass, and the
+gate IDs ran green under `scripts/check.sh full` in the commit that carries this tag.
+
+| ID  | Result | Notes |
+|-----|--------|-------|
+| L-8 | pass | The Latin-1 note shows "This note is not valid UTF-8 and is shown read-only." above the editor; Tab then typing changed nothing; the file's bytes and date were untouched; the notice was gone when the next note loaded. |
+| K-2 | pass | `[[foo]]` with `foo.md` and `archive/foo.md` both present is set in the warning tint (AX foreground 1.00/0.55/0.16, systemOrange); the unique `[[Hub]]` is in the link colour (0.00/0.41/0.85). |
+| K-6 | pass | Opening the note with 1,500 backlinks: Down to the editor and the field answering over AX in 0.24 s, osascript spawn included, no beachball. The strip reads "20 of 1500 backlinks" and shows as many of the 20 title buttons as fit (12 at the default width, newest first); Cmd-Shift-B collapses it to "1500 backlinks" with no buttons and back again; clicking `link 1500` opened that note. |
+| I-1 | pass | With a PNG and nothing else on the clipboard, Edit › Paste was enabled with the editor focused; Cmd-V and Edit › Paste each wrote `i/<yyyyMMdd-HHmmss>.png` byte-identical to the source and inserted `![[<name>]]` at the caret; the file held the text at the next read. |
+| W-1 | pass | The View menu holds Hide Backlinks and Enter Full Screen only; Show Tab Bar / Show All Tabs are gone. |
+
+Release decision: `v0.1.0` is tagged with M2.6b open (Q1: C-4 after a nested-path create).
+The result key above admits a blocked entry in a release pass, `PLAN.md` puts no dependency
+between M5.7 and M2.6b, the behaviour shipped is the interim one M2.6a landed and Q1 records,
+and the bundle already reports 0.1.0. Q1 is the human's to answer; its answer ships in a
+later tag.
+
 ## Pass of 2026-09-07 (M5.6)
 
 Build: `scripts/bundle.sh` at commit 9d2d2a9 (M5.5), macOS 26.2. Library: a stand-in shaped

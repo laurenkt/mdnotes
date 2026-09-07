@@ -128,4 +128,4 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M5.6 Manual acceptance pass against the checklist in `docs/ACCEPTANCE.md` (write it in this
       task: one line per spec ID, checked by hand against a copy of the real library). Any
       discrepancy becomes a new task above this line.
-- [ ] M5.7 Tag `v0.1.0`.
+- [x] M5.7 Tag `v0.1.0`.
