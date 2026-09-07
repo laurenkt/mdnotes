@@ -53,6 +53,11 @@ import MDNotesCore
 /// here: the search field is set to the tag, `#` included, and the list reloads for it as it
 /// would for typing (S-4, S-5). The click is consumed, so the caret stays where it was and
 /// focus stays in the editor; the note shown stays selected if the new query lists it.
+///
+/// The backlinks strip (K-6) is fed from here: whenever the editor's note changes or a snapshot
+/// arrives, the snapshot's link index names the notes linking to the open note and the strip
+/// shows their titles, or hides itself when there are none. A click on a title opens that note
+/// as a link does (K-3). The strip keeps its own collapse state.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -139,6 +144,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.textView.onCommandReturn = { [weak self] in self?.openLinkAtCaret() ?? false }
         // T-4: a plain click on a tag in the editor searches for it.
         view.textView.onClick = { [weak self] index in self?.searchTag(at: index) ?? false }
+        // K-6: a click on a title in the backlinks strip opens that note.
+        view.backlinksStrip.onOpen = { [weak self] id in self?.openBacklink(id) }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
         // the name must be set after the content view exists so a restored frame lays it out.
         shouldCascadeWindows = false
@@ -177,6 +184,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         listController.cancelEditingTitle()
         editorController.clear()
         listController.show(SearchIndex.empty.query(query))
+        refreshBacklinks()
     }
 
     // MARK: - Search (S-1, S-5)
@@ -289,8 +297,33 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         } else if let library {
             mainView.tableView.deselectAll(nil)
             editorController.load(id, from: library)
+            refreshBacklinks()
             window?.makeFirstResponder(mainView.textView)
         }
+    }
+
+    // MARK: - Backlinks (K-6)
+
+    /// A click on a title in the backlinks strip (K-6). Opens `id` as a link to it would (K-3):
+    /// selected in the list if the query lists it, loaded into the editor directly if not, with
+    /// the editor focused and unsaved edits to the note being left written first (E-4).
+    /// Returns false, doing nothing, when the snapshot no longer lists the note.
+    @discardableResult
+    public func openBacklink(_ id: NoteID) -> Bool {
+        guard let library, library.snapshot.entry(for: id) != nil else { return false }
+        hideInlineMessage()
+        open(id)
+        return true
+    }
+
+    /// Hands the strip the notes linking to the editor's note under the current snapshot (K-5,
+    /// K-6), or nothing when no note is shown, so it hides. Called whenever either changes.
+    private func refreshBacklinks() {
+        guard let id = editorController.noteID, let library else {
+            mainView.backlinksStrip.show([])
+            return
+        }
+        mainView.backlinksStrip.show(library.snapshot.links.backlinks(to: id))
     }
 
     // MARK: - Link opening (K-3)
@@ -528,6 +561,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         reloadList()
         // K-4, T-3: a completion list left showing lists the titles or tags the new snapshot has.
         editorController.refreshCompletions()
+        // K-6: the new snapshot may link to the open note differently.
+        refreshBacklinks()
     }
 
     /// Queries the current snapshot with `query` and hands the results to the list. The
@@ -557,6 +592,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         editorController.noteWasDeleted()
         let fallbackRow = row >= 0 && !editorController.holdsEditsOfDeletedNote ? row : nil
         listController.show(snapshot.query(query), fallbackRow: fallbackRow)
+        refreshBacklinks()
     }
 
     /// The library reports changes that were not ours (E-6). If the editor's note is among the
@@ -575,10 +611,12 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         guard let entry, let library else {
             // X-4: the deleted note's row is gone, but its unsaved edits stay in the view.
             if !editorController.holdsEditsOfDeletedNote { editorController.clear() }
+            refreshBacklinks()
             return
         }
         // The note is already in the editor (see `reloadList`); reloading would move the caret.
         if entry.id == editorController.noteID { return }
         editorController.load(entry.id, from: library)
+        refreshBacklinks()
     }
 }

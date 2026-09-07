@@ -11,7 +11,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
     nonisolated public static let listHeightDefaultsKey = "MainSplitListHeight"
     /// Divider position (height of the list, in points) used when nothing is persisted yet.
     nonisolated public static let defaultListHeight: CGFloat = 220
-    /// Height of the backlinks strip when it is shown (K-6, wired in M4.7).
+    /// Height of the backlinks strip when it is shown (K-6).
     nonisolated public static let backlinksStripHeight: CGFloat = 28
     /// The height the editor's text container and view may grow to: the value
     /// `NSTextView.scrollableTextView()` uses, so layout is unchanged by the subclass.
@@ -25,7 +25,8 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public let tableView: NoteTableView
     public let editorScrollView: NSScrollView
     public let textView: EditorTextView
-    public let backlinksStrip: NSView
+    /// K-6: the bar below the editor. Hidden until the window controller gives it backlinks.
+    public let backlinksStrip: BacklinksStrip
 
     /// Cmd-Delete (D-1). Returns true if a note was selected and its deletion begun; false
     /// lets the key go on to whatever has focus. Installed by the window controller.
@@ -59,7 +60,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
         (listScrollView, tableView) = Self.makeList()
         (editorScrollView, textView) = Self.makeEditor()
         appliedEditorFont = textView.font ?? EditorFontPreference.font(from: defaults)
-        backlinksStrip = Self.makeBacklinksStrip()
+        backlinksStrip = BacklinksStrip(defaults: defaults)
         splitView = Self.makeSplitView(top: listScrollView, bottom: editorScrollView)
         stack = NSStackView(views: [searchField, messageLabel, splitView, backlinksStrip])
         super.init(frame: frameRect)
@@ -277,23 +278,6 @@ public final class MainView: NSView, NSSplitViewDelegate {
         text.font = EditorFontPreference.font(from: .standard)
         text.textContainerInset = NSSize(width: 8, height: 8)
         return (scroll, text)
-    }
-
-    private static func makeBacklinksStrip() -> NSView {
-        let strip = NSView()
-        strip.translatesAutoresizingMaskIntoConstraints = false
-        let label = NSTextField(labelWithString: "Backlinks")
-        label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        strip.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 8),
-            label.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
-        ])
-        // K-6: hidden when there are no backlinks. There are none until M4.7 wires it.
-        strip.isHidden = true
-        return strip
     }
 
     private static func makeSplitView(top: NSView, bottom: NSView) -> NSSplitView {
