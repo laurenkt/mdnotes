@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 
@@ -71,5 +72,27 @@ final class BundleTests: XCTestCase {
         XCTAssertEqual(try plutilLintStatus(data), 0)
         let plist = try dictionary(from: data)
         XCTAssertEqual(plist["CFBundleIconFile"] as? String, "AppIcon")
+    }
+
+    func testP4_appIconIsAnIcnsWithEveryDockAndFinderSize() throws {
+        let url = Self.repoRoot.appendingPathComponent("Resources/AppIcon.icns")
+        let data = try Data(contentsOf: url)
+        XCTAssertEqual(data.prefix(4), Data("icns".utf8), "Resources/AppIcon.icns is not an icns")
+        let image = try XCTUnwrap(NSImage(contentsOf: url), "NSImage cannot load the icon")
+        let widths = Set(image.representations.map(\.pixelsWide))
+        for expected in [16, 32, 64, 128, 256, 512, 1024] {
+            XCTAssertTrue(
+                widths.contains(expected),
+                "missing the \(expected) px representation; have \(widths.sorted())")
+        }
+    }
+
+    func testP4_bundleScriptCopiesTheIconAndNamesItInThePlist() throws {
+        let script = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
+        XCTAssertTrue(script.contains("Resources/AppIcon.icns"), "bundle.sh does not copy the icon")
+        XCTAssertTrue(
+            script.contains("MDNOTES_ICON_FILE=\"AppIcon\""),
+            "bundle.sh does not hand the icon name to info-plist.sh")
     }
 }
