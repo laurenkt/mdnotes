@@ -85,7 +85,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       incrementally. Resolution K-2 including ambiguity. Tests: unique, ambiguous, path-qualified.
 - [x] M4.3 Editor styling E-2, E-3 via `NSTextStorage` delegate on the edited paragraphs only.
       `EditorPerfTests`: PF-3 keystroke-to-redraw on a 1 MB note.
-- [ ] M4.4 Link opening K-3: Cmd-click and Cmd-Enter, create-if-missing. Smoke tests.
+- [x] M4.4 Link opening K-3: Cmd-click and Cmd-Enter, create-if-missing. Smoke tests.
 - [ ] M4.5 `[[` completion popover K-4. Smoke test drives typing and asserts inserted text.
 - [ ] M4.6 `#` completion popover T-3 and click-to-search T-4.
 - [ ] M4.7 Backlinks strip K-6 with collapse persistence.

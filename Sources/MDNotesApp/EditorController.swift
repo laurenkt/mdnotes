@@ -185,6 +185,34 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         }
     }
 
+    // MARK: - Links (K-3)
+
+    /// The target of the wikilink the caret is in, or nil when it is not in one. The caret is
+    /// the start of the selection.
+    public func linkTargetAtCaret() -> LinkTarget? {
+        linkTarget(at: textView.selectedRange().location)
+    }
+
+    /// The target of the wikilink or embed whose text, brackets included, contains the
+    /// insertion index `index`, or nil when no link does. Both ends count: a caret just before
+    /// the `[[` or just after the `]]` is touching the link, and a click resolved to an
+    /// insertion index lands on an end when it hits the outer half of a bracket. Where two
+    /// links meet, the earlier one wins. A `[[link]]` inside a code span or fenced block is not
+    /// a link (E-2), so the paragraphs around the index are scanned as the styler scans them,
+    /// with fenced blocks covered whole.
+    public func linkTarget(at index: Int) -> LinkTarget? {
+        guard let storage = textView.textStorage, index >= 0, index <= storage.length else { return nil }
+        let units = EditorStyler.units(of: storage)
+        let paragraphs = MarkdownScanner.paragraphRange(in: units, editedRange: NSRange(location: index, length: 0))
+        for token in MarkdownScanner.scan(units, in: paragraphs) {
+            guard case .wikilink(let target, _, let isEmbed) = token.kind else { continue }
+            if token.range.location > index { break }
+            guard index <= token.range.location + token.range.length else { continue }
+            return LinkTarget(text: storage.mutableString.substring(with: target), isEmbed: isEmbed)
+        }
+        return nil
+    }
+
     // MARK: - Loading (S-8)
 
     /// Writes any unsaved edits to the note shown now (E-4), then reads `id` from `library` in

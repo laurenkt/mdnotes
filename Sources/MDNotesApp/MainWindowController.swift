@@ -39,6 +39,11 @@ import MDNotesCore
 /// nothing is reloaded. A renamed title the current query no longer matches leaves the list, as
 /// it would if the query had been typed after the rename. Links to the note are not rewritten
 /// yet (R-3).
+///
+/// Link opening (K-3) is a Cmd-click in the editor or Cmd-Enter with the caret in a link, both
+/// intercepted by `EditorTextView` and handed here: the editor names the link's target, the
+/// snapshot's link index resolves it (K-2), and the note is opened as Enter in the search
+/// field opens one, or created first as Enter creates one (C-2, C-3) when nothing resolves.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -61,6 +66,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// Called on the main thread once Enter's create-or-open has settled: with the note that
     /// was opened or created, or nil when the query was rejected or the write failed.
     public var onCommitQuery: (@MainActor (NoteID?) -> Void)?
+
+    /// Called on the main thread once opening a link (K-3) has settled: with the link's target
+    /// and the note that was opened or created for it, or nil when the target could not name a
+    /// note or the write failed. Not called for an embed, which is not a note (K-1).
+    public var onOpenLink: (@MainActor (LinkTarget, NoteID?) -> Void)?
 
     /// Called on the main thread once a deletion begun by `deleteSelectedNote()` has settled:
     /// with the note and where it went in the Trash, or the error that kept it in place.
@@ -115,6 +125,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         // R-1, R-2: Cmd-R from anywhere in the window; the list's edited title comes back here.
         view.onRenameNote = { [weak self] in self?.renameSelectedNote() ?? false }
         listController.onCommitTitle = { [weak self] id, text in self?.commitTitle(of: id, to: text) ?? false }
+        // K-3: Cmd-click on a link in the editor, or Cmd-Enter with the caret in one.
+        view.textView.onCommandClick = { [weak self] index in self?.openLink(at: index) ?? false }
+        view.textView.onCommandReturn = { [weak self] in self?.openLinkAtCaret() ?? false }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
         // the name must be set after the content view exists so a restored frame lays it out.
         shouldCascadeWindows = false
@@ -267,6 +280,66 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             editorController.load(id, from: library)
             window?.makeFirstResponder(mainView.textView)
         }
+    }
+
+    // MARK: - Link opening (K-3)
+
+    /// Cmd-Enter in the editor (K-3). Opens the link the caret is in; returns false, doing
+    /// nothing, when the caret is not in one.
+    @discardableResult
+    public func openLinkAtCaret() -> Bool {
+        guard let target = editorController.linkTargetAtCaret() else { return false }
+        return openLink(target)
+    }
+
+    /// Cmd-click in the editor (K-3), with the insertion index the click landed on. Opens the
+    /// link there; returns false, doing nothing, when there is none.
+    @discardableResult
+    public func openLink(at index: Int) -> Bool {
+        guard let target = editorController.linkTarget(at: index) else { return false }
+        return openLink(target)
+    }
+
+    /// Opens the note `target` names (K-3): the note it resolves to (K-2), or, when none does,
+    /// a note created for it as Enter in the search field would create one for the target's
+    /// text (C-2), so a `/` in the target makes folders. A target that cannot name a file (C-3)
+    /// shows the reason under the search field and creates nothing. Opening selects the note in
+    /// the list if the query lists it, or loads it into the editor directly if not, and focuses
+    /// the editor; unsaved edits to the note being left are written first (E-4). Creation is
+    /// asynchronous and the note is opened once the snapshot lists it. Returns false, doing
+    /// nothing, for an embed, which links to a file that is not a note (K-1, I-2), or when no
+    /// library is attached; `onOpenLink` reports the outcome otherwise.
+    @discardableResult
+    public func openLink(_ target: LinkTarget) -> Bool {
+        guard !target.isEmbed, let library else { return false }
+        hideInlineMessage()
+        if let existing = library.snapshot.links.resolve(target).target {
+            open(existing)
+            onOpenLink?(target, existing)
+            return true
+        }
+        let id: NoteID
+        do {
+            id = try NoteCreation.noteID(forQuery: target.text)
+        } catch {
+            showInlineMessage(error.message)
+            onOpenLink?(target, nil)
+            return true
+        }
+        library.create(id) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .success:
+                open(id)
+                onOpenLink?(target, id)
+            case .failure(let error):
+                FileHandle.standardError.write(
+                    Data("MDNotes: could not create \(id) for [[\(target.text)]]: \(error)\n".utf8))
+                showInlineMessage(error.localizedDescription)
+                onOpenLink?(target, nil)
+            }
+        }
+        return true
     }
 
     // MARK: - Delete (D-1, D-2)

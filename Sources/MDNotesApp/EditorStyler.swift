@@ -119,7 +119,7 @@ public final class EditorStyler {
     /// The storage's text as UTF-16 units, copied out in one call. A `String` bridged from
     /// the storage iterates its units one message at a time, which on a 1 MB note costs more
     /// than the whole PF-3 budget; the bulk copy is a fraction of a millisecond.
-    private static func units(of storage: NSTextStorage) -> [UInt16] {
+    static func units(of storage: NSTextStorage) -> [UInt16] {
         let length = storage.length
         let backing = storage.mutableString
         return [UInt16](unsafeUninitializedCapacity: length) { buffer, initialized in

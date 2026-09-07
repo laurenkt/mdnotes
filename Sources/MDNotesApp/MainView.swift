@@ -13,6 +13,9 @@ public final class MainView: NSView, NSSplitViewDelegate {
     nonisolated public static let defaultListHeight: CGFloat = 220
     /// Height of the backlinks strip when it is shown (K-6, wired in M4.7).
     nonisolated public static let backlinksStripHeight: CGFloat = 28
+    /// The height the editor's text container and view may grow to: the value
+    /// `NSTextView.scrollableTextView()` uses, so layout is unchanged by the subclass.
+    nonisolated private static let unboundedEditorHeight: CGFloat = 10_000_000
 
     public let searchField: NSSearchField
     /// The inline message under the search field (C-3). Hidden until `showMessage(_:)`.
@@ -21,7 +24,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public let listScrollView: NSScrollView
     public let tableView: NoteTableView
     public let editorScrollView: NSScrollView
-    public let textView: NSTextView
+    public let textView: EditorTextView
     public let backlinksStrip: NSView
 
     /// Cmd-Delete (D-1). Returns true if a note was selected and its deletion begun; false
@@ -246,13 +249,24 @@ public final class MainView: NSView, NSSplitViewDelegate {
         return (scroll, table)
     }
 
-    private static func makeEditor() -> (NSScrollView, NSTextView) {
-        let scroll = NSTextView.scrollableTextView()
+    /// The editor: an `EditorTextView` in a scroll view, set up the way
+    /// `NSTextView.scrollableTextView()` sets up a plain text view (TextKit 2, wrapping to the
+    /// scroll view's width, growing downwards without limit).
+    private static func makeEditor() -> (NSScrollView, EditorTextView) {
+        let text = EditorTextView(frame: .zero)
+        text.autoresizingMask = [.width, .height]
+        text.isVerticallyResizable = true
+        text.isHorizontallyResizable = false
+        text.minSize = .zero
+        text.maxSize = NSSize(width: 0, height: Self.unboundedEditorHeight)
+        text.textContainer?.widthTracksTextView = true
+        text.textContainer?.containerSize = NSSize(width: 0, height: Self.unboundedEditorHeight)
+        let scroll = NSScrollView()
+        scroll.documentView = text
         scroll.borderType = .noBorder
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        let text = scroll.documentView as? NSTextView ?? NSTextView()
         text.isRichText = false
         text.importsGraphics = false
         text.usesFontPanel = false
