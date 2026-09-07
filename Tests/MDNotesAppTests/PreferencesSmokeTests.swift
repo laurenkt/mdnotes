@@ -80,6 +80,7 @@ final class PreferencesSmokeTests: XCTestCase {
         let box = DelegateBox(delegate)
         addTeardownBlock {
             await MainActor.run {
+                box.delegate.globalHotKey?.unregister()
                 box.delegate.libraryController?.stop()
                 box.delegate.preferencesWindowController?.close()
                 box.delegate.mainWindowController?.close()

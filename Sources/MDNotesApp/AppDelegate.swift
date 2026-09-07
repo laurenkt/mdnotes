@@ -6,6 +6,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public private(set) var libraryController: LibraryController?
     /// The Preferences window (PR-1), built the first time `showPreferences(_:)` is called.
     public private(set) var preferencesWindowController: PreferencesWindowController?
+    /// The global hotkey's registration (W-3), made at launch.
+    public private(set) var globalHotKey: GlobalHotKey?
 
     /// How `applicationShouldTerminate` tells AppKit the last write has landed. Tests, which
     /// must not actually terminate, replace it to observe the reply.
@@ -13,21 +15,36 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         $0.reply(toApplicationShouldTerminate: $1)
     }
 
+    /// How the hotkey makes this the active application (W-3). Tests, whose process is never
+    /// the active application, replace it to observe the call.
+    public var activateApp: @MainActor () -> Void = { NSApplication.shared.activate() }
+
+    /// Where one-line reports go, such as a hotkey Carbon declined. Defaults to stderr.
+    public var log: @Sendable (String) -> Void = LibraryController.standardErrorLog
+
     /// The folder `applicationDidFinishLaunching` opens as the library (L-1), and the one the
     /// library controller is on afterwards: `openLibrary(at:)` moves it.
     public private(set) var libraryRoot: URL
 
-    /// Opens the folder remembered in `UserDefaults`, or the default library (L-1).
+    /// The combination `applicationDidFinishLaunching` registers as the global hotkey (W-3),
+    /// and the one in use afterwards: `setHotKey(_:)` moves it.
+    public private(set) var hotKey: HotKey
+
+    /// Opens the folder remembered in `UserDefaults`, or the default library (L-1), and
+    /// registers the hotkey remembered there, or Ctrl-Cmd-N (W-3).
     public override init() {
         libraryRoot = LibraryRootPreference.root(from: .standard)
+        hotKey = HotKeyPreference.hotKey(from: .standard)
         super.init()
     }
 
     /// Uses `mainWindowController` instead of building one at launch, and opens `libraryRoot`
-    /// instead of the default library. For tests.
+    /// instead of the default library. The hotkey is read from `UserDefaults` as at launch.
+    /// For tests.
     public init(mainWindowController: MainWindowController, libraryRoot: URL = LibraryController.defaultRoot) {
         self.mainWindowController = mainWindowController
         self.libraryRoot = LibraryRootPreference.standardized(libraryRoot)
+        hotKey = HotKeyPreference.hotKey(from: .standard)
         super.init()
     }
 
@@ -43,23 +60,66 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.attach(library)
         library.start()
         libraryController = library
+
+        // W-3: the hotkey is live from the first moment the window is.
+        let hotKey = GlobalHotKey()
+        hotKey.onPress = { [weak self] in self?.activateFromHotKey() }
+        globalHotKey = hotKey
+        register(self.hotKey)
+    }
+
+    // MARK: - Global hotkey (W-3)
+
+    /// What the global hotkey does: makes this the active application, brings the window
+    /// forward, and focuses the search field with its contents selected, so typing replaces
+    /// the query (S-7 does the last part for Cmd-L).
+    public func activateFromHotKey() {
+        activateApp()
+        guard let controller = mainWindowController else { return }
+        controller.showWindow(nil)
+        if let window = controller.window {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        }
+        controller.focusSearchField(nil)
+    }
+
+    /// Moves the global hotkey to `hotKey` (W-3, PR-1): the old combination is released and
+    /// the new one registered. Should Carbon decline, the old one stays registered and a line
+    /// says so. Before launch only `hotKey` moves, and launch registers it.
+    public func setHotKey(_ hotKey: HotKey) {
+        guard hotKey != self.hotKey else { return }
+        self.hotKey = hotKey
+        register(hotKey)
+    }
+
+    private func register(_ hotKey: HotKey) {
+        guard let globalHotKey else { return }
+        do {
+            try globalHotKey.register(hotKey)
+        } catch {
+            log("could not register the global hotkey \(hotKey.displayString): \(error)")
+        }
     }
 
     // MARK: - Preferences (PR-1)
 
     /// Cmd-, and the menu item. Shows the Preferences window, building it on first use, with
-    /// the library folder in use. A folder chosen there goes through `openLibrary(at:)`.
+    /// the library folder and the hotkey in use. A folder chosen there goes through
+    /// `openLibrary(at:)`, a hotkey recorded there through `setHotKey(_:)`.
     @objc public func showPreferences(_ sender: Any?) {
         let preferences = preferencesWindowController ?? makePreferencesWindowController()
         preferencesWindowController = preferences
         preferences.showLibraryRoot(libraryRoot)
+        preferences.showHotKey(hotKey)
         preferences.showWindow(sender)
         preferences.window?.makeKeyAndOrderFront(sender)
     }
 
     private func makePreferencesWindowController() -> PreferencesWindowController {
-        let preferences = PreferencesWindowController(libraryRoot: libraryRoot)
+        let preferences = PreferencesWindowController(libraryRoot: libraryRoot, hotKey: hotKey)
         preferences.onLibraryRootChange = { [weak self] root in self?.openLibrary(at: root) }
+        preferences.onHotKeyChange = { [weak self] hotKey in self?.setHotKey(hotKey) }
         return preferences
     }
 

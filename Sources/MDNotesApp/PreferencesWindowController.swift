@@ -1,8 +1,8 @@
 import AppKit
 
-/// The Preferences window (PR-1). This task gives it the library folder (L-1): the current
-/// root's path and a Choose button that opens a folder chooser. The editor font and the global
-/// hotkey join it in M5.3.
+/// The Preferences window (PR-1): the library folder (L-1), the current root's path and a
+/// Choose button that opens a folder chooser, and the global hotkey (W-3), a recorder showing
+/// the combination. The editor font joins it in M5.3.
 ///
 /// The window shows the root the app is on, handed to it by `AppDelegate` through
 /// `showLibraryRoot(_:)`. Choosing a folder writes `LibraryRootPreference`, so the folder is
@@ -10,6 +10,10 @@ import AppKit
 /// `AppDelegate` tears down the library controller and rebuilds it on the new root. The
 /// chooser itself is `chooseFolder`, an `NSOpenPanel` sheet by default; headless tests replace
 /// it with a closure that answers at once, and drive the same path through the button.
+///
+/// The hotkey works the same way: `showHotKey(_:)` shows the one registered, a combination
+/// recorded in `hotKeyRecorder` writes `HotKeyPreference` and is reported through
+/// `onHotKeyChange`, and `AppDelegate` re-registers.
 @MainActor
 public final class PreferencesWindowController: NSWindowController {
     /// Presents a folder chooser starting at the given folder and hands the chosen folder to
@@ -20,13 +24,19 @@ public final class PreferencesWindowController: NSWindowController {
     public let libraryFolderLabel: NSTextField
     /// Opens the folder chooser.
     public let chooseButton: NSButton
+    /// Shows and records the global hotkey (W-3).
+    public let hotKeyRecorder: HotKeyRecorder
 
     /// The library folder the window shows (L-1).
     public private(set) var libraryRoot: URL
+    /// The global hotkey the window shows (W-3).
+    public private(set) var hotKey: HotKey
 
     /// Called on the main thread after a different folder has been chosen and stored, with the
     /// new root.
     public var onLibraryRootChange: (@MainActor (URL) -> Void)?
+    /// Called on the main thread after a different hotkey has been recorded and stored.
+    public var onHotKeyChange: (@MainActor (HotKey) -> Void)?
 
     /// How the Choose button asks for a folder. Replaced by tests.
     public var chooseFolder: FolderChooser
@@ -35,15 +45,18 @@ public final class PreferencesWindowController: NSWindowController {
 
     /// - Parameters:
     ///   - libraryRoot: the root in use, shown until `showLibraryRoot(_:)` says otherwise.
-    ///   - defaults: where a chosen folder is remembered (L-1).
-    public init(libraryRoot: URL, defaults: UserDefaults = .standard) {
+    ///   - hotKey: the hotkey in use, shown until `showHotKey(_:)` says otherwise.
+    ///   - defaults: where a chosen folder and a recorded hotkey are remembered (L-1, W-3).
+    public init(libraryRoot: URL, hotKey: HotKey = .default, defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.libraryRoot = LibraryRootPreference.standardized(libraryRoot)
+        self.hotKey = hotKey
         libraryFolderLabel = NSTextField(labelWithString: "")
         chooseButton = NSButton(title: "Choose…", target: nil, action: nil)
+        hotKeyRecorder = HotKeyRecorder(hotKey: hotKey)
         chooseFolder = { _, _ in }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 90),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 130),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -57,6 +70,7 @@ public final class PreferencesWindowController: NSWindowController {
         }
         chooseButton.target = self
         chooseButton.action = #selector(chooseButtonWasClicked(_:))
+        hotKeyRecorder.onChange = { [weak self] recorded in self?.setHotKey(recorded) }
         window.contentView = makeContentView()
         showLibraryRoot()
     }
@@ -82,6 +96,22 @@ public final class PreferencesWindowController: NSWindowController {
         libraryRoot = root
         showLibraryRoot()
         onLibraryRootChange?(root)
+    }
+
+    /// Shows `hotKey` as the global hotkey in use (W-3). Nothing is stored or reported.
+    public func showHotKey(_ hotKey: HotKey) {
+        self.hotKey = hotKey
+        hotKeyRecorder.showHotKey(hotKey)
+    }
+
+    /// The user recorded `hotKey` (W-3, PR-1). The combination in use changes nothing.
+    /// Otherwise it is stored, shown, and reported through `onHotKeyChange`.
+    public func setHotKey(_ hotKey: HotKey) {
+        guard hotKey != self.hotKey else { return }
+        HotKeyPreference.set(hotKey, in: defaults)
+        self.hotKey = hotKey
+        hotKeyRecorder.showHotKey(hotKey)
+        onHotKeyChange?(hotKey)
     }
 
     @objc private func chooseButtonWasClicked(_ sender: Any?) {
@@ -116,24 +146,39 @@ public final class PreferencesWindowController: NSWindowController {
     }
 
     private func makeContentView() -> NSView {
-        let caption = NSTextField(labelWithString: "Library folder:")
-        caption.alignment = .right
+        let folderCaption = NSTextField(labelWithString: "Library folder:")
+        folderCaption.alignment = .right
         libraryFolderLabel.lineBreakMode = .byTruncatingMiddle
         libraryFolderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         chooseButton.bezelStyle = .rounded
-        let row = NSStackView(views: [caption, libraryFolderLabel, chooseButton])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
+        let folderRow = NSStackView(views: [folderCaption, libraryFolderLabel, chooseButton])
+        folderRow.orientation = .horizontal
+        folderRow.alignment = .firstBaseline
+        folderRow.spacing = 8
+
+        let hotKeyCaption = NSTextField(labelWithString: "Global hotkey:")
+        hotKeyCaption.alignment = .right
+        let hotKeyRow = NSStackView(views: [hotKeyCaption, hotKeyRecorder])
+        hotKeyRow.orientation = .horizontal
+        hotKeyRow.alignment = .firstBaseline
+        hotKeyRow.spacing = 8
+
+        let rows = NSStackView(views: [folderRow, hotKeyRow])
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 12
+        rows.translatesAutoresizingMaskIntoConstraints = false
         let content = NSView()
-        content.addSubview(row)
+        content.addSubview(rows)
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
-            row.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            row.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
-            row.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            caption.widthAnchor.constraint(equalToConstant: 100),
+            rows.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            rows.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            rows.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            rows.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
+            folderRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
+            folderCaption.widthAnchor.constraint(equalToConstant: 100),
+            hotKeyCaption.widthAnchor.constraint(equalToConstant: 100),
+            hotKeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
         ])
         return content
     }
