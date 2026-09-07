@@ -100,7 +100,32 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M5.4 Menu bar: standard app / edit / view menus, Cmd-L, Cmd-R, Cmd-Delete, Cmd-Shift-B
       toggle backlinks. W-4 quit-on-close.
 - [x] M5.5 App icon in `Resources/AppIcon.icns`, wired by `bundle.sh`.
-- [ ] M5.6 Manual acceptance pass against the checklist in `docs/ACCEPTANCE.md` (write it in this
+- [ ] M5.6a Backlinks strip must not stall the main thread (K-6, PF-6): opening a note with
+      1,500 backlinks freezes the app for 5 to 40 s while `BacklinksStrip.show` builds an
+      `NSButton` per backlink inside an `NSStackView`. Build only as many title buttons as
+      the bar can show (a small fixed cap, say 20, with the count in the summary), build none
+      while collapsed, and keep `show` cheap for any count. Test: `BacklinksSmokeTests` with
+      2,000 backlinks completes `show` within a few ms and lists at most the cap.
+- [ ] M5.6b Image paste is dead from the keyboard and the menu (I-1): with only an image on
+      the clipboard `NSTextView` disables Paste, so `EditorTextView.paste(_:)` is never
+      called. Override `validateUserInterfaceItem` (or `readablePasteboardTypes`) so Paste is
+      enabled when `ImagePasteboard.hasImage` and the note is writable. Test:
+      `ImageInsertSmokeTests` validates the Paste item against an image-only pasteboard and
+      drives `paste` through `NSApp.sendAction`.
+- [ ] M5.6c Ambiguous wikilinks are styled like unique ones (K-2): `EditorStyler` has one
+      wikilink style. Give it the snapshot's `LinkIndex` (through `EditorController`) and an
+      `ambiguous` `TokenStyle` (for instance the link colour with an underline or a warning
+      tint), re-styling links when a snapshot changes resolution. Test:
+      `EditorStylingSmokeTests` with two notes titled `foo` asserts the token attribute.
+- [ ] M5.6d Read-only notes show no notice (L-8, L-7): an undecodable or not-yet-downloaded
+      note is shown read-only with nothing saying why. Show a one-line notice above the editor
+      (reuse the inline message label or a dedicated bar) while such a body is loaded, cleared
+      on the next load. Test: `ExternalEditSmokeTests` or a new `ReadOnlyNoticeSmokeTests`
+      with a fabricated non-UTF-8 file.
+- [ ] M5.6e Window tabbing leaks into the View menu (W-1): AppKit adds Show Tab Bar / Show All
+      Tabs because the main window allows tabbing. Set `window.tabbingMode = .disallowed` in
+      `MainWindowController`. Test: `MenuSmokeTests` asserts the View menu holds only ours.
+- [x] M5.6 Manual acceptance pass against the checklist in `docs/ACCEPTANCE.md` (write it in this
       task: one line per spec ID, checked by hand against a copy of the real library). Any
       discrepancy becomes a new task above this line.
 - [ ] M5.7 Tag `v0.1.0`.
