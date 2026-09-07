@@ -39,7 +39,8 @@ final class LayoutSmokeTests: XCTestCase {
         XCTAssertTrue(view.searchField.isDescendant(of: view))
         XCTAssertTrue(view.splitView.isDescendant(of: view))
         XCTAssertTrue(view.backlinksStrip.isDescendant(of: view))
-        XCTAssertEqual(view.splitView.arrangedSubviews, [view.listScrollView, view.editorScrollView])
+        XCTAssertEqual(view.splitView.arrangedSubviews, [view.listScrollView, view.editorPane])
+        XCTAssertEqual(view.editorPane.arrangedSubviews, [view.readOnlyNotice, view.editorScrollView])
         XCTAssertFalse(view.splitView.isVertical, "list above editor: the divider runs horizontally")
         XCTAssertIdentical(view.listScrollView.documentView, view.tableView)
         XCTAssertIdentical(view.editorScrollView.documentView, view.textView)
@@ -58,16 +59,20 @@ final class LayoutSmokeTests: XCTestCase {
         XCTAssertTrue(view.backlinksStrip.isHidden)
         XCTAssertEqual(split.minY, 0, accuracy: 0.5)
 
-        // Inside the split: list on top, editor below, both non-empty, meeting at the divider.
+        // Inside the split: list on top, editor pane below, both non-empty, meeting at the
+        // divider. The notice bar is hidden (L-8), so the editor fills its pane.
         let list = view.listScrollView.frame
+        let pane = view.editorPane.frame
         let editor = view.editorScrollView.frame
         XCTAssertEqual(list.minY, 0, accuracy: 0.5)
         XCTAssertEqual(list.height, MainView.defaultListHeight, accuracy: 0.5)
-        XCTAssertGreaterThan(editor.height, 0)
-        XCTAssertEqual(editor.minY - list.maxY, view.splitView.dividerThickness, accuracy: 0.5)
-        XCTAssertEqual(editor.maxY, split.height, accuracy: 0.5)
+        XCTAssertGreaterThan(pane.height, 0)
+        XCTAssertEqual(pane.minY - list.maxY, view.splitView.dividerThickness, accuracy: 0.5)
+        XCTAssertEqual(pane.maxY, split.height, accuracy: 0.5)
         XCTAssertEqual(list.width, size.width, accuracy: 0.5)
-        XCTAssertEqual(editor.width, size.width, accuracy: 0.5)
+        XCTAssertEqual(pane.width, size.width, accuracy: 0.5)
+        XCTAssertTrue(view.readOnlyNotice.isHidden)
+        XCTAssertEqual(editor.size, pane.size)
     }
 
     func testW2_backlinksStripSitsBelowTheEditorWhenShown() {
@@ -92,7 +97,7 @@ final class LayoutSmokeTests: XCTestCase {
         controller.window?.setContentSize(NSSize(width: 800, height: 800))
         view.layoutSubtreeIfNeeded()
         XCTAssertEqual(view.listScrollView.frame.height, listHeightBefore, accuracy: 0.5)
-        XCTAssertEqual(view.editorScrollView.frame.maxY, view.splitView.frame.height, accuracy: 0.5)
+        XCTAssertEqual(view.editorPane.frame.maxY, view.splitView.frame.height, accuracy: 0.5)
     }
 
     func testW1_windowFrameHasAutosaveName() {

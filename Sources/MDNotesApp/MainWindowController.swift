@@ -159,6 +159,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.tableView.onActivateSelectedRow = { [weak self] in self?.focusEditor() }
         view.tableView.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         editorController.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
+        // L-7, L-8: the bar above the editor says why a loaded body is read-only.
+        editorController.onReadOnlyNoticeChange = { [weak self] notice in
+            guard let self else { return }
+            if let notice { mainView.readOnlyNotice.show(notice) } else { mainView.readOnlyNotice.hide() }
+        }
         // E-8 into E-2: a new editor font is the styling's new base.
         view.onEditorFontChange = { [weak self] font in self?.editorController.styler.baseFont = font }
         // D-1: Cmd-Delete from anywhere in the window.

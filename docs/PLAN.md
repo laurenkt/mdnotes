@@ -117,7 +117,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `ambiguous` `TokenStyle` (for instance the link colour with an underline or a warning
       tint), re-styling links when a snapshot changes resolution. Test:
       `EditorStylingSmokeTests` with two notes titled `foo` asserts the token attribute.
-- [ ] M5.6d Read-only notes show no notice (L-8, L-7): an undecodable or not-yet-downloaded
+- [x] M5.6d Read-only notes show no notice (L-8, L-7): an undecodable or not-yet-downloaded
       note is shown read-only with nothing saying why. Show a one-line notice above the editor
       (reuse the inline message label or a dedicated bar) while such a body is loaded, cleared
       on the next load. Test: `ExternalEditSmokeTests` or a new `ReadOnlyNoticeSmokeTests`

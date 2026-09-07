@@ -23,6 +23,10 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public let splitView: NSSplitView
     public let listScrollView: NSScrollView
     public let tableView: NoteTableView
+    /// The split's bottom pane: the read-only notice, when shown, above the editor.
+    public let editorPane: NSStackView
+    /// L-7, L-8: the bar above the editor. Hidden until the window controller gives it a notice.
+    public let readOnlyNotice: ReadOnlyNoticeBar
     public let editorScrollView: NSScrollView
     public let textView: EditorTextView
     /// K-6: the bar below the editor. Hidden until the window controller gives it backlinks.
@@ -60,8 +64,10 @@ public final class MainView: NSView, NSSplitViewDelegate {
         (listScrollView, tableView) = Self.makeList()
         (editorScrollView, textView) = Self.makeEditor()
         appliedEditorFont = textView.font ?? EditorFontPreference.font(from: defaults)
+        readOnlyNotice = ReadOnlyNoticeBar()
+        editorPane = Self.makeEditorPane(notice: readOnlyNotice, editor: editorScrollView)
         backlinksStrip = BacklinksStrip(defaults: defaults)
-        splitView = Self.makeSplitView(top: listScrollView, bottom: editorScrollView)
+        splitView = Self.makeSplitView(top: listScrollView, bottom: editorPane)
         stack = NSStackView(views: [searchField, messageLabel, splitView, backlinksStrip])
         super.init(frame: frameRect)
 
@@ -286,6 +292,22 @@ public final class MainView: NSView, NSSplitViewDelegate {
         text.font = EditorFontPreference.font(from: .standard)
         text.textContainerInset = NSSize(width: 8, height: 8)
         return (scroll, text)
+    }
+
+    /// The notice bar above the editor, in a stack that gives the bar a line of height only
+    /// while it is shown (L-7, L-8) and the editor every other point.
+    private static func makeEditorPane(notice: ReadOnlyNoticeBar, editor: NSScrollView) -> NSStackView {
+        let pane = NSStackView(views: [notice, editor])
+        pane.orientation = .vertical
+        pane.alignment = .width
+        pane.distribution = .fill
+        pane.spacing = 0
+        pane.detachesHiddenViews = true
+        pane.translatesAutoresizingMaskIntoConstraints = false
+        notice.setContentHuggingPriority(.required, for: .vertical)
+        editor.setContentHuggingPriority(.defaultLow, for: .vertical)
+        editor.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        return pane
     }
 
     private static func makeSplitView(top: NSView, bottom: NSView) -> NSSplitView {

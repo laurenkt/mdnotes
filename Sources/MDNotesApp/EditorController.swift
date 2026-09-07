@@ -86,6 +86,13 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// clearing the editor drops them.
     public private(set) var holdsEditsOfDeletedNote = false
 
+    /// L-7, L-8: why the shown body is read-only, or nil while it is writable or nothing is
+    /// shown. Set as each load lands and cleared by the next.
+    public private(set) var readOnlyNotice: String?
+
+    /// Called on the main thread with `readOnlyNotice` whenever a load changes it.
+    public var onReadOnlyNoticeChange: (@MainActor (String?) -> Void)?
+
     /// Called on the main thread once the text view shows `noteID` (or nothing, after `clear()`).
     public var onLoad: (@MainActor (NoteID?) -> Void)?
 
@@ -380,6 +387,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         library = nil
         replaceText(with: "")
         textView.isEditable = false
+        setReadOnlyNotice(nil)
         onLoad?(nil)
     }
 
@@ -417,11 +425,29 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         let text = body?.displayText ?? ""
         replaceText(with: text)
         textView.isEditable = body?.isWritable ?? false
+        setReadOnlyNotice(Self.readOnlyNotice(for: body))
         let range = Self.clamp(selection ?? NSRange(location: 0, length: 0), to: text)
         textView.setSelectedRange(range)
         textView.scrollRangeToVisible(range)
         resumeUndo(for: id, showing: text)
         onLoad?(id)
+    }
+
+    /// The one-line notice for a body the editor must not write back (L-7, L-8), or nil for a
+    /// writable one. A nil body is a read that failed outright.
+    public static func readOnlyNotice(for body: NoteBody?) -> String? {
+        switch body {
+        case .text: return nil
+        case .invalidUTF8: return "This note is not valid UTF-8 and is shown read-only."
+        case .notDownloaded: return "This note has not been downloaded from iCloud yet and is shown read-only."
+        case nil: return "This note could not be read and is shown read-only."
+        }
+    }
+
+    private func setReadOnlyNotice(_ notice: String?) {
+        guard notice != readOnlyNotice else { return }
+        readOnlyNotice = notice
+        onReadOnlyNoticeChange?(notice)
     }
 
     /// `range` moved and shortened as needed to lie within `text` (X-2: "preserving selection
