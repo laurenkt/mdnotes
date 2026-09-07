@@ -65,8 +65,13 @@ import MDNotesCore
 /// there, the editor inserts `![[<name>]]` at the caret as typed text. A Cmd-click or Cmd-Enter
 /// on an embed (I-2) does not open a note: the library finds the file the embed names and it is
 /// opened with its default application through `openFile`.
+///
+/// The menu bar's Note and View items (`MainMenu`) reach here through the responder chain:
+/// `focusSearchField(_:)`, `renameNote(_:)`, `deleteNote(_:)` and `toggleBacklinks(_:)` are
+/// their actions, and `validateMenuItem(_:)` enables the rename and delete items only while a
+/// row is selected and titles the backlinks item for the strip's current state.
 @MainActor
-public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
+public final class MainWindowController: NSWindowController, NSSearchFieldDelegate, NSMenuItemValidation {
     /// Autosave name under which `NSWindow` persists the frame.
     nonisolated public static let frameAutosaveName = "MainWindow"
 
@@ -535,6 +540,39 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     public func renameSelectedNote() -> Bool {
         guard listController.selectedEntry != nil else { return false }
         return listController.beginEditingTitle(ofRow: mainView.tableView.selectedRow)
+    }
+
+    // MARK: - Menu actions (MainMenu)
+
+    /// The Rename Note menu item (R-1): `renameSelectedNote()` as a responder-chain action.
+    @objc public func renameNote(_ sender: Any?) {
+        renameSelectedNote()
+    }
+
+    /// The Delete Note menu item (D-1): `deleteSelectedNote()` as a responder-chain action.
+    @objc public func deleteNote(_ sender: Any?) {
+        deleteSelectedNote()
+    }
+
+    /// The Show/Hide Backlinks menu item and Cmd-Shift-B (K-6): collapses the strip or expands
+    /// it again. The strip remembers the state, and keeps it while hidden for want of backlinks.
+    @objc public func toggleBacklinks(_ sender: Any?) {
+        mainView.backlinksStrip.toggleCollapsed()
+    }
+
+    /// Rename Note and Delete Note need a selected row (R-1, D-1); the backlinks item is titled
+    /// for what it will do next (K-6). Every other item of ours is always available.
+    public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(renameNote(_:)), #selector(deleteNote(_:)):
+            return library != nil && listController.selectedEntry != nil
+        case #selector(toggleBacklinks(_:)):
+            menuItem.title =
+                mainView.backlinksStrip.isCollapsed ? MainMenu.showBacklinksItemTitle : MainMenu.hideBacklinksItemTitle
+            return true
+        default:
+            return true
+        }
     }
 
     /// The list committed `text` as the new title of `id` (R-2). A title that cannot be a file

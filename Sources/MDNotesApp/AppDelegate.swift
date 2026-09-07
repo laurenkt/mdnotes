@@ -8,12 +8,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public private(set) var preferencesWindowController: PreferencesWindowController?
     /// The global hotkey's registration (W-3), made at launch.
     public private(set) var globalHotKey: GlobalHotKey?
+    /// The menu bar (`MainMenu`), built and installed at launch.
+    public private(set) var mainMenu: NSMenu?
 
     /// How `applicationShouldTerminate` tells AppKit the last write has landed. Tests, which
     /// must not actually terminate, replace it to observe the reply.
     public var replyToTerminate: @MainActor (NSApplication, Bool) -> Void = {
         $0.reply(toApplicationShouldTerminate: $1)
     }
+
+    /// How closing the window quits the app (W-4). `NSApplication.terminate`, which asks
+    /// `applicationShouldTerminate` and so writes unsaved edits first (E-4); tests replace it
+    /// to observe the call.
+    public var terminate: @MainActor (NSApplication) -> Void = { $0.terminate(nil) }
 
     /// How the hotkey makes this the active application (W-3). Tests, whose process is never
     /// the active application, replace it to observe the call.
@@ -49,12 +56,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // The menu bar is up before the window is, so its key equivalents are live with it.
+        let menus = MainMenu.make()
+        NSApp.mainMenu = menus.mainMenu
+        NSApp.windowsMenu = menus.windowMenu
+        mainMenu = menus.mainMenu
+
         // The window comes first and the index fills in behind it (PF-1, PF-7).
         let controller = mainWindowController ?? MainWindowController()
         controller.showWindow(nil)
         mainWindowController = controller
-        // PR-1: Cmd-, and later the menu item.
+        // PR-1: Cmd-, and the menu item.
         controller.mainView.onShowPreferences = { [weak self] in self?.showPreferences(nil) }
+        // W-4: closing the window quits.
+        if let window = controller.window {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(mainWindowWillClose(_:)), name: NSWindow.willCloseNotification,
+                object: window)
+        }
 
         let library = LibraryController(root: libraryRoot)
         controller.attach(library)
@@ -146,6 +165,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         libraryController = library
     }
 
+    // MARK: - Quit (W-4, E-4)
+
+    /// W-4: the main window is closing, by its close button or Cmd-W, so the app quits. The
+    /// call is made before the window has gone, and `terminate` does not return until the app
+    /// has quit or a deferred quit has been answered (E-4), so AppKit's own last-window check
+    /// cannot ask a second time while a write is still in flight. Only the application's own
+    /// delegate quits it: a delegate built by a test is nobody's, and its window closes without
+    /// consequence.
+    @objc private func mainWindowWillClose(_ notification: Notification) {
+        guard let delegate = NSApp.delegate, delegate === self else { return }
+        terminate(NSApp)
+    }
+
     /// E-4: unsaved edits are written before the app quits. The write runs off the main thread
     /// (PF-6), so termination is deferred until it lands, then resumed through
     /// `replyToTerminate`. With nothing to write the app quits at once.
@@ -158,6 +190,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
+    /// W-4 as AppKit asks it: with the one window gone there is nothing to keep running for.
+    /// `mainWindowWillClose` has normally quit before this is asked.
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }

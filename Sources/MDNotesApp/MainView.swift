@@ -149,11 +149,13 @@ public final class MainView: NSView, NSSplitViewDelegate {
     }
 
     /// Cmd-L focuses the search field wherever focus is (S-7), Cmd-Delete deletes the selected
-    /// note wherever focus is (D-1), Cmd-R edits its title in the list (R-1), and Cmd-, shows
-    /// the Preferences window (PR-1). The window tries the content view's key equivalents
-    /// before the menu and before the first responder's `keyDown`, so all of them hold
-    /// whichever view has focus; Cmd-Delete and Cmd-R with no row selected are left to the
-    /// focused view.
+    /// note wherever focus is (D-1), Cmd-R edits its title in the list (R-1), Cmd-Shift-B
+    /// collapses or expands the backlinks strip (K-6), and Cmd-, shows the Preferences window
+    /// (PR-1). The window tries the content view's key equivalents before the menu and before
+    /// the first responder's `keyDown`, so all of them hold whichever view has focus; the menu
+    /// bar's items (`MainMenu`) show the same shortcuts and take them only when this declines.
+    /// Cmd-Delete and Cmd-R with no row selected are declined and, their menu items being
+    /// disabled then, are left to the focused view.
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if Self.isCommand(event, key: "l") {
             focusSearchField()
@@ -163,6 +165,10 @@ public final class MainView: NSView, NSSplitViewDelegate {
             return true
         }
         if Self.isCommand(event, key: "r"), let onRenameNote, onRenameNote() {
+            return true
+        }
+        if Self.isCommand(event, key: "b", modifiers: [.command, .shift]) {
+            backlinksStrip.toggleCollapsed()
             return true
         }
         if Self.isCommand(event, key: ","), let onShowPreferences {
@@ -175,9 +181,11 @@ public final class MainView: NSView, NSSplitViewDelegate {
     /// The Delete (backspace) key's character.
     private static let deleteKey = "\u{7F}"
 
-    private static func isCommand(_ event: NSEvent, key: String) -> Bool {
+    private static func isCommand(
+        _ event: NSEvent, key: String, modifiers expected: NSEvent.ModifierFlags = .command
+    ) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        return modifiers == .command && event.charactersIgnoringModifiers?.lowercased() == key
+        return modifiers == expected && event.charactersIgnoringModifiers?.lowercased() == key
     }
 
     // MARK: - Split persistence (W-1)

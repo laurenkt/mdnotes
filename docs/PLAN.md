@@ -97,7 +97,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M5.1 Image paste and drop I-1, I-2. Tests with a generated PNG.
 - [x] M5.2 Global hotkey W-3 with Carbon `RegisterEventHotKey`; recorder control in Preferences.
 - [x] M5.3 Preferences window complete (PR-1): font, hotkey.
-- [ ] M5.4 Menu bar: standard app / edit / view menus, Cmd-L, Cmd-R, Cmd-Delete, Cmd-Shift-B
+- [x] M5.4 Menu bar: standard app / edit / view menus, Cmd-L, Cmd-R, Cmd-Delete, Cmd-Shift-B
       toggle backlinks. W-4 quit-on-close.
 - [ ] M5.5 App icon in `Resources/AppIcon.icns`, wired by `bundle.sh`.
 - [ ] M5.6 Manual acceptance pass against the checklist in `docs/ACCEPTANCE.md` (write it in this
