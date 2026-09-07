@@ -76,6 +76,13 @@ public final class LibraryController {
     private let watcher = Mutex<FSEventsWatcher?>(nil)
     /// Bumped by `start()` and `stop()`; results tagged with an older generation are dropped.
     private var generation = 0
+    /// Where one-line reports of the library's doings go (R-3). Called from any thread.
+    nonisolated private let log: @Sendable (String) -> Void
+
+    /// The default `log`: one line on stderr, prefixed like every other message of the app.
+    nonisolated public static let standardErrorLog: @Sendable (String) -> Void = { line in
+        FileHandle.standardError.write(Data("MDNotes: \(line)\n".utf8))
+    }
 
     /// - Parameters:
     ///   - root: the library root (L-1).
@@ -83,11 +90,17 @@ public final class LibraryController {
     ///   - watchesFileSystem: whether `start()` also watches the root for changes (X-1). Tests
     ///     that feed changes through `apply(_:)` by hand turn it off so the real watcher does not
     ///     report the same changes a second time.
-    public init(root: URL, batchSize: Int = LibraryController.defaultBatchSize, watchesFileSystem: Bool = true) {
+    ///   - log: takes each line the library reports, such as the count of notes whose links
+    ///     a rename rewrote (R-3). The default writes it to stderr; tests capture it.
+    public init(
+        root: URL, batchSize: Int = LibraryController.defaultBatchSize, watchesFileSystem: Bool = true,
+        log: @escaping @Sendable (String) -> Void = LibraryController.standardErrorLog
+    ) {
         precondition(batchSize > 0)
         self.root = root
         self.batchSize = batchSize
         self.watchesFileSystem = watchesFileSystem
+        self.log = log
         store = NoteStore(root: root)
         worker = Worker()
     }
@@ -317,17 +330,27 @@ public final class LibraryController {
         }
     }
 
-    // MARK: - Rename (R-2, D-2)
+    // MARK: - Rename (R-2, R-3, D-2)
 
     /// Renames the file backing `id` to `newID`'s path on the background queue (PF-6), never
-    /// over another file (R-2). Once it has landed the note moves to its new id in the snapshot
-    /// without waiting for the watcher (D-2): the old id is dropped and the new one indexed
-    /// from the file, and the result is published before `completion` runs on the main thread
-    /// with the file's modification date, which a rename leaves unchanged. The rename is
-    /// recorded in `ownWrites` as a removal of the old id and a write of the new one, so the
-    /// watcher's report of it is recognised as ours (E-6). A failure leaves the snapshot alone
-    /// and hands `completion` the error; a collision is `CocoaError.fileWriteFileExists`. If the
-    /// library is stopped or restarted before the rename lands, `completion` is never called.
+    /// over another file (R-2), then rewrites the links to it in other notes (R-3). Once the
+    /// rename has landed the note moves to its new id in the snapshot without waiting for the
+    /// watcher (D-2): the old id is dropped and the new one indexed from the file, and the
+    /// result is published before `completion` runs on the main thread with the file's
+    /// modification date, which a rename leaves unchanged. The rename is recorded in
+    /// `ownWrites` as a removal of the old id and a write of the new one, so the watcher's
+    /// report of it is recognised as ours (E-6). A failure leaves the snapshot alone and hands
+    /// `completion` the error; a collision is `CocoaError.fileWriteFileExists`. If the library
+    /// is stopped or restarted before the rename lands, `completion` is never called.
+    ///
+    /// R-3: every other note with a wikilink that resolved to `id` in the index as it stood
+    /// before the rename (`LinkRewrite.plan`) is read from disk, its links to the note are
+    /// rewritten to the new title, or the new path where the link was by path, and the file is
+    /// written back atomically (E-5) and recorded as ours (E-6). A note whose file no longer
+    /// holds such a link, or cannot be written back (L-7, L-8), is left as it is; a write that
+    /// fails is logged and the rest go on. Files that were not affected are never opened. The
+    /// rewritten bodies join the snapshot in the same publish as the rename, and one line
+    /// naming the rename and the count of notes rewritten goes to `log` when there were any.
     public func rename(
         _ id: NoteID, to newID: NoteID, completion: @escaping @MainActor (Result<Date, any Error>) -> Void
     ) {
@@ -337,20 +360,25 @@ public final class LibraryController {
             guard worker.isCurrent(generation) else { return }
             let outcome: Result<Date, any Error>
             do {
-                let modifiedAt = try writes.sync {
+                let plan = LinkRewrite.plan(renaming: id, to: newID, in: worker.index().links)
+                let (modifiedAt, rewritten) = try writes.sync {
                     let modifiedAt = try store.rename(id, to: newID)
                     if id != newID {
                         ownWrites.recordRemoval(id)
                         ownWrites.record(newID, modifiedAt: modifiedAt)
                     }
-                    return modifiedAt
+                    return (modifiedAt, rewriteLinks(plan, from: id, to: newID))
                 }
                 if id != newID {
                     let changes = LibraryChanges(added: [newID], removed: [id])
                     let (index, phase, _) = worker.update { state in
                         state.touchedSinceScan.insert(id)
                         state.touchedSinceScan.insert(newID)
+                        state.touchedSinceScan.formUnion(rewritten.keys)
                         state.index = state.index.applying(changes: changes, store: store)
+                        state.index = state.index.applying(changes: LibraryChanges(modified: Set(rewritten.keys))) {
+                            rewritten[$0]
+                        }
                     }
                     publish(index, phase: phase, generation: generation)
                 }
@@ -365,6 +393,35 @@ public final class LibraryController {
                 }
             }
         }
+    }
+
+    /// Applies a `LinkRewrite.plan` to the files it names (R-3): each is read, rewritten and,
+    /// when a link changed, written back atomically and recorded in `ownWrites`. Returns the
+    /// new modification date and body of every note written, for the snapshot. Must run on
+    /// the `writes` queue, after the rename it follows.
+    nonisolated private func rewriteLinks(
+        _ plan: [NoteID: LinkRewrite.Replacements], from id: NoteID, to newID: NoteID
+    ) -> [NoteID: (modifiedAt: Date, body: String)] {
+        dispatchPrecondition(condition: .onQueue(writes))
+        if plan.isEmpty { return [:] }
+        var written: [NoteID: (modifiedAt: Date, body: String)] = [:]
+        for (source, replacements) in plan.sorted(by: { $0.key.relativePath < $1.key.relativePath }) {
+            do {
+                guard case .text(let body) = try store.read(source),
+                    let rewritten = LinkRewrite.rewriting(body, replacing: replacements)
+                else { continue }
+                let modifiedAt = try AtomicWriter().write(rewritten, to: store.url(for: source))
+                ownWrites.record(source, modifiedAt: modifiedAt)
+                written[source] = (modifiedAt, rewritten)
+            } catch {
+                log("could not rewrite links to \(id) in \(source): \(error)")
+            }
+        }
+        if !written.isEmpty {
+            let notes = written.count == 1 ? "1 note" : "\(written.count) notes"
+            log("renamed \(id) to \(newID): rewrote links in \(notes)")
+        }
+        return written
     }
 
     // MARK: - Saving (E-4, E-5, E-6)
@@ -458,6 +515,11 @@ public final class LibraryController {
 
         func isCurrent(_ generation: Int) -> Bool {
             state.withLock { $0.generation == generation }
+        }
+
+        /// The index as the queue last left it.
+        func index() -> SearchIndex {
+            state.withLock { $0.index }
         }
 
         func replace(_ index: SearchIndex, phase: Phase) {

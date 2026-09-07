@@ -37,8 +37,9 @@ import MDNotesCore
 /// listing the note under its new id arrives (D-2), so that publish is recognised as the note
 /// moving rather than vanishing: the editor and the list selection follow it to the new id and
 /// nothing is reloaded. A renamed title the current query no longer matches leaves the list, as
-/// it would if the query had been typed after the rename. Links to the note are not rewritten
-/// yet (R-3).
+/// it would if the query had been typed after the rename. The library rewrites the links to
+/// the note in other notes as part of the rename (R-3); those notes arrive in the same
+/// snapshot, already indexed under their new bodies.
 ///
 /// Link opening (K-3) is a Cmd-click in the editor or Cmd-Enter with the caret in a link, both
 /// intercepted by `EditorTextView` and handed here: the editor names the link's target, the
