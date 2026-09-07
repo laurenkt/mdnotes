@@ -98,6 +98,13 @@ public struct NoteStore: Sendable {
         return reported == url.lastPathComponent
     }
 
+    /// True unless `id`'s file is an evicted placeholder whose contents are not on disk (L-7).
+    /// A missing file counts as available: there is nothing to download. File I/O; call off
+    /// the main thread (PF-6).
+    public func isAvailable(_ id: NoteID) -> Bool {
+        isAvailable(url(for: id))
+    }
+
     /// Reads the body of `id`. Throws if the file cannot be read at all (missing, permissions);
     /// encoding and download problems are reported in the result, not thrown.
     public func read(_ id: NoteID) throws -> NoteBody {

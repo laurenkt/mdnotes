@@ -135,7 +135,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 
 ## M6: iCloud, dates, fonts, hotkey (v2 fixes)
 
-- [ ] M6.1 `DownloadRequester` in Core: given the scanner's note list and a `NoteStore`, requests
+- [x] M6.1 `DownloadRequester` in Core: given the scanner's note list and a `NoteStore`, requests
       download for every dataless note off the main thread, at most once per note per 60 s, and
       repeats on re-eviction (L-9). Injected clock and injected request function for tests.
       Tests: first pass requests all dataless, second pass within 60 s requests none, a note
