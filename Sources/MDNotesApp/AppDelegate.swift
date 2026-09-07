@@ -105,12 +105,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Preferences (PR-1)
 
     /// Cmd-, and the menu item. Shows the Preferences window, building it on first use, with
-    /// the library folder and the hotkey in use. A folder chosen there goes through
-    /// `openLibrary(at:)`, a hotkey recorded there through `setHotKey(_:)`.
+    /// the library folder, the editor font and the hotkey in use. A folder chosen there goes
+    /// through `openLibrary(at:)`, a hotkey recorded there through `setHotKey(_:)`; a font
+    /// chosen there is written to the defaults, which the main view follows (E-8).
     @objc public func showPreferences(_ sender: Any?) {
         let preferences = preferencesWindowController ?? makePreferencesWindowController()
         preferencesWindowController = preferences
         preferences.showLibraryRoot(libraryRoot)
+        preferences.showEditorFont()
         preferences.showHotKey(hotKey)
         preferences.showWindow(sender)
         preferences.window?.makeKeyAndOrderFront(sender)
