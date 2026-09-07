@@ -95,13 +95,17 @@ final class ListPerfTests: XCTestCase {
         // bodies, a narrowing two-word query, a nested title, a mid-word prefix, a tag plus a
         // word, and a miss that scans every body to the end. Same set as the core gate.
         let phrases = ["kubernetes", "kupka latency", "deptford 19", "gugg", "#swift markdown", "zqxjk"]
-        let iterations = 5
+        let warmUp = 2
+        let iterations = 11
 
-        // Warm up once: first-time costs (fonts, row view classes, the field editor) are not
-        // what a keystroke costs.
-        for phrase in phrases {
-            clearQuery(controller)
-            for character in phrase { keystroke(character, in: editor, table: table) }
+        // Warm up: first-time costs (fonts, row view classes, the field editor, the table's
+        // row view pool growing to the first page) are not what a keystroke costs. Two
+        // passes, so the second pass's reuse of the pool is warm too (I-1).
+        for _ in 0..<warmUp {
+            for phrase in phrases {
+                clearQuery(controller)
+                for character in phrase { keystroke(character, in: editor, table: table) }
+            }
         }
 
         var worstMedian = 0.0
@@ -126,20 +130,25 @@ final class ListPerfTests: XCTestCase {
                 XCTAssertEqual(row?.titleLabel.stringValue, first.id.title, "row 0 shows the first result")
             }
 
-            let medians = samples.map { $0.sorted()[$0.count / 2] }
-            let maxSample = samples.flatMap { $0 }.max() ?? 0
+            let keystrokes = samples.map { PerfGate.Samples($0) }
+            let medians = keystrokes.map(\.median)
             print(
                 "PF-2 \"\(phrase)\": \(expected.count) hits; per-keystroke medians "
                     + medians.map { String(format: "%.2f", $0) }.joined(separator: " ")
-                    + " ms (worst sample \(String(format: "%.2f", maxSample)) ms, budget \(Int(PerfGate.Budget.keystrokeToListUpdate)) ms)"
+                    + " ms (budget \(Int(PerfGate.Budget.keystrokeToListUpdate)) ms)"
             )
+            // The gate line: the slowest keystroke of the phrase, its median over the iterations.
+            let worst = try XCTUnwrap(keystrokes.indices.max { medians[$0] < medians[$1] })
+            PerfGate.report(
+                "PF-2", "keystroke \"\(String(phrase.prefix(worst + 1)))\" to reload (\(expected.count) hits)",
+                keystrokes[worst], budget: PerfGate.Budget.keystrokeToListUpdate)
             for (i, median) in medians.enumerated() {
                 let typed = String(phrase.prefix(i + 1))
                 XCTAssertLessThan(
                     median, PerfGate.Budget.keystrokeToListUpdate,
                     "PF-2: keystroke \"\(typed)\" to reload over budget")
             }
-            worstMedian = max(worstMedian, medians.max() ?? 0)
+            worstMedian = max(worstMedian, medians[worst])
         }
         print("PF-2 worst per-keystroke median: \(String(format: "%.2f", worstMedian)) ms")
     }

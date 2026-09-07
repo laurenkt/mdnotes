@@ -3,7 +3,8 @@ import MDNotesCore
 import MDNotesTestSupport
 import XCTest
 
-/// Core-level performance gates over the 20k-note synthetic library (PF-2, PF-4, PF-5, ADR-0007).
+/// Core-level timing gates over the 20k-note synthetic library (PF-2, PF-4, ADR-0007). PF-5 is
+/// `IndexMemoryPerfTests`, in a process of its own.
 ///
 /// Runs only in `scripts/check.sh full` (release); `MDNOTES_SKIP_PERF=1` skips it. The library
 /// is generated once per process and shared by every test in the class.
@@ -39,12 +40,14 @@ final class IndexPerfTests: XCTestCase {
     func testPF4_fullBuildOf20kUnder2s() throws {
         let root = try libraryRoot()
         var count = 0
-        let ms = try PerfGate.medianMilliseconds(iterations: 3) {
+        // One unmeasured build first: the first walk of a fresh library pays the page cache
+        // and the allocator's growth, which a launch after the first does not (I-1).
+        let samples = try PerfGate.measure(warmUp: 1, iterations: 5) {
             count = try Self.buildIndex(root: root).count
         }
         XCTAssertEqual(count, PerfGate.referenceNoteCount)
-        print("PF-4 full build of \(count) notes: \(Int(ms)) ms (budget \(Int(PerfGate.Budget.fullIndex20k)) ms)")
-        XCTAssertLessThan(ms, PerfGate.Budget.fullIndex20k, "PF-4: full index build over budget")
+        PerfGate.report("PF-4", "full build of \(count) notes", samples, budget: PerfGate.Budget.fullIndex20k)
+        XCTAssertLessThan(samples.median, PerfGate.Budget.fullIndex20k, "PF-4: full index build over budget")
     }
 
     // MARK: PF-2 (core share)
@@ -60,30 +63,13 @@ final class IndexPerfTests: XCTestCase {
         let queries = ["kubernetes", "kupka latency", "deptford 19", "gugg", "#swift markdown", "zqxjk"]
         for text in queries {
             var results = 0
-            let ms = PerfGate.medianMilliseconds(iterations: 20) {
+            let samples = PerfGate.measure(warmUp: 5, iterations: 50) {
                 results = index.query(text).count
             }
-            print("PF-2 core query \"\(text)\": \(results) hits in \(String(format: "%.2f", ms)) ms")
-            XCTAssertLessThan(ms, PerfGate.Budget.coreQuery20k, "PF-2: query \"\(text)\" over budget")
+            PerfGate.report(
+                "PF-2", "core query \"\(text)\" (\(results) hits)", samples, budget: PerfGate.Budget.coreQuery20k)
+            XCTAssertLessThan(samples.median, PerfGate.Budget.coreQuery20k, "PF-2: query \"\(text)\" over budget")
         }
         XCTAssertEqual(index.query("").count, PerfGate.referenceNoteCount)
-    }
-
-    // MARK: PF-5
-
-    func testPF5_memoryAfterFullIndexUnder200MB() throws {
-        let root = try libraryRoot()
-        PerfGate.releaseFreedMemory()
-        let before = try XCTUnwrap(PerfGate.residentMemoryMB())
-        let index = try Self.buildIndex(root: root)
-        PerfGate.releaseFreedMemory()
-        let after = try XCTUnwrap(PerfGate.residentMemoryMB())
-        withExtendedLifetime(index) {
-            XCTAssertEqual(index.count, PerfGate.referenceNoteCount)
-            print(
-                "PF-5 resident after full index: \(Int(after)) MB (was \(Int(before)) MB before; budget \(Int(PerfGate.Budget.memoryAfterIndex20kMB)) MB)"
-            )
-            XCTAssertLessThan(after, PerfGate.Budget.memoryAfterIndex20kMB, "PF-5: resident memory over budget")
-        }
     }
 }

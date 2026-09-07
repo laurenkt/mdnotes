@@ -144,7 +144,10 @@ final class LaunchPerfTests: XCTestCase {
         XCTAssertEqual(expected.count, PerfGate.referenceNoteCount)
         let newest = try XCTUnwrap(expected.max { $0.modifiedAt < $1.modifiedAt })
 
-        let iterations = 5
+        // Seven launches: the first is the cold one PF-1 names and is gated on its own; the
+        // median over all seven is stable across runs on an idle machine (I-1). There is no
+        // warm-up, since a warm launch is not what PF-1 measures.
+        let iterations = 7
         var launches: [Launch] = []
         for _ in 0..<iterations {
             let launch = try await launch(root: root)
@@ -164,18 +167,20 @@ final class LaunchPerfTests: XCTestCase {
             }
         }
 
-        let samples = launches.map(\.milliseconds)
-        let median = samples.sorted()[samples.count / 2]
+        let samples = PerfGate.Samples(launches.map(\.milliseconds))
         let first = launches[0]
         print(
             "PF-1 finish-launching to list populated (\(first.firstPageRows) rows on the first page; "
                 + "window key \(first.isKey), app active \(first.appIsActive)): "
-                + samples.map { String(format: "%.1f", $0) }.joined(separator: " ")
-                + " ms; median \(String(format: "%.1f", median)) ms, first \(String(format: "%.1f", samples[0])) ms"
-                + " (budget \(Int(PerfGate.Budget.coldLaunchToInteractive)) ms)")
-        XCTAssertLessThan(median, PerfGate.Budget.coldLaunchToInteractive, "PF-1: launch to list populated over budget")
+                + samples.milliseconds.map { String(format: "%.1f", $0) }.joined(separator: " ")
+                + " ms; first (cold) \(String(format: "%.1f", first.milliseconds)) ms")
+        PerfGate.report(
+            "PF-1", "finish-launching to list populated with \(PerfGate.referenceNoteCount) notes", samples,
+            budget: PerfGate.Budget.coldLaunchToInteractive)
         XCTAssertLessThan(
-            samples[0], PerfGate.Budget.coldLaunchToInteractive,
+            samples.median, PerfGate.Budget.coldLaunchToInteractive, "PF-1: launch to list populated over budget")
+        XCTAssertLessThan(
+            first.milliseconds, PerfGate.Budget.coldLaunchToInteractive,
             "PF-1: first launch in the process (the cold one) over budget")
     }
 }

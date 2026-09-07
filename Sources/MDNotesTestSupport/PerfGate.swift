@@ -26,9 +26,30 @@ public enum PerfGate {
         ProcessInfo.processInfo.environment["MDNOTES_SKIP_PERF"] == "1"
     }
 
-    /// Runs `body` `iterations` times and returns the median wall-clock time in milliseconds.
-    public static func medianMilliseconds(iterations: Int = 5, _ body: () throws -> Void) rethrows -> Double {
-        precondition(iterations > 0)
+    /// One timed measurement: the samples in the order they were taken, in milliseconds.
+    public struct Samples {
+        public let milliseconds: [Double]
+
+        public init(_ milliseconds: [Double]) {
+            precondition(!milliseconds.isEmpty)
+            self.milliseconds = milliseconds
+        }
+
+        /// The upper median: element `count / 2` of the sorted samples.
+        public var median: Double { milliseconds.sorted()[milliseconds.count / 2] }
+        public var min: Double { milliseconds.min() ?? 0 }
+        public var max: Double { milliseconds.max() ?? 0 }
+        public var count: Int { milliseconds.count }
+    }
+
+    /// Runs `body` `warmUp` times unmeasured, then `iterations` times measured, and returns the
+    /// samples. Warm-up absorbs first-use costs (page cache, allocator growth, lazily made
+    /// tables, JIT-like caches in the frameworks) that a repeated operation does not pay; the
+    /// gates measure the repeated cost, and the median of enough iterations is stable across
+    /// runs on an idle machine (I-1).
+    public static func measure(warmUp: Int, iterations: Int, _ body: () throws -> Void) rethrows -> Samples {
+        precondition(warmUp >= 0 && iterations > 0)
+        for _ in 0..<warmUp { try body() }
         var samples: [Double] = []
         samples.reserveCapacity(iterations)
         for _ in 0..<iterations {
@@ -37,8 +58,29 @@ public enum PerfGate {
             let end = DispatchTime.now().uptimeNanoseconds
             samples.append(Double(end - start) / 1_000_000)
         }
-        samples.sort()
-        return samples[samples.count / 2]
+        return Samples(samples)
+    }
+
+    /// `measure(warmUp:iterations:)` reduced to its median in milliseconds. No warm-up unless
+    /// asked for: a caller that hands `body` one input per iteration counts on the exact number
+    /// of calls.
+    public static func medianMilliseconds(warmUp: Int = 0, iterations: Int = 5, _ body: () throws -> Void) rethrows
+        -> Double
+    {
+        try measure(warmUp: warmUp, iterations: iterations, body).median
+    }
+
+    /// The one line every perf gate prints, so a flake entry can carry the number
+    /// (`scripts/check.sh` copies lines mentioning `median` into `docs/ISSUES.md`):
+    ///
+    ///     PERF PF-4 full build of 20000 notes: median 812.3 ms (min 790.1, max 901.7, n=5; budget 2000 ms)
+    public static func report(_ id: String, _ subject: String, _ samples: Samples, budget: Double, unit: String = "ms")
+    {
+        let f = { (value: Double) in String(format: "%.2f", value) }
+        print(
+            "PERF \(id) \(subject): median \(f(samples.median)) \(unit) "
+                + "(min \(f(samples.min)), max \(f(samples.max)), n=\(samples.count); "
+                + "budget \(f(budget)) \(unit))")
     }
 
     /// The calling process's resident set size in bytes, from `task_info(MACH_TASK_BASIC_INFO)`,

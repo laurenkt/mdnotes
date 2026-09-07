@@ -113,13 +113,18 @@ final class EditorPerfTests: XCTestCase {
             ("deep", deepLine.location, "words #tag "),
             ("heading", max(headingEnd.length - 1, 0), " [[link]]"),
         ]
-        let iterations = 5
+        let warmUp = 2
+        let iterations = 11
 
-        // Warm up once: fonts, first layout, the styler's first pass are not what a keystroke costs.
-        for c in cases {
-            textView.setSelectedRange(NSRange(location: c.location, length: 0))
-            for character in c.typed { keystroke(String(character), in: textView, window: window) }
-            try undo(textView, count: c.typed.count, expecting: length)
+        // Warm up: fonts, first layout, the styler's first pass, the undo stack's growth are
+        // not what a keystroke costs. Two passes, since the first undo of each case is a
+        // first too (I-1).
+        for _ in 0..<warmUp {
+            for c in cases {
+                textView.setSelectedRange(NSRange(location: c.location, length: 0))
+                for character in c.typed { keystroke(String(character), in: textView, window: window) }
+                try undo(textView, count: c.typed.count, expecting: length)
+            }
         }
 
         var worstMedian = 0.0
@@ -147,20 +152,25 @@ final class EditorPerfTests: XCTestCase {
                     "\(c.name): the typed text was styled: \(storage.attributedSubstring(from: typedRange).string)")
                 try undo(textView, count: c.typed.count, expecting: length)
             }
-            let medians = samples.map { $0.sorted()[$0.count / 2] }
-            let maxSample = samples.flatMap { $0 }.max() ?? 0
+            let keystrokes = samples.map { PerfGate.Samples($0) }
+            let medians = keystrokes.map(\.median)
             print(
                 "PF-3 \(c.name): per-keystroke medians "
                     + medians.map { String(format: "%.2f", $0) }.joined(separator: " ")
-                    + " ms (worst sample \(String(format: "%.2f", maxSample)) ms, budget \(Int(PerfGate.Budget.editorKeystrokeToRedraw)) ms)"
+                    + " ms (budget \(Int(PerfGate.Budget.editorKeystrokeToRedraw)) ms)"
             )
+            // The gate line: the slowest keystroke of the case, its median over the iterations.
+            let worst = try XCTUnwrap(keystrokes.indices.max { medians[$0] < medians[$1] })
+            PerfGate.report(
+                "PF-3", "\(c.name), keystroke \(worst + 1) of \(c.typed.count) to redraw", keystrokes[worst],
+                budget: PerfGate.Budget.editorKeystrokeToRedraw)
             for (i, median) in medians.enumerated() {
                 let typed = String(c.typed.prefix(i + 1))
                 XCTAssertLessThan(
                     median, PerfGate.Budget.editorKeystrokeToRedraw,
                     "PF-3: keystroke \(i + 1) of \"\(typed)\" at \(c.name) to redraw over budget")
             }
-            worstMedian = max(worstMedian, medians.max() ?? 0)
+            worstMedian = max(worstMedian, medians[worst])
         }
         print("PF-3 worst per-keystroke median: \(String(format: "%.2f", worstMedian)) ms")
         XCTAssertEqual(textView.string, storage.string)
