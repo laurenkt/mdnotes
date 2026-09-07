@@ -37,10 +37,17 @@ public final class MainView: NSView, NSSplitViewDelegate {
     /// left alone while nothing is installed.
     public var onShowPreferences: (@MainActor () -> Void)?
 
+    /// E-8: called with the new editor font once `applyEditorFont()` has set it on the text
+    /// view, so the styling (E-2) can be laid back over it. Installed by the window controller.
+    public var onEditorFontChange: (@MainActor (NSFont) -> Void)?
+
     private let stack: NSStackView
     private let defaults: UserDefaults
     private var isRestoringSplit = false
     private var hasRestoredSplit = false
+    /// The font last set on the text view. Compared instead of `textView.font`, which reports
+    /// the first character's font and so a heading's bold face (E-2).
+    private var appliedEditorFont: NSFont
 
     public override init(frame frameRect: NSRect) {
         defaults = .standard
@@ -48,6 +55,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
         messageLabel = Self.makeMessageLabel()
         (listScrollView, tableView) = Self.makeList()
         (editorScrollView, textView) = Self.makeEditor()
+        appliedEditorFont = textView.font ?? EditorFontPreference.font(from: defaults)
         backlinksStrip = Self.makeBacklinksStrip()
         splitView = Self.makeSplitView(top: listScrollView, bottom: editorScrollView)
         stack = NSStackView(views: [searchField, messageLabel, splitView, backlinksStrip])
@@ -111,11 +119,14 @@ public final class MainView: NSView, NSSplitViewDelegate {
 
     /// Sets the editor's font from the preference if it differs from the font in use. Called
     /// whenever the defaults change; the check keeps unrelated writes, such as the split
-    /// position persisting during a drag, from relaying out the text.
+    /// position persisting during a drag, from relaying out the text. Setting the text view's
+    /// font puts it on every character, so `onEditorFontChange` follows for the styling.
     public func applyEditorFont() {
         let font = EditorFontPreference.font(from: defaults)
-        guard textView.font != font else { return }
+        guard font != appliedEditorFont else { return }
+        appliedEditorFont = font
         textView.font = font
+        onEditorFontChange?(font)
     }
 
     @objc private func defaultsDidChange(_ notification: Notification) {

@@ -4,8 +4,12 @@
 #   scripts/check.sh          full: format, build, unit tests, perf gates (release)
 #   scripts/check.sh quick    same minus perf gates; for fast iteration only
 #
-# Perf gates only mean something in release builds, so they run in a separate
-# `swift test -c release` pass filtered to *PerfTests classes.
+# Perf gates only mean something in release builds, so they run in separate
+# `swift test -c release` passes, one per *PerfTests class. Each class gets its own
+# process because the gates are absolute measurements of that class's subject: PF-5 is
+# the resident size after a full index, and a class that has shown a 1 MB note in a
+# window before it in the same process leaves tens of megabytes behind that TextKit and
+# AppKit never hand back, which would count against the index.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE="${1:-full}"
@@ -23,8 +27,11 @@ MDNOTES_SKIP_PERF=1 swift test
 
 if [ "$MODE" = "full" ]; then
     step "perf gates (release)"
-    swift build -c release
-    swift test -c release --filter 'PerfTests'
+    swift build -c release --build-tests
+    for class in $(grep -rhoE 'class [A-Za-z0-9_]+PerfTests' Tests | awk '{print $2}' | sort -u); do
+        step "perf gate: $class"
+        swift test -c release --skip-build --filter "$class"
+    done
 fi
 
 step "check passed ($MODE)"

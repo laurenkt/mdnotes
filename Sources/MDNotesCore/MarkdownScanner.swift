@@ -70,6 +70,18 @@ public enum MarkdownScanner {
         return scanner.tokens
     }
 
+    /// `scan(_:in:)` over text already held as UTF-16 units. The editor's text lives in an
+    /// `NSTextStorage`, whose units copy out in bulk; iterating them through a bridged `String`
+    /// costs more per keystroke than PF-3 allows on a 1 MB note.
+    public static func scan(_ units: [UInt16], in range: NSRange) -> [Token] {
+        let total = units.count
+        let location = min(max(range.location, 0), total)
+        let end = min(max(location + range.length, location), total)
+        var scanner = Pass(units: Array(units[location..<end]), base: location)
+        scanner.run()
+        return scanner.tokens
+    }
+
     // MARK: Paragraph scope (E-3)
 
     /// The range of `text` to re-scan after `editedRange` (a range in the new text: the inserted
@@ -82,7 +94,12 @@ public enum MarkdownScanner {
     /// that turned a fence line into something else, is invisible here: the caller widens to the
     /// end of the text itself when the text it replaced carried fenced-code styling.
     public static func paragraphRange(in text: String, editedRange: NSRange) -> NSRange {
-        let units = Array(text.utf16)
+        paragraphRange(in: Array(text.utf16), editedRange: editedRange)
+    }
+
+    /// `paragraphRange(in:editedRange:)` over text already held as UTF-16 units; see
+    /// `scan(_:in:)` on units for why the editor takes this route.
+    public static func paragraphRange(in units: [UInt16], editedRange: NSRange) -> NSRange {
         let total = units.count
         let editStart = min(max(editedRange.location, 0), total)
         let editEnd = min(max(editStart + editedRange.length, editStart), total)

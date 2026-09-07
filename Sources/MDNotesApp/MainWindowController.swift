@@ -108,6 +108,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.tableView.onActivateSelectedRow = { [weak self] in self?.focusEditor() }
         view.tableView.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         editorController.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
+        // E-8 into E-2: a new editor font is the styling's new base.
+        view.onEditorFontChange = { [weak self] font in self?.editorController.styler.baseFont = font }
         // D-1: Cmd-Delete from anywhere in the window.
         view.onDeleteNote = { [weak self] in self?.deleteSelectedNote() ?? false }
         // R-1, R-2: Cmd-R from anywhere in the window; the list's edited title comes back here.

@@ -83,7 +83,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       trailing punctuation, embeds.
 - [x] M4.2 `LinkIndex` and `TagIndex` (K-5, T-2), built alongside the search index and updated
       incrementally. Resolution K-2 including ambiguity. Tests: unique, ambiguous, path-qualified.
-- [ ] M4.3 Editor styling E-2, E-3 via `NSTextStorage` delegate on the edited paragraphs only.
+- [x] M4.3 Editor styling E-2, E-3 via `NSTextStorage` delegate on the edited paragraphs only.
       `EditorPerfTests`: PF-3 keystroke-to-redraw on a 1 MB note.
 - [ ] M4.4 Link opening K-3: Cmd-click and Cmd-Enter, create-if-missing. Smoke tests.
 - [ ] M4.5 `[[` completion popover K-4. Smoke test drives typing and asserts inserted text.

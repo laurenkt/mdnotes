@@ -38,6 +38,9 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     public let textView: NSTextView
 
+    /// E-2, E-3: styles the text view's storage, paragraph by paragraph as it is edited.
+    public let styler: EditorStyler
+
     /// Called on Escape in the editor (S-7: clear the query and return to the search field).
     public var onCancel: (@MainActor () -> Void)?
 
@@ -95,6 +98,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     public init(textView: NSTextView, clock: any AutosaveClock = SystemAutosaveClock()) {
         self.textView = textView
         self.clock = clock
+        styler = EditorStyler(textView: textView, baseFont: textView.font ?? EditorFontPreference.font())
         scratchUndoManager = UndoManager()
         super.init()
         textView.isEditable = false
@@ -150,9 +154,13 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     /// An edit to the text: typing, paste, undo and redo all pass through here, which is why
     /// the signal is the storage's and not the text view's `textDidChange` (undo does not post
-    /// that). Attribute-only changes, such as the font preference (E-8), are not edits.
-    /// Programmatic replacement of the text, as `load` does, is masked off. Restarts the
-    /// autosave delay (E-4). The protocol is not main-actor isolated in the SDK, but the
+    /// that). Attribute-only changes, such as the font preference (E-8) and the styler's own
+    /// work, are not edits. The styler re-styles the paragraphs around the edit first (E-2,
+    /// E-3); it does so here rather than before processing because attribute changes made
+    /// while the character edit is being processed widen its range, and the text view then
+    /// moves the insertion point to the end of the widened range instead of past the typed
+    /// character. Then, unless the replacement is programmatic, as `load`'s is, the autosave
+    /// delay restarts (E-4). The protocol is not main-actor isolated in the SDK, but the
     /// storage belongs to a view that is only ever edited on the main thread.
     nonisolated public func textStorage(
         _ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
@@ -160,7 +168,10 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         changeInLength delta: Int
     ) {
         guard editedMask.contains(.editedCharacters) else { return }
-        MainActor.assumeIsolated { textDidEdit() }
+        MainActor.assumeIsolated {
+            styler.restyleAfterEdit(in: editedRange)
+            textDidEdit()
+        }
     }
 
     private func textDidEdit() {
