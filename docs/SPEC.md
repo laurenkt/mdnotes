@@ -7,6 +7,9 @@ name the ID they cover. If behaviour here is ambiguous, do not guess: write the 
 MDNotes is a native macOS reimplementation of the Notational Velocity / nvALT workflow over a
 folder of markdown files. Its one non-negotiable property is that it feels instant.
 
+Version 2 (ADR-0009 to ADR-0015, 2026-09-07) amends this document in place. Rules marked
+*(v2)* are new or changed; superseded v1 text is removed rather than struck through.
+
 ## 1. Platform
 
 - **P-1** macOS 26.0 or later. Swift 6 language mode, strict concurrency, warnings are errors.
@@ -22,7 +25,7 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
   Preferences; remembered across launches.
 - **L-2** Notes are files with the `.md` extension, found by walking the root recursively.
 - **L-3** These are skipped entirely: hidden files and folders (leading `.`), the `Trash/` folder,
-  the `.obsidian/` folder, and the `templates/` folder (reserved for v2).
+  the `.obsidian/` folder, and the `templates/` folder (section 15).
 - **L-4** A note's identity is its path relative to the root with `/` separators, including
   extension, e.g. `daily/2026/06-sunday.md`.
 - **L-5** A note's title is its filename without the `.md` extension. There is no other title source.
@@ -32,6 +35,17 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
   its body indexed when it becomes readable.
 - **L-8** Files are read and written as UTF-8. A file that fails UTF-8 decoding is listed by title,
   shown read-only with a notice, and never written back.
+- **L-9** *(v2)* Proactive download (ADR-0009). At launch, after every full scan, and on every
+  watcher event, the app requests a download (`startDownloadingUbiquitousItem`) for every note
+  that is dataless, off the main thread, at most once per note per 60 s. When a downloaded note
+  becomes dataless again (re-eviction), the request is repeated. The body is indexed as soon as
+  the file becomes readable (L-7). There is no on-disk body cache (PF-7 stands).
+- **L-10** *(v2)* Eviction bar (ADR-0009). While one or more notes are dataless, a thin bar
+  directly under the search field reads `N notes not downloaded from iCloud. Search is
+  incomplete.` If the boot volume has under 2 GB free it appends `· 985 MB free` and the bar
+  carries an `Open Storage Settings` button (`x-apple.systempreferences:com.apple.settings.Storage`).
+  The bar is not dismissable and disappears within 2 s of the last note becoming readable. It
+  is not shown during the first scan; only once the scan has completed and dataless notes remain.
 
 ## 3. Search and list
 
@@ -46,7 +60,21 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
 - **S-4** `#tag` is matched as an ordinary word. No special tag syntax in the query.
 - **S-5** The list updates on every keystroke. See performance budget PF-2.
 - **S-6** A list row shows title, modified date, and a single-line body snippet. Rows are
-  uniform height.
+  uniform height. *(v2)* The snippet is plain text: heading markers, wikilink brackets, embed
+  syntax, code fences and emphasis markers are stripped; a `![[image]]` embed contributes
+  nothing to the snippet.
+- **S-9** *(v2)* Date format, Notes style: `Today 11:53` and `Yesterday 09:10` (time in the
+  user's locale format); a weekday name (`Mon`) within the last six days; `3 Sep` within the
+  current year; `3 Sep 2025` otherwise. Relative words refresh on day change and on the list
+  becoming visible.
+- **S-10** *(v2)* The date sits right-aligned on the title line and is never truncated. The
+  title yields width to it and truncates with an ellipsis. The date label is given its
+  intrinsic width unconditionally.
+- **S-11** *(v2)* A note whose body contains an image embed (K-1, `![[...]]`) that resolves to
+  an existing image file shows a 34 pt square thumbnail of the first such image at the right
+  end of the row. Clicking it selects the note like any other part of the row. Thumbnails are
+  produced off the main thread, cached by path and modification date, and a row is drawn
+  without one until it is ready (PF-8).
 - **S-7** Keyboard flow: Down arrow from the search field selects the first row. Up from the first
   row returns to the search field. Escape clears the query and returns to the search field.
   Cmd-L focuses the search field from anywhere.
@@ -73,7 +101,9 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
 - **E-1** `NSTextView` backed by TextKit. Plain text model; the file on disk is exactly the text
   in the view.
 - **E-2** Light syntax styling only: ATX headings, `[[wikilinks]]`, `#tags`, fenced and inline code.
-  Styling never changes text content or layout metrics beyond font weight/colour.
+  Styling never changes text content or layout metrics beyond font weight/colour. *(v2)*
+  Exception: inline code and fenced code blocks are set in the monospaced font (E-8); nothing
+  else changes font family.
 - **E-3** Re-styling after an edit is scoped to the affected paragraphs, not the whole document.
   See PF-3.
 - **E-4** Autosave: write 300 ms after the last edit, and immediately on note switch, window
@@ -82,7 +112,19 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
   reflects the write.
 - **E-6** The app ignores file-system events caused by its own writes.
 - **E-7** Undo works per note and survives switching away and back within a session.
-- **E-8** Font family and size are preferences. Default: system monospaced, 13 pt.
+- **E-8** *(v2, ADR-0010)* Prose is set in the system font (`NSFont.systemFont`); inline and
+  fenced code in the system monospaced font (`NSFont.monospacedSystemFont`) at the same size.
+  There is no font family preference; the v1 `EditorFontFamily` default is deleted on first
+  launch of v2. Size is 13 pt by default, adjustable with Cmd-plus, Cmd-minus and Cmd-0 (View
+  menu: Bigger, Smaller, Actual Size) between 9 and 36 pt, persisted in `EditorFontSize`.
+- **E-9** *(v2, ADR-0012)* An image embed `![[target]]` whose target resolves to an existing
+  image file is followed, on the line directly below it, by a thumbnail attachment of that
+  image scaled to at most 240 pt wide and 160 pt tall. The embed text stays visible and
+  editable; the attachment is display-only, is not part of the file, is excluded from copy,
+  undo and search, and disappears when the embed text is edited so that it no longer resolves.
+  Clicking the thumbnail opens the image with the default application. Thumbnails load off the
+  main thread and are cached (PF-8); the line reserves its height only once the image size is
+  known, so typing above or below is never blocked.
 
 ## 6. External changes
 
@@ -137,21 +179,37 @@ folder of markdown files. Its one non-negotiable property is that it feels insta
 - **I-1** Pasting or dropping image data or an image file into the editor writes it to `i/`
   under the root as `<yyyyMMdd-HHmmss>.<ext>` and inserts `![[<name>]]` at the caret.
 - **I-2** Cmd-click on an image link opens the file with the default application.
-- **I-3** No inline rendering of images in v1.
+- **I-3** *(v2)* Inline thumbnails in the editor per E-9; row thumbnails per S-11. Nothing
+  else is rendered inline.
 
 ## 11. Window and hotkey
 
 - **W-1** Exactly one window. Frame and split position persist across launches.
 - **W-2** Layout: search field across the top, note list below it, editor below the list,
   backlinks strip below the editor. The list/editor split is draggable.
-- **W-3** A global hotkey (default Ctrl-Cmd-N, changeable in Preferences) activates the app,
-  brings the window forward, focuses the search field and selects its contents. Implemented
-  with Carbon `RegisterEventHotKey`; no Accessibility permission required.
-- **W-4** Closing the window quits the app.
+- **W-3** *(v2, ADR-0011)* A global hotkey (default Ctrl-Cmd-N, changeable in Settings)
+  toggles the window: if the window is visible and the app is active, the window is hidden
+  (ordered out, app stays running); otherwise the app activates, the window is shown on the
+  current Space, and the search field is focused with its contents selected. Implemented with
+  Carbon `RegisterEventHotKey`; no Accessibility permission required.
+- **W-4** *(v2, ADR-0011)* Closing the window (Cmd-W or the close button) hides it; it does not
+  quit. Clicking the Dock icon or pressing the hotkey shows it again. Cmd-Q quits.
+- **W-5** *(v2, ADR-0011)* The window level is always `.floating` and its collection behaviour
+  is `moveToActiveSpace`, so it stays above other apps' windows whenever visible and follows
+  the user between Spaces. Sheets, popovers and the completion popup must still appear above it.
+- **W-6** *(v2, ADR-0013)* Visual design follows direction B of the design canvas: a standard
+  title bar with the window title, then the search field in the content area with 8 pt vertical
+  and 10 pt horizontal insets on a window-background strip, a hairline separator (`separatorColor`)
+  beneath it, then the list, the draggable split, the editor and the backlinks strip. The
+  search field is a standard `NSSearchField` with its default bezel; no control is custom-drawn
+  and no view sets a colour that is not a semantic `NSColor`.
 
-## 12. Preferences
+## 12. Settings
 
-- **PR-1** A Preferences window with: library folder, editor font, global hotkey. Nothing else in v1.
+- **PR-1** *(v2, ADR-0013)* The window is titled `Settings`, opened by `Settings…` (Cmd-comma)
+  in the app menu, fixed size, non-resizable, non-miniaturisable, one pane, no toolbar. Its
+  content is an `NSGridView` form with right-aligned captions and 20 pt margins: `Notes folder`
+  with the path and a `Choose…` button; `Global shortcut` with the recorder. Nothing else.
 
 ## 13. Performance
 
@@ -170,11 +228,53 @@ the commit. Constants live in `PerfGate.Budget`; change them here first, then th
 
 - **PF-6** All file I/O and indexing happens off the main thread. The main thread only touches
   in-memory index snapshots.
-- **PF-7** The index is rebuilt from disk on launch; no on-disk cache in v1. PF-1 therefore
+- **PF-7** The index is rebuilt from disk on launch; no on-disk cache. PF-1 therefore
   requires the list to become interactive before indexing completes, populated progressively.
+- **PF-8** *(v2)* Thumbnail generation (S-11, E-9) runs on a background queue with at most two
+  concurrent jobs, uses `QLThumbnailGenerator` or `CGImageSource` downsampling, and caches
+  results in memory keyed by path and modification date (bounded, LRU, 50 MB). The main thread
+  only draws cached images. PF-2 and PF-3 are measured with thumbnails enabled on a synthetic
+  library where 10 % of notes embed an image.
 
-## 14. Out of scope for v1
+## 14. Out of scope
 
-Templates and daily notes (nested folders are supported so this can come later), rendered
-markdown preview, tag browser sidebar, multiple windows, sandboxing, notarisation, sync
-of any kind beyond what the file system does, plugins, encryption, non-`.md` note types.
+Rendered markdown preview, tag browser sidebar, multiple windows, sandboxing, notarisation,
+sync of any kind beyond what the file system does, plugins, encryption, non-`.md` note types,
+an on-disk body cache.
+
+## 15. Templates *(v2, ADR-0014)*
+
+- **TP-1** A template is any `.md` file directly inside `templates/` under the root. Its name
+  is its filename without extension. Templates are never listed as notes or searched (L-3).
+- **TP-2** A template may begin with a header block: a first line `---`, one or more
+  `key: value` lines, and a closing `---`. Recognised keys: `path` (required for the template
+  to be usable). Unknown keys are ignored. A template without a header, or without `path`, is
+  listed but refused with an inline message naming the problem.
+- **TP-3** Tokens, replaced at creation time, in both `path` and the body:
+  `{{date:FORMAT}}` where FORMAT is a Unicode date format pattern (`YYYY`, `MM`, `MMMM`, `DD`,
+  `dddd`, `HH`, `mm`), evaluated in the local time zone; `{{title}}`, the title words typed
+  after the template name (TP-5); `{{cursor}}`, body only, marks the caret position and is
+  removed. An unknown token is left as literal text.
+- **TP-4** The expanded `path` is a relative path without extension, subject to C-3 rules. If
+  `<path>.md` exists, it is opened and nothing is written. Otherwise folders are created as
+  needed and the file is written with the expanded body, then opened with the caret at
+  `{{cursor}}` or at the end.
+- **TP-5** A search-field query whose first character is `@` is template mode. The word after
+  `@` filters templates by name with the S-2 rules; the list shows matching templates (name,
+  and the expanded `path` as the snippet) instead of notes. Enter acts on the selected
+  template, or the first, with the remaining words of the query as `{{title}}`. If the path
+  needs `{{title}}` and none was given, an inline message asks for one and nothing is created.
+  `@` alone lists all templates. Escape leaves template mode as it clears any query.
+- **TP-6** `File > New from Template` lists templates by name; choosing one behaves as TP-5
+  with no title, prompting inline in the search field when `{{title}}` is required.
+- **TP-7** The template list updates with the watcher (X-1) like notes do.
+- **TP-8** A daily note is not a feature. It is a template such as
+  `path: daily/{{date:YYYY}}/{{date:MM-MMMM}}/{{date:DD-dddd}}`, reached by `@daily`.
+
+## 16. Visual verification *(v2, ADR-0015)*
+
+- **V-1** Every task that changes what a window looks like renders the affected window to a
+  PNG in `build/snapshots/` from its smoke test (`NSView.bitmapImageRepForCachingDisplay` on
+  the real view hierarchy at 2x, light and dark appearance), and the implementing agent looks
+  at that PNG and compares it against W-6, PR-1 and the design canvas before committing. The
+  commit message states what was checked. Snapshots are build products, not committed.

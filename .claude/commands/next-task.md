@@ -28,9 +28,11 @@ the task below. Do exactly this one task from docs/PLAN.md and nothing else:
 
 <TASK LINES>
 
-Follow the loop protocol in CLAUDE.md steps 3 to 6: read the spec IDs it cites, write the
-tests it names, iterate with scripts/check.sh quick, mark the task [x] in docs/PLAN.md, and
-commit with a message of the form "M1.1: <summary> (<spec IDs>)". The pre-commit hook runs the
+Follow the loop protocol in CLAUDE.md steps 3 to 7: read the spec IDs it cites, write the
+tests it names, iterate with scripts/check.sh quick, and if the task changes how a window
+looks, render the snapshots (SPEC V-1), open the PNGs with the Read tool and compare them
+against the spec and the design canvas in ADR-0013 before committing. Mark the task [x] in
+docs/PLAN.md and commit with a message of the form "M1.1: <summary> (<spec IDs>)". The pre-commit hook runs the
 full gate; if it fails, fix the code and commit again. Do not touch other tasks. If the spec
 does not decide something you need, append a question to docs/QUESTIONS.md, mark the task
 [?], and commit that instead. Finish with a clean working tree. Reply with one line: the

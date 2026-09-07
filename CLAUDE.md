@@ -25,11 +25,15 @@ You are working unattended through `docs/PLAN.md`:
    does not depend on it. Never guess at product behaviour.
 4. Implement. Write the tests the task names, named after the spec IDs they cover
    (`testS3_titleMatchesSortFirst`). Iterate with `scripts/check.sh quick`.
-5. Mark the task `[x]` in `docs/PLAN.md` in the same commit.
-6. Commit: `git commit -m "M2.4: search field drives list reload (S-1, S-5, PF-2)"`. The
+5. If the task changes what a window looks like, render it per SPEC V-1 (the snapshot helper
+   writes `build/snapshots/*.png`), open the PNGs with the Read tool, and compare them with
+   W-6, PR-1 and the design canvas linked in ADR-0013. Fix what looks wrong before committing
+   and say in the commit message what you checked.
+6. Mark the task `[x]` in `docs/PLAN.md` in the same commit.
+7. Commit: `git commit -m "M2.4: search field drives list reload (S-1, S-5, PF-2)"`. The
    pre-commit hook runs `scripts/check.sh full`; a red gate means the task is not done.
    Fix forward. Never bypass the hook.
-7. Stop after one task. The orchestrator tags milestones (`m<N>`) and starts the next task;
+8. Stop after one task. The orchestrator tags milestones (`m<N>`) and starts the next task;
    the human reviews the tags at their leisure. Do not stop the loop at a milestone.
 
 If a task turns out to be too large for one commit, split it in `docs/PLAN.md` (sub-tasks
@@ -65,6 +69,8 @@ xcrun swift-format format --in-place <file>    (a PostToolUse hook does this on 
   question and commit that.
 - Product behaviour lives in `docs/SPEC.md` and changes only through an ADR in `docs/adr/`.
   Do not "improve" the spec while implementing.
+- Only semantic `NSColor`s and system fonts (E-8, W-6). No literal colours, no custom drawing
+  of standard controls.
 - Shell heredocs that contain guarded phrases (hook bypass flags, Xcode tool names) trip the
   Bash guard. Write such text with the Write or Edit tools instead.
 

@@ -132,3 +132,100 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       task: one line per spec ID, checked by hand against a copy of the real library). Any
       discrepancy becomes a new task above this line.
 - [x] M5.7 Tag `v0.1.0`.
+
+## M6: iCloud, dates, fonts, hotkey (v2 fixes)
+
+- [ ] M6.1 `DownloadRequester` in Core: given the scanner's note list and a `NoteStore`, requests
+      download for every dataless note off the main thread, at most once per note per 60 s, and
+      repeats on re-eviction (L-9). Injected clock and injected request function for tests.
+      Tests: first pass requests all dataless, second pass within 60 s requests none, a note
+      that flips readable then dataless again is requested again.
+- [ ] M6.2 Wire `DownloadRequester` into `LibraryController`: after the initial scan, after each
+      full rescan, and on every watcher batch. Smoke test with the availability probe: dataless
+      notes get requested without any note being opened.
+- [ ] M6.3 Eviction bar (L-10): view under the search field, count text, free-space suffix under
+      2 GB, `Open Storage Settings` button, not shown during the first scan, hidden within 2 s
+      of the last note becoming readable. Free space via `volumeAvailableCapacityForImportantUsage`.
+      Smoke tests: shown/hidden transitions, text for 1 and N notes, button present only under
+      2 GB. Snapshot per V-1.
+- [ ] M6.4 `RelativeDateText` in App (S-9): Today/Yesterday with time, weekday within six days,
+      `d MMM` this year, `d MMM yyyy` otherwise, locale-aware, injected `now`. Tests for each
+      band and for the year boundary.
+- [ ] M6.5 Row layout gives the date its intrinsic width and truncates the title (S-10).
+      Refresh relative words on day change (`NSCalendarDayChanged`) and on window becoming
+      key. Smoke test: a 60-character title and `Yesterday 09:10` in a 300 pt row leaves the
+      date untruncated. Snapshot per V-1.
+- [ ] M6.6 Fonts (E-8, E-2): remove `EditorFontFamily` and delete the stored key on launch;
+      prose `systemFont`, code tokens `monospacedSystemFont`; View menu Bigger/Smaller/Actual
+      Size with Cmd-plus/minus/0, 9 to 36 pt, persisted in `EditorFontSize`. Remove the font
+      controls from Settings. Tests: styler assigns the mono font to inline and fenced code
+      only; zoom actions clamp and persist; stale family key is gone after launch.
+- [ ] M6.7 Window level and behaviour (W-5): `.floating`, `moveToActiveSpace`; completion popup
+      and Settings above it. Smoke tests assert level and collection behaviour; completion
+      popup window level is greater than the main window's.
+- [ ] M6.8 Hotkey toggle and close-hides (W-3, W-4): visible-and-active hides, otherwise shows
+      and focuses search; Cmd-W and the close button hide; Dock click reopens
+      (`applicationShouldHandleReopen`); `applicationShouldTerminateAfterLastWindowClosed`
+      false. Smoke tests drive `fire()` twice and assert visibility, then reopen.
+- [ ] M6.9 Manual acceptance pass for M6 against `docs/ACCEPTANCE.md` (append a v2 section, one
+      line per changed spec ID); discrepancies become tasks above this line.
+
+## M7: Window and Settings redesign
+
+- [ ] M7.1 Snapshot helper in TestSupport or AppTests (V-1): render a window's content view at
+      2x in light and dark to `build/snapshots/<name>-<appearance>.png`. Test: writes two
+      files for the main window.
+- [ ] M7.2 Main window layout per W-6: title bar with title, search field inset 8/10 pt on a
+      `windowBackgroundColor` strip, hairline `separatorColor` beneath, list, split, editor,
+      backlinks. Remove any non-semantic colours. Smoke test asserts frames and insets;
+      snapshot inspected against direction B on the canvas.
+- [ ] M7.3 Snippets strip markdown (S-6): `BodySnippet` drops heading markers, wikilink
+      brackets and labels' pipes, embed syntax entirely, code fences, emphasis markers. Tests
+      for each construct and for PF-2 unaffected (snippet work stays in the index build).
+- [ ] M7.4 Settings window per PR-1: title `Settings`, `Settings…` Cmd-comma, fixed size,
+      `NSGridView` with right-aligned captions, Notes folder row, Global shortcut row, 20 pt
+      margins. Smoke test asserts style mask, title, grid rows. Snapshot inspected.
+- [ ] M7.5 Menu audit: View menu holds Bigger/Smaller/Actual Size and Backlinks; Window menu
+      standard; File menu gains `New from Template` placeholder submenu (filled in M9). Smoke
+      test on menu titles and key equivalents.
+- [ ] M7.6 Manual acceptance pass for M7; discrepancies become tasks above this line.
+
+## M8: Thumbnails
+
+- [ ] M8.1 `ThumbnailCache` in App (PF-8): background queue, two concurrent jobs,
+      `CGImageSource` downsampling to a requested pixel size, LRU bounded at 50 MB, keyed by
+      path and mtime, completion on main. Tests: hit, miss, eviction on size, invalidation on
+      mtime change, never blocks the calling thread.
+- [ ] M8.2 First-image resolution: given a body, find the first `![[target]]` and resolve it
+      to an image file via the link resolver (K-1, S-11). Stored on the index snapshot as an
+      optional path. Tests: none, one, first-of-several, unresolvable.
+- [ ] M8.3 Row thumbnails (S-11): 34 pt square at the row's right, drawn only when cached,
+      requested on row display, click selects the note. `ListPerfTests` re-run with 10 % of
+      synthetic notes embedding a generated PNG (extend `SyntheticLibrary`). Snapshot inspected.
+- [ ] M8.4 Editor attachment plumbing (E-9, ADR-0012): one accessor that returns the view's
+      text without attachment characters, used by save, copy, search, link and tag parsing and
+      styler ranges. Tests: round trip with attachments present leaves the file byte-identical.
+- [ ] M8.5 Inline thumbnails (E-9): attachment on the line below a resolving embed, 240 by 160
+      max, click opens in default app, removed when the embed stops resolving, loaded via
+      `ThumbnailCache`. `EditorPerfTests` re-run on a 1 MB note containing 50 embeds. Snapshot
+      inspected.
+- [ ] M8.6 Manual acceptance pass for M8; discrepancies become tasks above this line.
+
+## M9: Templates
+
+- [ ] M9.1 `TemplateParser` in Core (TP-2, TP-3): header block, `path`, tokens `{{date:FORMAT}}`
+      (Unicode patterns via `DateFormatter`), `{{title}}`, `{{cursor}}`; unknown tokens left
+      literal. Tests for each token, missing header, missing path, cursor removal and offset.
+- [ ] M9.2 `TemplateStore` (TP-1, TP-7): lists `templates/*.md` by name, updated by the watcher.
+      Tests: add, remove, rename a template file.
+- [ ] M9.3 Instantiation (TP-4): expand path, apply C-3 checks, open-if-exists, else create with
+      folders and expanded body, caret at cursor. Tests: existing path opens without writing,
+      new path creates, illegal path refused.
+- [ ] M9.4 Template mode in the search field (TP-5): `@` prefix, list shows templates with
+      expanded path as snippet, Enter with remaining words as title, inline prompt when title
+      is required, `@` alone lists all. Smoke tests for each rule and for Escape.
+- [ ] M9.5 `File > New from Template` submenu (TP-6) built from `TemplateStore`, prompting
+      inline when a title is needed. Smoke test on menu contents and action.
+- [ ] M9.6 Manual acceptance pass for M9 and the whole of v2 against `docs/ACCEPTANCE.md`;
+      discrepancies become tasks above this line.
+- [ ] M9.7 Tag `v0.2.0`.
