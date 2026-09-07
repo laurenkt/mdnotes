@@ -140,7 +140,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       repeats on re-eviction (L-9). Injected clock and injected request function for tests.
       Tests: first pass requests all dataless, second pass within 60 s requests none, a note
       that flips readable then dataless again is requested again.
-- [ ] M6.2 Wire `DownloadRequester` into `LibraryController`: after the initial scan, after each
+- [x] M6.2 Wire `DownloadRequester` into `LibraryController`: after the initial scan, after each
       full rescan, and on every watcher batch. Smoke test with the availability probe: dataless
       notes get requested without any note being opened.
 - [ ] M6.3 Eviction bar (L-10): view under the search field, count text, free-space suffix under

@@ -20,6 +20,11 @@ import Synchronization
 /// the Trash, or that `rename` gave another name, is not reported. What remains is external,
 /// is folded into the snapshot like `apply(_:)` does, and is then reported through
 /// `onExternalChanges`.
+///
+/// Evicted notes are asked for without anyone opening them (L-9, ADR-0009): after the scan
+/// `start()` makes, which is also the full rescan a restart makes, and after every watcher
+/// batch, `downloadRequester` runs one pass over every note in the library on its own queue
+/// and requests a download for each that is dataless, rate-limited per note.
 @MainActor
 public final class LibraryController {
     /// Where the controller is in populating the index.
@@ -52,6 +57,10 @@ public final class LibraryController {
 
     /// Every write this process has made to the library, for the watcher to ignore (E-6).
     public let ownWrites = OwnWrites()
+
+    /// Keeps a download request outstanding for every dataless note (L-9). Its passes run on
+    /// its own queue, so neither the scan nor the watcher waits for the probe.
+    public let downloadRequester: DownloadRequester
 
     /// The latest snapshot. Replaced, never mutated; safe to hold across a reload.
     public private(set) var snapshot: SearchIndex = .empty
@@ -92,16 +101,24 @@ public final class LibraryController {
     ///     report the same changes a second time.
     ///   - log: takes each line the library reports, such as the count of notes whose links
     ///     a rename rewrote (R-3). The default writes it to stderr; tests capture it.
+    ///   - availability: the `NoteStore` probe that says whether a note is dataless (L-7). The
+    ///     default asks the file; tests inject one to simulate eviction, which cannot be
+    ///     fabricated outside an iCloud container.
+    ///   - requestDownload: what `downloadRequester` calls for each dataless note (L-9). The
+    ///     default asks iCloud through the store; tests inject one to observe the requests.
     public init(
         root: URL, batchSize: Int = LibraryController.defaultBatchSize, watchesFileSystem: Bool = true,
-        log: @escaping @Sendable (String) -> Void = LibraryController.standardErrorLog
+        log: @escaping @Sendable (String) -> Void = LibraryController.standardErrorLog,
+        availability: NoteStore.AvailabilityProbe? = nil, requestDownload: DownloadRequester.Request? = nil
     ) {
         precondition(batchSize > 0)
         self.root = root
         self.batchSize = batchSize
         self.watchesFileSystem = watchesFileSystem
         self.log = log
-        store = NoteStore(root: root)
+        let store = availability.map { NoteStore(root: root, isAvailable: $0) } ?? NoteStore(root: root)
+        self.store = store
+        downloadRequester = DownloadRequester(store: store, request: requestDownload)
         worker = Worker()
     }
 
@@ -138,6 +155,7 @@ public final class LibraryController {
             let phase: Phase = notes.isEmpty ? .ready : .indexing(bodiesRead: 0, of: notes.count)
             worker.replace(titlesOnly, phase: phase)
             publish(titlesOnly, phase: phase, generation: generation)
+            requestDownloads(for: notes, generation: generation)
             enqueueBatch(of: notes, from: 0, generation: generation)
         }
     }
@@ -230,8 +248,12 @@ public final class LibraryController {
     nonisolated private func watcherDidReport(_ changes: LibraryChanges, generation: Int) {
         guard worker.isCurrent(generation) else { return }
         let external = writes.sync { ownWrites.suppressing(changes, store: store) }
-        if external.isEmpty { return }
+        if external.isEmpty {
+            requestDownloads(forIndexedNotes: generation)
+            return
+        }
         fold(external, generation: generation) {
+            self.requestDownloads(forIndexedNotes: generation)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard generation == self.generation else { return }
@@ -239,6 +261,22 @@ public final class LibraryController {
                 }
             }
         }
+    }
+
+    // MARK: - Proactive download (L-9)
+
+    /// One requester pass over `notes`, on the requester's queue, unless `generation` is stale.
+    nonisolated private func requestDownloads(for notes: [ScannedNote], generation: Int) {
+        guard worker.isCurrent(generation) else { return }
+        downloadRequester.enqueue(notes)
+    }
+
+    /// One requester pass over every note the background index lists right now. A watcher
+    /// batch calls it after its fold, so a note the batch added is probed too and one it
+    /// removed drops out of the requester's ledger.
+    nonisolated private func requestDownloads(forIndexedNotes generation: Int) {
+        let notes = worker.index().entries.map { ScannedNote(id: $0.id, modifiedAt: $0.modifiedAt) }
+        requestDownloads(for: notes, generation: generation)
     }
 
     // MARK: - Creation (C-2)
