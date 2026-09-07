@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import MDNotesApp
 import MDNotesCore
+import MDNotesTestSupport
 import XCTest
 
 /// Headless smoke tests for the backlinks strip (K-6): the bar below the editor lists the
@@ -145,13 +146,13 @@ final class BacklinksSmokeTests: XCTestCase {
         }
     }
 
-    func testK6_titlesThatDoNotFitTheBarDropFromTheEnd() throws {
-        // The strip on its own, in a narrow window: the view needs no library to lay out.
+    /// A strip on its own across the top of a `width`-point window: the view needs no library
+    /// to lay out. The caller closes the window.
+    private func makeWindowedStrip(width: CGFloat) throws -> (window: NSWindow, strip: BacklinksStrip) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 100), styleMask: [.titled], backing: .buffered,
+            contentRect: NSRect(x: 0, y: 0, width: width, height: 100), styleMask: [.titled], backing: .buffered,
             defer: false)
         window.isReleasedWhenClosed = false
-        defer { window.close() }
         let strip = BacklinksStrip()
         let content = try XCTUnwrap(window.contentView)
         content.addSubview(strip)
@@ -161,6 +162,13 @@ final class BacklinksSmokeTests: XCTestCase {
             strip.topAnchor.constraint(equalTo: content.topAnchor),
             strip.heightAnchor.constraint(equalToConstant: MainView.backlinksStripHeight),
         ])
+        return (window, strip)
+    }
+
+    func testK6_titlesThatDoNotFitTheBarDropFromTheEnd() throws {
+        let (window, strip) = try makeWindowedStrip(width: 260)
+        defer { window.close() }
+        let content = try XCTUnwrap(window.contentView)
         let notes = (1...12).map { NoteID(relativePath: "A rather long backlink title \($0).md") }
         strip.show(notes)
         content.layoutSubtreeIfNeeded()
@@ -178,6 +186,97 @@ final class BacklinksSmokeTests: XCTestCase {
         window.setContentSize(NSSize(width: 3000, height: 100))
         content.layoutSubtreeIfNeeded()
         XCTAssertTrue(strip.titlesStack.detachedViews.isEmpty)
+    }
+
+    // MARK: K-6, PF-6 the strip stays cheap for any number of backlinks
+
+    /// A note with thousands of backlinks (a daily-notes hub, say) must not stall the main
+    /// thread: `show` builds a button for the first `maxTitleButtons` only and puts the count
+    /// in the summary. The budget is loose for a debug build; the fault this guards against was
+    /// seconds, not milliseconds.
+    func testK6_PF6_showWithThousandsOfBacklinksBuildsOnlyTheCapAndStaysCheap() throws {
+        let (window, strip) = try makeWindowedStrip(width: 800)
+        defer { window.close() }
+        let content = try XCTUnwrap(window.contentView)
+        let cap = BacklinksStrip.maxTitleButtons
+        XCTAssertLessThanOrEqual(cap, 20, "a small fixed cap")
+        let lists = (0..<5).map { run in (0..<2_000).map { NoteID(relativePath: "hub/run\(run)/Note \($0).md") } }
+        var runs = lists.makeIterator()
+
+        var opened: [NoteID] = []
+        strip.onOpen = { opened.append($0) }
+        let median = PerfGate.medianMilliseconds(iterations: lists.count) {
+            guard let notes = runs.next() else { return XCTFail("ran out of lists") }
+            strip.show(notes)
+        }
+        XCTAssertLessThan(median, 25, "show with 2,000 backlinks took \(String(format: "%.2f", median)) ms")
+
+        let last = try XCTUnwrap(lists.last)
+        XCTAssertFalse(strip.isHidden)
+        XCTAssertEqual(strip.backlinks, last, "every backlink is kept")
+        XCTAssertEqual(strip.titleButtons.count, cap, "buttons for the first \(cap) only")
+        XCTAssertEqual(strip.titleButtons.map(\.title), last.prefix(cap).map(\.title))
+        XCTAssertEqual(strip.summaryLabel.stringValue, "\(cap) of 2000 backlinks")
+        content.layoutSubtreeIfNeeded()
+        XCTAssertFalse(strip.titleButtons.filter { !strip.titlesStack.detachedViews.contains($0) }.isEmpty)
+
+        // The last button still opens its own note.
+        try XCTUnwrap(strip.titleButtons.last).performClick(nil)
+        XCTAssertEqual(opened, [last[cap - 1]])
+
+        // Under the cap the summary is the plain label again.
+        strip.show(Array(last.prefix(cap)))
+        XCTAssertEqual(strip.titleButtons.count, cap)
+        XCTAssertEqual(strip.summaryLabel.stringValue, "Backlinks")
+        strip.show(Array(last.prefix(cap + 1)))
+        XCTAssertEqual(strip.titleButtons.count, cap)
+        XCTAssertEqual(strip.summaryLabel.stringValue, "\(cap) of \(cap + 1) backlinks")
+    }
+
+    /// Collapsed, the strip shows a count and no titles, so `show` builds no buttons at all;
+    /// expanding builds them for whatever is listed by then.
+    func testK6_PF6_collapsedStripBuildsNoTitleButtonsUntilExpanded() throws {
+        let (window, strip) = try makeWindowedStrip(width: 800)
+        defer { window.close() }
+        let cap = BacklinksStrip.maxTitleButtons
+        let many = (0..<2_000).map { NoteID(relativePath: "hub/Note \($0).md") }
+        let few = (0..<3).map { NoteID(relativePath: "few/Note \($0).md") }
+
+        strip.setCollapsed(true)
+        let median = PerfGate.medianMilliseconds(iterations: 3) { strip.show(many) }
+        XCTAssertLessThan(median, 25, "show while collapsed took \(String(format: "%.2f", median)) ms")
+        XCTAssertFalse(strip.isHidden)
+        XCTAssertEqual(strip.backlinks, many)
+        XCTAssertEqual(strip.titleButtons, [], "no titles behind the count")
+        XCTAssertEqual(strip.summaryLabel.stringValue, "2000 backlinks")
+
+        // A second list while collapsed still builds nothing; expanding builds that list.
+        strip.show(few)
+        XCTAssertEqual(strip.titleButtons, [])
+        XCTAssertEqual(strip.summaryLabel.stringValue, "3 backlinks")
+        strip.setCollapsed(false)
+        XCTAssertEqual(strip.titleButtons.map(\.title), ["Note 0", "Note 1", "Note 2"])
+        XCTAssertEqual(strip.summaryLabel.stringValue, "Backlinks")
+
+        // Collapsing keeps the buttons it has; a new list while collapsed drops them, and
+        // expanding builds the new list up to the cap.
+        strip.setCollapsed(true)
+        XCTAssertEqual(strip.titleButtons.count, 3)
+        strip.show(many)
+        XCTAssertEqual(strip.titleButtons, [])
+        strip.toggleCollapsed()
+        XCTAssertEqual(strip.titleButtons.count, cap)
+        XCTAssertEqual(strip.titleButtons.map(\.title), many.prefix(cap).map(\.title))
+        XCTAssertEqual(strip.summaryLabel.stringValue, "\(cap) of 2000 backlinks")
+
+        // Nothing to list hides the strip and leaves no buttons, collapsed or not.
+        strip.setCollapsed(true)
+        strip.show([])
+        XCTAssertTrue(strip.isHidden)
+        XCTAssertEqual(strip.titleButtons, [])
+        strip.setCollapsed(false)
+        XCTAssertEqual(strip.titleButtons, [])
+        XCTAssertTrue(strip.isHidden)
     }
 
     func testK6_stripIsHiddenWhileNoNoteIsOpenOrTheOpenNoteHasNoBacklinks() async throws {

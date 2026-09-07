@@ -12,10 +12,18 @@ import MDNotesCore
 /// notes to list whenever the open note or the snapshot changes and is told, through `onOpen`,
 /// which note a click asked for. Titles that do not fit the bar's width are dropped from the
 /// end rather than clipped, through the title stack's visibility priorities.
+///
+/// `show` stays cheap for any number of backlinks (PF-6): a note with thousands of them gets a
+/// title button for the first `maxTitleButtons` only, with the full count in the summary, and
+/// none at all while the strip is collapsed. The buttons are built when the strip expands.
 @MainActor
 public final class BacklinksStrip: NSView {
     /// `UserDefaults` key under which the collapse state persists (K-6). True when collapsed.
     nonisolated public static let collapsedDefaultsKey = "BacklinksStripCollapsed"
+
+    /// The most title buttons the strip builds; a one-line bar cannot show more than this
+    /// anyway. `backlinks` past it are counted in the summary but have no button.
+    nonisolated public static let maxTitleButtons = 20
 
     /// Toggles the collapse state. Its state is on while the strip is expanded.
     public let disclosureButton: NSButton
@@ -29,6 +37,10 @@ public final class BacklinksStrip: NSView {
 
     /// True while the titles are hidden behind the count.
     public private(set) var isCollapsed: Bool
+
+    /// True while the title stack does not reflect `backlinks`: `show` while collapsed leaves
+    /// the buttons unbuilt and this set, and expanding builds them.
+    private var titlesAreStale = false
 
     /// Called with the note whose title was clicked. Installed by the window controller.
     public var onOpen: (@MainActor (NoteID) -> Void)?
@@ -91,8 +103,21 @@ public final class BacklinksStrip: NSView {
     public func show(_ notes: [NoteID]) {
         guard notes != backlinks else { return }
         backlinks = notes
-        for view in titlesStack.views { titlesStack.removeView(view) }
-        for (offset, id) in notes.enumerated() {
+        if isCollapsed {
+            // Nothing to see behind the count: drop stale buttons, build none (PF-6).
+            removeTitleButtons()
+            titlesAreStale = !notes.isEmpty
+        } else {
+            rebuildTitleButtons()
+        }
+        isHidden = notes.isEmpty
+        updateSummary()
+    }
+
+    /// Replaces the title buttons with one per backlink up to `maxTitleButtons`.
+    private func rebuildTitleButtons() {
+        removeTitleButtons()
+        for (offset, id) in backlinks.prefix(Self.maxTitleButtons).enumerated() {
             let button = Self.makeTitleButton(for: id)
             button.tag = offset
             button.target = self
@@ -102,8 +127,11 @@ public final class BacklinksStrip: NSView {
             let priority = max(Float(NSStackView.VisibilityPriority.notVisible.rawValue) + 1, 900 - Float(offset))
             titlesStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: priority), for: button)
         }
-        isHidden = notes.isEmpty
-        updateSummary()
+        titlesAreStale = false
+    }
+
+    private func removeTitleButtons() {
+        for view in titlesStack.views { titlesStack.removeView(view) }
     }
 
     @objc private func titleClicked(_ sender: NSButton) {
@@ -132,12 +160,18 @@ public final class BacklinksStrip: NSView {
     private func applyCollapseState() {
         disclosureButton.state = isCollapsed ? .off : .on
         titlesStack.isHidden = isCollapsed
+        if !isCollapsed, titlesAreStale { rebuildTitleButtons() }
         updateSummary()
     }
 
+    /// The count while collapsed; "Backlinks" while expanded, unless there are more backlinks
+    /// than buttons, when it says how many of them are listed.
     private func updateSummary() {
+        let count = backlinks.count
         if isCollapsed {
-            summaryLabel.stringValue = backlinks.count == 1 ? "1 backlink" : "\(backlinks.count) backlinks"
+            summaryLabel.stringValue = count == 1 ? "1 backlink" : "\(count) backlinks"
+        } else if count > Self.maxTitleButtons {
+            summaryLabel.stringValue = "\(Self.maxTitleButtons) of \(count) backlinks"
         } else {
             summaryLabel.stringValue = "Backlinks"
         }

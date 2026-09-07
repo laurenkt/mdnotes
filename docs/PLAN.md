@@ -100,7 +100,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M5.4 Menu bar: standard app / edit / view menus, Cmd-L, Cmd-R, Cmd-Delete, Cmd-Shift-B
       toggle backlinks. W-4 quit-on-close.
 - [x] M5.5 App icon in `Resources/AppIcon.icns`, wired by `bundle.sh`.
-- [ ] M5.6a Backlinks strip must not stall the main thread (K-6, PF-6): opening a note with
+- [x] M5.6a Backlinks strip must not stall the main thread (K-6, PF-6): opening a note with
       1,500 backlinks freezes the app for 5 to 40 s while `BacklinksStrip.show` builds an
       `NSButton` per backlink inside an `NSStackView`. Build only as many title buttons as
       the bar can show (a small fixed cap, say 20, with the count in the summary), build none
