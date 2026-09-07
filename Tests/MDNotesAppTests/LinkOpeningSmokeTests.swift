@@ -274,9 +274,20 @@ final class LinkOpeningSmokeTests: XCTestCase {
             controller.editorController.linkTargetAtCaret(), LinkTarget(text: "pic.png", isEmbed: true))
         var opens = 0
         controller.onOpenLink = { _, _ in opens += 1 }
-        XCTAssertFalse(controller.openLinkAtCaret(), "an embed links to a file that is not a note (K-1)")
-        try await Task.sleep(for: .milliseconds(50))
+        var filesOpened: [URL] = []
+        controller.openFile = { url in
+            filesOpened.append(url)
+            return true
+        }
+        let settled = expectation(description: "embed settled")
+        controller.onOpenFile = { _, _ in settled.fulfill() }
+        // An embed links to a file that is not a note (K-1): it goes the I-2 way, and here no
+        // file has the name, so nothing opens and nothing is created.
+        XCTAssertTrue(controller.openLinkAtCaret(), "the key is consumed")
+        await fulfillment(of: [settled], timeout: 10)
         XCTAssertEqual(opens, 0)
+        XCTAssertEqual(filesOpened, [])
+        XCTAssertNotNil(controller.inlineMessage)
         XCTAssertEqual(controller.editorController.noteID, alpha)
         XCTAssertEqual(try filesOnDisk(), fixtureFiles, "no pic.png.md was created")
     }

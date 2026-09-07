@@ -7,6 +7,11 @@ import AppKit
 /// the caret with it (T-4: a click on a tag searches for it). A handler returns true when it
 /// acted; otherwise the event keeps its `NSTextView` behaviour. Every other key and click is
 /// the text view's own.
+///
+/// A paste or a drop that carries an image (I-1) is intercepted the same way: the image on the
+/// pasteboard is handed to `onInsertImage` and, if it takes it, the text view never sees the
+/// paste or drop. A plain text view would otherwise ignore image data and insert a dropped
+/// file's path. Text pastes and drops keep their `NSTextView` behaviour.
 @MainActor
 public final class EditorTextView: NSTextView {
     /// A click with Command down and no other modifier, with the insertion index the click
@@ -22,6 +27,15 @@ public final class EditorTextView: NSTextView {
     /// line, a double or triple click, and a click with Shift down (which extends the
     /// selection) are the text view's own and never reach this.
     public var onClick: (@MainActor (Int) -> Bool)?
+
+    /// An image pasted into or dropped on the editor (I-1). For a drop the caret has been moved
+    /// to the drop point first, so the handler inserts at the caret either way. Returns true
+    /// when it took the image; false leaves the paste or drop to the text view.
+    public var onInsertImage: (@MainActor (ImageSource) -> Bool)?
+
+    /// The pasteboard `paste(_:)` looks for an image on: the general one. Tests point it at a
+    /// private pasteboard so they leave the user's clipboard alone.
+    public var pasteboard: NSPasteboard = .general
 
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
@@ -61,6 +75,65 @@ public final class EditorTextView: NSTextView {
             if rect.contains(point) { return candidate }
         }
         return nil
+    }
+
+    // MARK: - Image paste and drop (I-1)
+
+    /// Cmd-V and the menu item. An image on the pasteboard goes to `onInsertImage`; anything
+    /// else, or an image the handler declines, is pasted as `NSTextView` pastes it.
+    public override func paste(_ sender: Any?) {
+        if isEditable, let onInsertImage, let image = ImagePasteboard.image(on: pasteboard), onInsertImage(image) {
+            return
+        }
+        super.paste(sender)
+    }
+
+    /// `NSTextView` registers for images and files once it is editable, but under the old type
+    /// names (`NSFilenamesPboardType`, `Apple PNG pasteboard type`); the modern file URL type and
+    /// every image type `NSImage` reads are added so a drag from any source reaches
+    /// `draggingEntered`. Called by AppKit whenever editability changes.
+    public override func updateDragTypeRegistration() {
+        super.updateDragTypeRegistration()
+        guard isEditable else { return }
+        var types = registeredDraggedTypes
+        let images = NSImage.imageTypes.map { NSPasteboard.PasteboardType($0) }
+        for type in [NSPasteboard.PasteboardType.fileURL] + images where !types.contains(type) {
+            types.append(type)
+        }
+        registerForDraggedTypes(types)
+    }
+
+    public override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        let operation = super.draggingEntered(sender)
+        return acceptsImageDrop(sender) ? .copy : operation
+    }
+
+    public override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        // Super moves the drop caret with the pointer; the operation is ours to answer.
+        let operation = super.draggingUpdated(sender)
+        return acceptsImageDrop(sender) ? .copy : operation
+    }
+
+    public override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        acceptsImageDrop(sender) || super.prepareForDragOperation(sender)
+    }
+
+    /// A drop carrying an image (I-1): the caret moves to the insertion index under the
+    /// pointer, as a dropped text would land there, and the image goes to `onInsertImage`.
+    /// Anything else, or an image the handler declines, is dropped as `NSTextView` drops it.
+    public override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if isEditable, let onInsertImage, let image = ImagePasteboard.image(on: sender.draggingPasteboard) {
+            let point = convert(sender.draggingLocation, from: nil)
+            setSelectedRange(NSRange(location: characterIndexForInsertion(at: point), length: 0))
+            if onInsertImage(image) { return true }
+        }
+        return super.performDragOperation(sender)
+    }
+
+    /// True when the drag carries an image and there is a handler and an editable text to
+    /// drop it into.
+    private func acceptsImageDrop(_ sender: any NSDraggingInfo) -> Bool {
+        isEditable && onInsertImage != nil && ImagePasteboard.hasImage(on: sender.draggingPasteboard)
     }
 
     /// True when Command is down and Shift, Control and Option are not. The function and

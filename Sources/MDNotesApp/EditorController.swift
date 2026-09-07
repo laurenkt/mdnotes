@@ -274,6 +274,17 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         return nil
     }
 
+    // MARK: - Images (I-1)
+
+    /// Inserts `![[name]]` at the caret, replacing the selection, as typing it would (I-1): the
+    /// edit registers with the note's undo stack (E-7), is styled (E-2) and starts the autosave
+    /// delay (E-4), and the caret ends after the closing brackets. Does nothing while no
+    /// writable note is shown.
+    public func insertEmbed(of name: String) {
+        guard noteID != nil, body?.isWritable == true else { return }
+        textView.insertText("![[\(name)]]", replacementRange: textView.selectedRange())
+    }
+
     // MARK: - Tags (T-4)
 
     /// The tag whose text, `#` included, contains the character at `index`, as `#name`; nil

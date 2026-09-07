@@ -453,6 +453,53 @@ public final class LibraryController {
         return modifiedAt
     }
 
+    // MARK: - Images (I-1, I-2)
+
+    /// Stores an image pasted or dropped into the editor under `i/` at the root (I-1), on the
+    /// background queue (PF-6): the source is read or converted (`ImageSource.encoded()`),
+    /// written atomically as `<yyyyMMdd-HHmmss>.<ext>` by `ImageStore`, and `completion` runs on
+    /// the main thread with the file's name, for the editor to embed, or the error. An image is
+    /// not a note (L-6): the snapshot is untouched and the watcher never reports the file. If
+    /// the library is stopped or restarted before the write lands, nothing is written and
+    /// `completion` is never called.
+    public func storeImage(_ source: ImageSource, completion: @escaping @MainActor (Result<String, any Error>) -> Void)
+    {
+        let generation = generation
+        let store = ImageStore(root: root)
+        queue.async { [self] in
+            guard worker.isCurrent(generation) else { return }
+            let outcome = Result {
+                let encoded = try source.encoded()
+                return try writes.sync { try store.write(encoded.bytes, extension: encoded.fileExtension) }
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard generation == self.generation else { return }
+                    completion(outcome)
+                }
+            }
+        }
+    }
+
+    /// Finds the file the embed `![[target]]` names (I-2) on the background queue (PF-6), as
+    /// `ImageStore.url(forEmbed:)` looks for it, and hands it to `completion` on the main thread,
+    /// or nil when there is no such file. If the library is stopped or restarted first,
+    /// `completion` is never called.
+    public func locateEmbed(_ target: String, completion: @escaping @MainActor (URL?) -> Void) {
+        let generation = generation
+        let store = ImageStore(root: root)
+        queue.async { [self] in
+            guard worker.isCurrent(generation) else { return }
+            let url = store.url(forEmbed: target)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard generation == self.generation else { return }
+                    completion(url)
+                }
+            }
+        }
+    }
+
     // MARK: - Progressive population (PF-7)
 
     /// Reads one batch of bodies on the queue, publishes, and queues the next batch. Each batch

@@ -59,6 +59,12 @@ import MDNotesCore
 /// arrives, the snapshot's link index names the notes linking to the open note and the strip
 /// shows their titles, or hides itself when there are none. A click on a title opens that note
 /// as a link does (K-3). The strip keeps its own collapse state.
+///
+/// An image pasted into or dropped on the editor (I-1) is intercepted by `EditorTextView` and
+/// handed here: the library writes it under `i/` off the main thread and, once the file is
+/// there, the editor inserts `![[<name>]]` at the caret as typed text. A Cmd-click or Cmd-Enter
+/// on an embed (I-2) does not open a note: the library finds the file the embed names and it is
+/// opened with its default application through `openFile`.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -84,8 +90,23 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
 
     /// Called on the main thread once opening a link (K-3) has settled: with the link's target
     /// and the note that was opened or created for it, or nil when the target could not name a
-    /// note or the write failed. Not called for an embed, which is not a note (K-1).
+    /// note or the write failed. Not called for an embed, which is not a note (K-1); that is
+    /// `onOpenFile`.
     public var onOpenLink: (@MainActor (LinkTarget, NoteID?) -> Void)?
+
+    /// Called on the main thread once opening an embed (I-2) has settled: with the embed's
+    /// target and the file that was opened, or nil when no file has that name or it could not
+    /// be opened.
+    public var onOpenFile: (@MainActor (LinkTarget, URL?) -> Void)?
+
+    /// Opens a file that is not a note with its default application (I-2). `NSWorkspace.open`;
+    /// tests replace it to see what would have been opened without launching anything.
+    public var openFile: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
+
+    /// Called on the main thread once an image paste or drop (I-1) has settled: with the name
+    /// of the file written under `i/`, which the editor has embedded, or the error that kept it
+    /// from being written.
+    public var onInsertImage: (@MainActor (Result<String, any Error>) -> Void)?
 
     /// Called on the main thread once a deletion begun by `deleteSelectedNote()` has settled:
     /// with the note and where it went in the Trash, or the error that kept it in place.
@@ -145,6 +166,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.textView.onCommandReturn = { [weak self] in self?.openLinkAtCaret() ?? false }
         // T-4: a plain click on a tag in the editor searches for it.
         view.textView.onClick = { [weak self] index in self?.searchTag(at: index) ?? false }
+        // I-1: an image pasted into or dropped on the editor is stored and embedded.
+        view.textView.onInsertImage = { [weak self] source in self?.insertImage(source) ?? false }
         // K-6: a click on a title in the backlinks strip opens that note.
         view.backlinksStrip.onOpen = { [weak self] id in self?.openBacklink(id) }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
@@ -351,13 +374,18 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// shows the reason under the search field and creates nothing. Opening selects the note in
     /// the list if the query lists it, or loads it into the editor directly if not, and focuses
     /// the editor; unsaved edits to the note being left are written first (E-4). Creation is
-    /// asynchronous and the note is opened once the snapshot lists it. Returns false, doing
-    /// nothing, for an embed, which links to a file that is not a note (K-1, I-2), or when no
-    /// library is attached; `onOpenLink` reports the outcome otherwise.
+    /// asynchronous and the note is opened once the snapshot lists it. An embed links to a file
+    /// that is not a note (K-1): it is opened with its default application instead (I-2, see
+    /// `openEmbeddedFile`). Returns false, doing nothing, when no library is attached;
+    /// `onOpenLink` (or `onOpenFile` for an embed) reports the outcome otherwise.
     @discardableResult
     public func openLink(_ target: LinkTarget) -> Bool {
-        guard !target.isEmbed, let library else { return false }
+        guard let library else { return false }
         hideInlineMessage()
+        if target.isEmbed {
+            openEmbeddedFile(target, in: library)
+            return true
+        }
         if let existing = library.snapshot.links.resolve(target).target {
             open(existing)
             onOpenLink?(target, existing)
@@ -383,6 +411,66 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
                 showInlineMessage(error.localizedDescription)
                 onOpenLink?(target, nil)
             }
+        }
+        return true
+    }
+
+    /// Opens the file the embed `target` names with its default application (I-2). The file is
+    /// looked for off the main thread, under `i/` first and then relative to the root
+    /// (`ImageStore.url(forEmbed:)`); with none found, or one the system will not open, the
+    /// reason is shown under the search field as C-3 shows one, and nothing is created: an embed
+    /// never names a note (K-1). `onOpenFile` reports the outcome.
+    private func openEmbeddedFile(_ target: LinkTarget, in library: LibraryController) {
+        library.locateEmbed(target.text) { [weak self] url in
+            guard let self else { return }
+            guard let url else {
+                showInlineMessage(
+                    "No file called \u{201C}\(target.text)\u{201D} in \(ImageStore.folderName)/ or the library.")
+                onOpenFile?(target, nil)
+                return
+            }
+            if openFile(url) {
+                onOpenFile?(target, url)
+            } else {
+                FileHandle.standardError.write(
+                    Data("MDNotes: could not open \(url.path) for ![[\(target.text)]]\n".utf8))
+                showInlineMessage("\u{201C}\(target.text)\u{201D} could not be opened.")
+                onOpenFile?(target, nil)
+            }
+        }
+    }
+
+    // MARK: - Images (I-1)
+
+    /// An image pasted into or dropped on the editor (I-1). Returns false, doing nothing, when
+    /// no library is attached or the editor shows no writable note, so the paste or drop stays
+    /// the text view's. Otherwise the library writes the image under `i/` off the main thread
+    /// and, when the file is there, `![[<name>]]` is inserted at the caret of the note that was
+    /// shown when the image arrived; if another note has been opened since, the file is kept
+    /// and the miss is logged, so nothing is inserted into the wrong note. A write that fails
+    /// shows the reason under the search field and inserts nothing. `onInsertImage` reports
+    /// the outcome.
+    @discardableResult
+    public func insertImage(_ source: ImageSource) -> Bool {
+        guard let library, let id = editorController.noteID, editorController.body?.isWritable == true else {
+            return false
+        }
+        hideInlineMessage()
+        library.storeImage(source) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .success(let name):
+                if editorController.noteID == id {
+                    editorController.insertEmbed(of: name)
+                } else {
+                    FileHandle.standardError.write(
+                        Data("MDNotes: saved \(ImageStore.folderName)/\(name) but \(id) is no longer open\n".utf8))
+                }
+            case .failure(let error):
+                FileHandle.standardError.write(Data("MDNotes: could not store the image: \(error)\n".utf8))
+                showInlineMessage("The image could not be saved: \(error.localizedDescription)")
+            }
+            onInsertImage?(outcome)
         }
         return true
     }
