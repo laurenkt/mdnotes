@@ -1,33 +1,86 @@
 import AppKit
 import MDNotesCore
 
-/// The `[[` completion popover (K-4): a list of titles under the caret, filtered by the text
-/// typed since the brackets, from which Enter inserts a title and the closing `]]`.
+/// What a completion popover completes: the trigger that opens a session, the text it filters
+/// on, the candidates that text lists and what accepting one inserts. `CompletionController`
+/// is the popover; these rules make it the `[[` completion (K-4) or the `#` completion (T-3).
+/// The functions are the Core's `LinkCompletion` and `TagCompletion`, wrapped so the popover
+/// can hold either.
+public protocol CompletionRules: Sendable {
+    /// The UTF-16 length of the trigger just before a session's anchor: `[[` is 2, `#` is 1.
+    var triggerLength: Int { get }
+    /// The index just after the trigger when `caret` sits right after one, else nil.
+    func anchor(in text: NSString, caret: NSRange) -> Int?
+    /// The text typed since the trigger of a session anchored at `anchor`, or nil when the
+    /// session is over.
+    func filterText(in text: NSString, anchor: Int, caret: NSRange) -> String?
+    /// The candidates `text` lists from `index`, in row order.
+    func candidates(matching text: String, in index: SearchIndex) -> [String]
+    /// What accepting `candidate` inserts in place of the text typed since the trigger.
+    func insertion(for candidate: String) -> String
+}
+
+/// The `[[` completion (K-4): titles matched with the S-2 rules on the text typed since the
+/// brackets, most recently modified first; Enter inserts the title and the closing `]]`.
+public struct LinkCompletionRules: CompletionRules {
+    public init() {}
+    public var triggerLength: Int { 2 }
+    public func anchor(in text: NSString, caret: NSRange) -> Int? { LinkCompletion.anchor(in: text, caret: caret) }
+    public func filterText(in text: NSString, anchor: Int, caret: NSRange) -> String? {
+        LinkCompletion.filterText(in: text, anchor: anchor, caret: caret)
+    }
+    public func candidates(matching text: String, in index: SearchIndex) -> [String] {
+        LinkCompletion.titles(matching: text, in: index)
+    }
+    public func insertion(for candidate: String) -> String { LinkCompletion.insertion(for: candidate) }
+}
+
+/// The `#` completion (T-3): the known tags whose names begin with the text typed since the
+/// `#`, ignoring case, in the spelling the library uses; Enter inserts the name.
+public struct TagCompletionRules: CompletionRules {
+    public init() {}
+    public var triggerLength: Int { 1 }
+    public func anchor(in text: NSString, caret: NSRange) -> Int? { TagCompletion.anchor(in: text, caret: caret) }
+    public func filterText(in text: NSString, anchor: Int, caret: NSRange) -> String? {
+        TagCompletion.filterText(in: text, anchor: anchor, caret: caret)
+    }
+    public func candidates(matching text: String, in index: SearchIndex) -> [String] {
+        TagCompletion.tags(withPrefix: text, in: index.tags)
+    }
+    public func insertion(for candidate: String) -> String { TagCompletion.insertion(for: candidate) }
+}
+
+/// A completion popover in the editor: a list of candidates under the caret, filtered by the
+/// text typed since a trigger, from which Enter inserts one. With `LinkCompletionRules` it is
+/// the `[[` completion of titles (K-4); with `TagCompletionRules` the `#` completion of known
+/// tags (T-3). Everything below is written for either; the rules decide what counts as the
+/// trigger, the filter, the candidates and the insertion.
 ///
-/// A session opens when the text changes and the caret sits right after a `[[`
-/// (`LinkCompletion.anchor`). While it lasts, every change to the text or the caret re-reads
-/// the text typed since the brackets (`LinkCompletion.filterText`) and lists the titles the
-/// S-2 rules match on it (`LinkCompletion.titles`), most recently modified first, in a panel
-/// hung under the caret as a child window of the editor's window. The list is showing only
-/// while there is something to list: with no match it is hidden and the keys are the editor's
-/// again, but the session stays open, so deleting back to a match brings it back.
+/// A session opens when the text changes and the caret sits right after a trigger
+/// (`rules.anchor`). While it lasts, every change to the text or the caret re-reads the text
+/// typed since the trigger (`rules.filterText`) and lists the candidates for it
+/// (`rules.candidates`) in a panel hung under the caret as a child window of the editor's
+/// window. The list is showing only while there is something to list: with no match it is
+/// hidden and the keys are the editor's again, but the session stays open, so deleting back
+/// to a match brings it back.
 ///
 /// The session and the list are current the moment the text changes; the panel's window
 /// catches up with them once the current event has been handled (`setNeedsPanelUpdate`), so
 /// the typed character is drawn before the panel is moved (PF-3) and Enter typed before the
-/// panel has caught up still inserts the title the list holds.
+/// panel has caught up still inserts the candidate the list holds.
 ///
-/// The session ends, and the panel with it, when the caret leaves the brackets, the brackets
-/// go, a `]` or a line break is typed, Escape is pressed, a title is inserted, the editor's
-/// text is replaced or it loses focus (`dismiss()`), or the popover is dismissed by whoever
-/// owns it. The editor keeps focus throughout: the panel never becomes key, and the keys the
-/// popover takes (Return and Enter, Escape, Up and Down) reach it through the text view
-/// delegate's `doCommandBy`, from `handle(_:)`.
+/// The session ends, and the panel with it, when the rules say the filter text is gone (the
+/// caret left the trigger's range, the trigger was deleted, a character that ends the token
+/// was typed), Escape is pressed, a candidate is inserted, the editor's text is replaced or
+/// it loses focus (`dismiss()`), or the popover is dismissed by whoever owns it. The editor
+/// keeps focus throughout: the panel never becomes key, and the keys the popover takes
+/// (Return and Enter, Escape, Up and Down) reach it through the text view delegate's
+/// `doCommandBy`, from `handle(_:)`.
 ///
 /// Inserting goes through `insertText(_:replacementRange:)`, the path a keystroke takes, so
 /// the completion is styled (E-2), undoable as one step (E-7) and autosaved (E-4) like typing.
 @MainActor
-public final class LinkCompletionController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+public final class CompletionController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     /// Every row is this tall.
     nonisolated public static let rowHeight: CGFloat = 22
     /// The panel shows at most this many rows before scrolling.
@@ -38,21 +91,24 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
 
     public let textView: NSTextView
 
-    /// The snapshot whose titles are listed. Installed by the owner; an empty index lists
-    /// nothing.
+    /// What this popover completes.
+    public let rules: any CompletionRules
+
+    /// The snapshot whose titles or tags are listed. Installed by the owner; an empty index
+    /// lists nothing.
     public var index: @MainActor () -> SearchIndex = { .empty }
 
-    /// The index just after the `[[` of the open session, or nil while there is none.
+    /// The index just after the trigger of the open session, or nil while there is none.
     public private(set) var anchor: Int?
 
     /// True while a session is open, whether or not the panel is showing.
     public var isActive: Bool { anchor != nil }
 
-    /// The titles listed, in row order; empty while the panel is hidden.
-    public private(set) var titles: [String] = []
+    /// The candidates listed, in row order; empty while the panel is hidden.
+    public private(set) var items: [String] = []
 
-    /// True while the list is showing: `titles` is what the popover lists, the keys are its
-    /// (`handle(_:)`), and the panel is up under the caret with the titles in it, or goes up on
+    /// True while the list is showing: `items` is what the popover lists, the keys are its
+    /// (`handle(_:)`), and the panel is up under the caret with the candidates in it, or goes up on
     /// the next turn of the run loop (`isPanelAttached`).
     public private(set) var isShowing = false
 
@@ -61,26 +117,27 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
     public private(set) var isPanelAttached = false
     private var isPanelUpdateScheduled = false
 
-    /// The title Enter would insert, or nil while nothing is showing.
-    public var selectedTitle: String? {
+    /// The candidate Enter would insert, or nil while nothing is showing.
+    public var selectedItem: String? {
         let row = tableView.selectedRow
-        guard isShowing, row >= 0, row < titles.count else { return nil }
-        return titles[row]
+        guard isShowing, row >= 0, row < items.count else { return nil }
+        return items[row]
     }
 
-    /// Called on the main thread once a title has been inserted, with the title and the range
-    /// of the text it now occupies, brackets included.
+    /// Called on the main thread once a candidate has been inserted, with the candidate and
+    /// the range of the text it now occupies, trigger included: the whole `[[link]]` or `#tag`.
     public var onInsert: (@MainActor (String, NSRange) -> Void)?
 
     public let tableView: NSTableView
     private let panel: NSPanel
     private let scrollView: NSScrollView
-    /// True while a title is being inserted, so the edit's own notifications do not reopen or
-    /// re-filter the session that is ending.
+    /// True while a candidate is being inserted, so the edit's own notifications do not reopen
+    /// or re-filter the session that is ending.
     private var isInserting = false
 
-    public init(textView: NSTextView) {
+    public init(textView: NSTextView, rules: any CompletionRules) {
         self.textView = textView
+        self.rules = rules
         tableView = CompletionTableView()
         scrollView = NSScrollView()
         panel = NSPanel(
@@ -90,44 +147,42 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
         configurePanel()
     }
 
-    // MARK: - Session (K-4)
+    // MARK: - Session (K-4, T-3)
 
-    /// The text changed under the caret. Opens a session when the caret now sits right after a
-    /// `[[`, and otherwise re-filters or ends the one that is open.
+    /// The text changed under the caret. Opens a session when the caret now sits right after
+    /// the trigger, and otherwise re-filters or ends the one that is open.
     public func textDidChange() {
         guard !isInserting else { return }
         if anchor == nil {
             guard let storage = textView.textStorage else { return }
-            anchor = LinkCompletion.anchor(in: storage.mutableString, caret: textView.selectedRange())
+            anchor = rules.anchor(in: storage.mutableString, caret: textView.selectedRange())
         }
         refresh()
     }
 
     /// The caret moved without the text changing: a click, an arrow key, undo. Re-filters or
-    /// ends the open session; never opens one (K-4: typing `[[` opens it).
+    /// ends the open session; never opens one (K-4, T-3: typing the trigger opens it).
     public func selectionDidChange() {
         guard !isInserting, anchor != nil else { return }
         refresh()
     }
 
-    /// Re-reads the text since the brackets and lists the titles for it. A no-op while no
+    /// Re-reads the text since the trigger and lists the candidates for it. A no-op while no
     /// session is open. Called by the owner when the snapshot changes, so the list keeps up
-    /// with notes created or renamed while it is showing.
+    /// with notes created, renamed or tagged while it is showing.
     public func refresh() {
         guard let anchor, let storage = textView.textStorage else { return }
-        guard
-            let typed = LinkCompletion.filterText(
-                in: storage.mutableString, anchor: anchor, caret: textView.selectedRange())
+        guard let typed = rules.filterText(in: storage.mutableString, anchor: anchor, caret: textView.selectedRange())
         else {
             dismiss()
             return
         }
-        let matches = LinkCompletion.titles(matching: typed, in: index())
+        let matches = rules.candidates(matching: typed, in: index())
         if matches.isEmpty {
             hidePanel()
             return
         }
-        titles = matches
+        items = matches
         isShowing = true
         tableView.reloadData()
         tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -141,21 +196,22 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
         hidePanel()
     }
 
-    /// Inserts the selected title (K-4): the text typed since the brackets is replaced by the
-    /// title and the closing `]]`, and the caret is left after them. Returns false, doing
-    /// nothing, while nothing is showing.
+    /// Inserts the selected candidate (K-4, T-3): the text typed since the trigger is replaced
+    /// by what the rules insert for it (the title and the closing `]]`, or the tag's name), and
+    /// the caret is left after it. Returns false, doing nothing, while nothing is showing.
     @discardableResult
     public func acceptSelection() -> Bool {
-        guard let anchor, let title = selectedTitle else { return false }
+        guard let anchor, let item = selectedItem else { return false }
         let caret = textView.selectedRange().location
         let typed = NSRange(location: anchor, length: max(0, caret - anchor))
         isInserting = true
         dismiss()
-        let insertion = LinkCompletion.insertion(for: title)
+        let insertion = rules.insertion(for: item)
         textView.insertText(insertion, replacementRange: typed)
         isInserting = false
-        let link = NSRange(location: anchor - 2, length: 2 + (insertion as NSString).length)
-        onInsert?(title, link)
+        let trigger = rules.triggerLength
+        let token = NSRange(location: anchor - trigger, length: trigger + (insertion as NSString).length)
+        onInsert?(item, token)
         return true
     }
 
@@ -170,14 +226,14 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
     }
 
     private func select(row: Int) {
-        guard isShowing, !titles.isEmpty else { return }
-        let clamped = min(max(row, 0), titles.count - 1)
+        guard isShowing, !items.isEmpty else { return }
+        let clamped = min(max(row, 0), items.count - 1)
         tableView.selectRowIndexes(IndexSet(integer: clamped), byExtendingSelection: false)
         tableView.scrollRowToVisible(clamped)
     }
 
-    /// The command selectors the popover takes while it is showing (K-4): Return and Enter
-    /// insert the selected title, Escape dismisses, Up and Down move the selection. Returns
+    /// The command selectors the popover takes while it is showing (K-4, T-3): Return and Enter
+    /// insert the selected candidate, Escape dismisses, Up and Down move the selection. Returns
     /// true when the key was taken; false leaves it to the text view. With a session open but
     /// nothing showing, Escape ends the session and is still left to the text view.
     public func handle(_ commandSelector: Selector) -> Bool {
@@ -255,7 +311,7 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
         panel.contentView = background
     }
 
-    /// Brings the panel's window into line with `isShowing` and `titles` once the current
+    /// Brings the panel's window into line with `isShowing` and `items` once the current
     /// event has been handled, not now. Ordering a child window in or out and resizing it are
     /// round trips to the window server, several milliseconds each, and this is called from
     /// the text view's change notifications, inside the keystroke: done there, they would
@@ -270,7 +326,7 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
         }
     }
 
-    /// Puts the panel up under the caret's line at the session's anchor, sized to the titles,
+    /// Puts the panel up under the caret's line at the session's anchor, sized to the list,
     /// as a child window of the editor's window so it follows and stays above it; or takes it
     /// down when nothing is showing. Runs on its own a turn of the run loop after the state
     /// changed; calling it flushes that now. A window that is not on screen shows nothing,
@@ -281,7 +337,7 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
             detachPanel()
             return
         }
-        let rows = min(titles.count, Self.maximumVisibleRows)
+        let rows = min(items.count, Self.maximumVisibleRows)
         let height = CGFloat(rows) * Self.rowHeight + 2 * Self.panelPadding
         let frame = frame(forHeight: height, under: anchor, in: window)
         if frame != panel.frame { panel.setFrame(frame, display: false) }
@@ -299,7 +355,7 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
         panel.orderOut(nil)
     }
 
-    /// The panel's frame: its top-left at the bottom-left of the character after the brackets,
+    /// The panel's frame: its top-left at the bottom-left of the character after the trigger,
     /// moved above the line when there is no room below on the window's screen, and kept
     /// within the screen horizontally.
     private func frame(forHeight height: CGFloat, under anchor: Int, in window: NSWindow) -> NSRect {
@@ -318,17 +374,17 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
     }
 
     private func hidePanel() {
-        titles = []
+        items = []
         guard isShowing else { return }
         isShowing = false
         tableView.reloadData()
         setNeedsPanelUpdate()
     }
 
-    /// A click on a row inserts that title, as Enter would.
+    /// A click on a row inserts that candidate, as Enter would.
     @objc private func rowWasClicked(_ sender: Any?) {
         let row = tableView.clickedRow
-        guard row >= 0, row < titles.count else { return }
+        guard row >= 0, row < items.count else { return }
         tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         acceptSelection()
     }
@@ -336,11 +392,11 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
     // MARK: - NSTableViewDataSource, NSTableViewDelegate
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        titles.count
+        items.count
     }
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row >= 0, row < titles.count else { return nil }
+        guard row >= 0, row < items.count else { return nil }
         let identifier = NSUserInterfaceItemIdentifier("CompletionRow")
         let cell: NSTableCellView
         if let reused = tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView {
@@ -348,12 +404,12 @@ public final class LinkCompletionController: NSObject, NSTableViewDataSource, NS
         } else {
             cell = Self.makeCell(identifier: identifier)
         }
-        cell.textField?.stringValue = titles[row]
+        cell.textField?.stringValue = items[row]
         return cell
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        row >= 0 && row < titles.count
+        row >= 0 && row < items.count
     }
 
     private static func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {

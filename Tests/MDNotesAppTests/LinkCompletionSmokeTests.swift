@@ -177,8 +177,8 @@ final class LinkCompletionSmokeTests: XCTestCase {
         XCTAssertTrue(completion.isActive)
         XCTAssertTrue(completion.isShowing)
         XCTAssertEqual(completion.anchor, 2)
-        XCTAssertEqual(completion.titles, allTitles, "every title once, most recently modified first (S-3)")
-        XCTAssertEqual(completion.selectedTitle, "zeta", "the first row starts selected")
+        XCTAssertEqual(completion.items, allTitles, "every title once, most recently modified first (S-3)")
+        XCTAssertEqual(completion.selectedItem, "zeta", "the first row starts selected")
         XCTAssertEqual(completion.tableView.numberOfRows, 4)
         XCTAssertEqual(textView.string, "[[" + Self.alphaBody, "the brackets are typed as usual")
         XCTAssertIdentical(window.firstResponder, textView, "the editor keeps focus")
@@ -196,11 +196,11 @@ final class LinkCompletionSmokeTests: XCTestCase {
         let completion = controller.editorController.linkCompletion
 
         try type("[[ET", in: window)
-        XCTAssertEqual(completion.titles, ["zeta", "Beta"], "a case-insensitive substring of the title")
+        XCTAssertEqual(completion.items, ["zeta", "Beta"], "a case-insensitive substring of the title")
         try type(" a", in: window)
-        XCTAssertEqual(completion.titles, ["zeta", "Beta"], "every word, in any order")
+        XCTAssertEqual(completion.items, ["zeta", "Beta"], "every word, in any order")
         try type("l", in: window)
-        XCTAssertEqual(completion.titles, [], "no title holds al and et")
+        XCTAssertEqual(completion.items, [], "no title holds al and et")
         XCTAssertFalse(completion.isShowing, "nothing to list, so nothing is shown")
         XCTAssertTrue(completion.isActive, "but the session is still open")
 
@@ -208,12 +208,12 @@ final class LinkCompletionSmokeTests: XCTestCase {
         try press(.delete, in: window)
         try press(.delete, in: window)
         XCTAssertEqual(controller.mainView.textView.string, "[[ET" + Self.alphaBody)
-        XCTAssertEqual(completion.titles, ["zeta", "Beta"], "deleting back to a match shows the list again")
+        XCTAssertEqual(completion.items, ["zeta", "Beta"], "deleting back to a match shows the list again")
         XCTAssertTrue(completion.isShowing)
 
         try press(.delete, in: window)
         try press(.delete, in: window)
-        XCTAssertEqual(completion.titles, allTitles, "an empty filter lists everything")
+        XCTAssertEqual(completion.items, allTitles, "an empty filter lists everything")
         XCTAssertEqual(
             LinkCompletion.titles(matching: "body", in: try XCTUnwrap(controller.library).snapshot), [],
             "a word found only in bodies matches no title")
@@ -229,7 +229,7 @@ final class LinkCompletionSmokeTests: XCTestCase {
         completion.onInsert = { inserted = ($0, $1) }
 
         try type("[[be", in: window)
-        XCTAssertEqual(completion.titles, ["Beta"])
+        XCTAssertEqual(completion.items, ["Beta"])
         try press(.return, in: window)
 
         XCTAssertEqual(textView.string, "[[Beta]]" + Self.alphaBody, "the typed text became the title, closed")
@@ -269,20 +269,20 @@ final class LinkCompletionSmokeTests: XCTestCase {
         let textView = controller.mainView.textView
 
         try type("[[", in: window)
-        XCTAssertEqual(completion.selectedTitle, "zeta")
+        XCTAssertEqual(completion.selectedItem, "zeta")
         try press(.down, in: window)
-        XCTAssertEqual(completion.selectedTitle, "Gamma")
+        XCTAssertEqual(completion.selectedItem, "Gamma")
         try press(.down, in: window)
-        XCTAssertEqual(completion.selectedTitle, "Beta")
+        XCTAssertEqual(completion.selectedItem, "Beta")
         try press(.up, in: window)
-        XCTAssertEqual(completion.selectedTitle, "Gamma")
+        XCTAssertEqual(completion.selectedItem, "Gamma")
         XCTAssertEqual(textView.selectedRange(), NSRange(location: 2, length: 0), "the caret did not move")
         XCTAssertEqual(textView.string, "[[" + Self.alphaBody)
 
         for _ in 0..<5 { try press(.down, in: window) }
-        XCTAssertEqual(completion.selectedTitle, "Alpha", "the selection stops at the last row")
+        XCTAssertEqual(completion.selectedItem, "Alpha", "the selection stops at the last row")
         for _ in 0..<5 { try press(.up, in: window) }
-        XCTAssertEqual(completion.selectedTitle, "zeta", "and at the first")
+        XCTAssertEqual(completion.selectedItem, "zeta", "and at the first")
         try press(.down, in: window)
 
         try press(.return, in: window)
@@ -296,7 +296,7 @@ final class LinkCompletionSmokeTests: XCTestCase {
         textView.setSelectedRange(NSRange(location: 5, length: 0))  // after "alpha"
 
         try type(" see [[ze", in: window)
-        XCTAssertEqual(controller.editorController.linkCompletion.titles, ["zeta"])
+        XCTAssertEqual(controller.editorController.linkCompletion.items, ["zeta"])
         try press(.return, in: window)
         XCTAssertEqual(textView.string, "alpha see [[zeta]] body\n")
         XCTAssertEqual(textView.selectedRange(), NSRange(location: 18, length: 0))
@@ -433,14 +433,14 @@ final class LinkCompletionSmokeTests: XCTestCase {
         let library = try XCTUnwrap(controller.library)
 
         try type("[[del", in: window)
-        XCTAssertEqual(completion.titles, [])
+        XCTAssertEqual(completion.items, [])
         XCTAssertFalse(completion.isShowing)
         let created = NoteID(relativePath: "Delta.md")
         let settled = expectation(description: "Delta created")
         library.create(created) { _ in settled.fulfill() }
         await fulfillment(of: [settled], timeout: 10)
         XCTAssertNotNil(library.snapshot.entry(for: created))
-        XCTAssertEqual(completion.titles, ["Delta"], "the new note is listed without another keystroke")
+        XCTAssertEqual(completion.items, ["Delta"], "the new note is listed without another keystroke")
         XCTAssertTrue(completion.isShowing)
 
         try press(.return, in: window)

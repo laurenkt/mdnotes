@@ -45,8 +45,14 @@ import MDNotesCore
 /// snapshot's link index resolves it (K-2), and the note is opened as Enter in the search
 /// field opens one, or created first as Enter creates one (C-2, C-3) when nothing resolves.
 ///
-/// The `[[` completion popover (K-4) lives in the editor controller; this controller dismisses
-/// it when the window stops being key and refreshes its list when a snapshot arrives.
+/// The `[[` and `#` completion popovers (K-4, T-3) live in the editor controller; this
+/// controller dismisses them when the window stops being key and refreshes their lists when a
+/// snapshot arrives.
+///
+/// A plain click on a tag in the editor (T-4) is intercepted by `EditorTextView` and handed
+/// here: the search field is set to the tag, `#` included, and the list reloads for it as it
+/// would for typing (S-4, S-5). The click is consumed, so the caret stays where it was and
+/// focus stays in the editor; the note shown stays selected if the new query lists it.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -131,6 +137,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         // K-3: Cmd-click on a link in the editor, or Cmd-Enter with the caret in one.
         view.textView.onCommandClick = { [weak self] index in self?.openLink(at: index) ?? false }
         view.textView.onCommandReturn = { [weak self] in self?.openLinkAtCaret() ?? false }
+        // T-4: a plain click on a tag in the editor searches for it.
+        view.textView.onClick = { [weak self] index in self?.searchTag(at: index) ?? false }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
         // the name must be set after the content view exists so a restored frame lays it out.
         shouldCascadeWindows = false
@@ -345,6 +353,26 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         return true
     }
 
+    // MARK: - Tag search (T-4)
+
+    /// A plain click in the editor on the character at `index` (T-4). If the character is part
+    /// of a tag, the search field is set to that tag, `#` included, the list reloads for it
+    /// (S-5) and true is returned; the caret and focus are left alone. Returns false, doing
+    /// nothing, when the character is not in a tag, so the click places the caret as usual.
+    @discardableResult
+    public func searchTag(at index: Int) -> Bool {
+        guard let tag = editorController.tag(at: index) else { return false }
+        search(for: tag)
+        return true
+    }
+
+    /// Puts `text` in the search field and reloads the list for it, as typing it would (S-5).
+    /// Focus is left where it is.
+    public func search(for text: String) {
+        mainView.searchField.stringValue = text
+        searchQueryDidChange()
+    }
+
     // MARK: - Delete (D-1, D-2)
 
     /// Cmd-Delete, and the menu item. Moves the selected row's note to the Trash with no
@@ -435,10 +463,10 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     // MARK: - Autosave on focus loss (E-4)
 
     /// The window stopped being key: another window or app took over. Unsaved edits are
-    /// written now rather than 300 ms from the last keystroke, and a completion popover (K-4)
-    /// left up in the editor is dismissed.
+    /// written now rather than 300 ms from the last keystroke, and a completion popover (K-4,
+    /// T-3) left up in the editor is dismissed.
     @objc private func windowDidResignKey(_ notification: Notification) {
-        editorController.linkCompletion.dismiss()
+        editorController.dismissCompletions()
         editorController.flush()
     }
 
@@ -498,8 +526,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         }
         // A fresh snapshot is shown through the query the user has typed; it is never reset.
         reloadList()
-        // K-4: a completion list left showing lists the titles the new snapshot has.
-        editorController.linkCompletion.refresh()
+        // K-4, T-3: a completion list left showing lists the titles or tags the new snapshot has.
+        editorController.refreshCompletions()
     }
 
     /// Queries the current snapshot with `query` and hands the results to the list. The

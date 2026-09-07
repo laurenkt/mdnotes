@@ -48,6 +48,12 @@ public enum MarkdownScanner {
         }
     }
 
+    /// T-1: whether a UTF-16 unit is one of `[A-Za-z0-9_/-]`, the characters a tag's name is
+    /// made of. The `#` completion (T-3) uses it to see where the tag being typed ends.
+    public static func isTagCharacter(_ unit: UInt16) -> Bool {
+        U.isTagCharacter(unit)
+    }
+
     // MARK: Scanning
 
     /// Every token in `text`, in order of appearance.

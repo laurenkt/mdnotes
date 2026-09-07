@@ -87,7 +87,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `EditorPerfTests`: PF-3 keystroke-to-redraw on a 1 MB note.
 - [x] M4.4 Link opening K-3: Cmd-click and Cmd-Enter, create-if-missing. Smoke tests.
 - [x] M4.5 `[[` completion popover K-4. Smoke test drives typing and asserts inserted text.
-- [ ] M4.6 `#` completion popover T-3 and click-to-search T-4.
+- [x] M4.6 `#` completion popover T-3 and click-to-search T-4.
 - [ ] M4.7 Backlinks strip K-6 with collapse persistence.
 - [ ] M4.8 Rename rewrites links R-3. Test: three linking notes rewritten atomically, log line
       emitted, unrelated notes untouched byte-for-byte.

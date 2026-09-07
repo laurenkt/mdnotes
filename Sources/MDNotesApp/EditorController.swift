@@ -32,11 +32,17 @@ import MDNotesCore
 /// It is also the text view's delegate: Escape in the editor is handed to `onCancel` (S-7)
 /// instead of the text view's default, which offers completions.
 ///
-/// The `[[` completion popover (K-4) is `linkCompletion`. The delegate feeds it: every change
+/// The `[[` completion popover (K-4) is `linkCompletion` and the `#` completion popover (T-3)
+/// is `tagCompletion`, one `CompletionController` each. The delegate feeds both: every change
 /// to the text may open or re-filter a session, every caret move may re-filter or end one, and
-/// while its list is showing the command selectors it takes (Return, Escape, Up, Down) go to
-/// it before Escape can reach `onCancel`. Its titles come from the snapshot of the library the
-/// shown note belongs to. Replacing the editor's text or losing focus dismisses it.
+/// while a list is showing the command selectors it takes (Return, Escape, Up, Down) go to it
+/// before Escape can reach `onCancel`. Their titles and tags come from the snapshot of the
+/// library the shown note belongs to. Replacing the editor's text or losing focus dismisses
+/// them. The two triggers cannot both be open: a `#` right after `[[` is not where a tag
+/// begins, and a `[` is not a tag character.
+///
+/// A plain click on a tag (T-4) is intercepted by `EditorTextView` and handed to the window
+/// controller; `tag(at:)` is what names the tag under the pointer.
 @MainActor
 public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
     /// How long after the last edit the note is written (E-4).
@@ -48,7 +54,13 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     public let styler: EditorStyler
 
     /// K-4: the `[[` completion popover over this editor's text.
-    public let linkCompletion: LinkCompletionController
+    public let linkCompletion: CompletionController
+
+    /// T-3: the `#` completion popover over this editor's text.
+    public let tagCompletion: CompletionController
+
+    /// Both popovers, in the order they are offered a key.
+    private var completions: [CompletionController] { [linkCompletion, tagCompletion] }
 
     /// Called on Escape in the editor (S-7: clear the query and return to the search field).
     public var onCancel: (@MainActor () -> Void)?
@@ -108,31 +120,47 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         self.textView = textView
         self.clock = clock
         styler = EditorStyler(textView: textView, baseFont: textView.font ?? EditorFontPreference.font())
-        linkCompletion = LinkCompletionController(textView: textView)
+        linkCompletion = CompletionController(textView: textView, rules: LinkCompletionRules())
+        tagCompletion = CompletionController(textView: textView, rules: TagCompletionRules())
         scratchUndoManager = UndoManager()
         super.init()
         textView.isEditable = false
         textView.allowsUndo = true
         textView.delegate = self
         textView.textStorage?.delegate = self
-        // K-4: the popover lists the titles of the library the shown note belongs to.
-        linkCompletion.index = { [weak self] in self?.library?.snapshot ?? .empty }
+        // K-4, T-3: the popovers list the titles and tags of the library the shown note
+        // belongs to.
+        for completion in completions {
+            completion.index = { [weak self] in self?.library?.snapshot ?? .empty }
+        }
     }
 
     /// Replaces the whole text without it counting as an edit or registering with undo (E-7).
     private func replaceText(with text: String) {
         isReplacingText = true
         defer { isReplacingText = false }
-        // K-4: the brackets a session was anchored to are going with the text.
-        linkCompletion.dismiss()
+        // K-4, T-3: the trigger a session was anchored to is going with the text.
+        dismissCompletions()
         textView.string = text
+    }
+
+    /// Ends any completion session (K-4, T-3): the popovers are taken down and the text is
+    /// left as typed.
+    public func dismissCompletions() {
+        for completion in completions { completion.dismiss() }
+    }
+
+    /// Re-lists what the open completion sessions show (K-4, T-3). Called when the snapshot
+    /// changes, so a list left showing keeps up with notes created, renamed or tagged.
+    public func refreshCompletions() {
+        for completion in completions { completion.refresh() }
     }
 
     // MARK: - NSTextViewDelegate
 
     public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        // K-4: while the completion list is showing, its keys are the popover's.
-        if linkCompletion.handle(commandSelector) { return true }
+        // K-4, T-3: while a completion list is showing, its keys are the popover's.
+        for completion in completions where completion.handle(commandSelector) { return true }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)), let onCancel {
             onCancel()
             return true
@@ -140,21 +168,21 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         return false
     }
 
-    /// K-4: the text changed under the caret, by typing, paste or a completion. Opens the
-    /// completion when `[[` was just typed, and re-filters or ends an open session.
+    /// K-4, T-3: the text changed under the caret, by typing, paste or a completion. Opens a
+    /// completion when `[[` or `#` was just typed, and re-filters or ends an open session.
     public func textDidChange(_ notification: Notification) {
-        linkCompletion.textDidChange()
+        for completion in completions { completion.textDidChange() }
     }
 
-    /// K-4: the caret moved. An open completion session re-filters, or ends if the caret left
-    /// the brackets.
+    /// K-4, T-3: the caret moved. An open completion session re-filters, or ends if the caret
+    /// left the trigger.
     public func textViewDidChangeSelection(_ notification: Notification) {
-        linkCompletion.selectionDidChange()
+        for completion in completions { completion.selectionDidChange() }
     }
 
-    /// K-4: the editor lost focus, so the completion is dismissed.
+    /// K-4, T-3: the editor lost focus, so the completions are dismissed.
     public func textDidEndEditing(_ notification: Notification) {
-        linkCompletion.dismiss()
+        dismissCompletions()
     }
 
     /// E-7: the text view registers its edits with the shown note's own manager, so Cmd-Z and
@@ -242,6 +270,33 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
             if token.range.location > index { break }
             guard index <= token.range.location + token.range.length else { continue }
             return LinkTarget(text: storage.mutableString.substring(with: target), isEmbed: isEmbed)
+        }
+        return nil
+    }
+
+    // MARK: - Tags (T-4)
+
+    /// The tag whose text, `#` included, contains the character at `index`, as `#name`; nil
+    /// when the character is not part of a tag. Unlike `linkTarget(at:)` this takes the index
+    /// of a character, not an insertion index, because a click on a tag lands on one of its
+    /// characters (`EditorTextView.characterIndex(under:)`); the space after a tag is not the
+    /// tag. A `#word` inside a code span or fenced block is not a tag (T-1), so the paragraphs
+    /// around the index are scanned as the styler scans them, with fenced blocks covered whole.
+    public func tag(at index: Int) -> String? {
+        guard let storage = textView.textStorage, let range = tagRange(at: index) else { return nil }
+        return storage.mutableString.substring(with: range)
+    }
+
+    /// The range of the tag containing the character at `index`, `#` included, or nil.
+    public func tagRange(at index: Int) -> NSRange? {
+        guard let storage = textView.textStorage, index >= 0, index < storage.length else { return nil }
+        let units = EditorStyler.units(of: storage)
+        let paragraphs = MarkdownScanner.paragraphRange(in: units, editedRange: NSRange(location: index, length: 0))
+        for token in MarkdownScanner.scan(units, in: paragraphs) {
+            guard case .tag = token.kind else { continue }
+            if token.range.location > index { break }
+            guard index < token.range.location + token.range.length else { continue }
+            return token.range
         }
         return nil
     }
