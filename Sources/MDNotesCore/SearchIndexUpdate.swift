@@ -47,16 +47,20 @@ extension SearchIndex {
 
     /// The same update with note contents supplied by `contents` instead of disk. It is asked
     /// once per added or modified id and answers the note's current modification date and body,
-    /// or nil for a note that no longer exists, which is then dropped.
+    /// or nil for a note that no longer exists, which is then dropped. With `images`, each
+    /// body's first embedded image is resolved against the library (S-11), which stats files:
+    /// call it off the main thread then (PF-6).
     public func applying(
-        changes: LibraryChanges, contents: (NoteID) -> (modifiedAt: Date, body: String)?
+        changes: LibraryChanges, images: ImageStore? = nil,
+        contents: (NoteID) -> (modifiedAt: Date, body: String)?
     ) -> SearchIndex {
         if changes.isEmpty { return self }
         var upserts: [(id: NoteID, note: FoldedNote)] = []
         var gone = changes.dropped
         for id in changes.reread {
             if let current = contents(id) {
-                upserts.append((id, FoldedNote(id: id, modifiedAt: current.modifiedAt, body: current.body)))
+                upserts.append(
+                    (id, FoldedNote(id: id, modifiedAt: current.modifiedAt, body: current.body, images: images)))
             } else {
                 gone.insert(id)
             }

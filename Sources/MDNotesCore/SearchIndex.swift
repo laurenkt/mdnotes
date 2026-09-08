@@ -29,6 +29,11 @@ public struct SearchIndex: Sendable {
     public struct Entry: Hashable, Sendable {
         public let id: NoteID
         public let modifiedAt: Date
+        /// The root-relative path of the first image the body embeds that exists on disk
+        /// (S-11), resolved when the body was indexed (`ImageStore.firstImage(in:)`); nil for
+        /// a note without one, or one whose body has not been read yet. A row shows a thumbnail
+        /// of this file.
+        public let firstImagePath: String?
         let titleRange: Range<Int>
         let pathRange: Range<Int>
         let bodyRange: Range<Int>
@@ -52,7 +57,8 @@ public struct SearchIndex: Sendable {
         public var preview: String { String(decoding: arena.bytes[previewRange], as: UTF8.self) }
 
         public static func == (lhs: Entry, rhs: Entry) -> Bool {
-            lhs.id == rhs.id && lhs.modifiedAt == rhs.modifiedAt && lhs.title == rhs.title && lhs.body == rhs.body
+            lhs.id == rhs.id && lhs.modifiedAt == rhs.modifiedAt && lhs.firstImagePath == rhs.firstImagePath
+                && lhs.title == rhs.title && lhs.body == rhs.body
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -84,8 +90,13 @@ public struct SearchIndex: Sendable {
         let body: [UInt8]
         let preview: [UInt8]
         let references: NoteReferences
+        /// The first embedded image that exists on disk, root-relative (S-11); nil when there
+        /// is none or no `ImageStore` was given to resolve against.
+        let firstImage: String?
 
-        init(id: NoteID, modifiedAt: Date, body: String) {
+        /// Folds `body`. With `images`, the body's embeds are resolved to the first existing
+        /// image file (S-11), which stats files: fold off the main thread then (PF-6).
+        init(id: NoteID, modifiedAt: Date, body: String, images: ImageStore? = nil) {
             self.modifiedAt = modifiedAt
             title = Array(CaseFolding.fold(id.title).utf8)
             path =
@@ -94,6 +105,7 @@ public struct SearchIndex: Sendable {
             self.body = Array(CaseFolding.fold(body).utf8)
             preview = Array(BodySnippet.make(from: body).utf8)
             references = NoteReferences(scanning: body)
+            firstImage = images?.firstImage(in: references.links)
         }
     }
 
@@ -107,9 +119,10 @@ public struct SearchIndex: Sendable {
         public var count: Int { notes.count }
 
         /// Adds or replaces a note. The title is taken from `id` (L-5); `body` is the file's text,
-        /// or empty for a note whose body cannot be read yet (L-7, L-8).
-        public mutating func add(id: NoteID, modifiedAt: Date, body: String = "") {
-            notes[id] = FoldedNote(id: id, modifiedAt: modifiedAt, body: body)
+        /// or empty for a note whose body cannot be read yet (L-7, L-8). With `images`, the
+        /// body's first existing embedded image is resolved and stored on the entry (S-11).
+        public mutating func add(id: NoteID, modifiedAt: Date, body: String = "", images: ImageStore? = nil) {
+            notes[id] = FoldedNote(id: id, modifiedAt: modifiedAt, body: body, images: images)
         }
 
         /// Adds notes that were folded elsewhere (for example on a worker thread).
@@ -165,6 +178,7 @@ public struct SearchIndex: Sendable {
     struct Item {
         let id: NoteID
         let modifiedAt: Date
+        let firstImage: String?
         let title: ArraySlice<UInt8>
         let path: ArraySlice<UInt8>
         let body: ArraySlice<UInt8>
@@ -173,6 +187,7 @@ public struct SearchIndex: Sendable {
         init(id: NoteID, note: FoldedNote) {
             self.id = id
             modifiedAt = note.modifiedAt
+            firstImage = note.firstImage
             title = note.title[...]
             path = note.path[...]
             body = note.body[...]
@@ -182,6 +197,7 @@ public struct SearchIndex: Sendable {
         init(entry: Entry) {
             id = entry.id
             modifiedAt = entry.modifiedAt
+            firstImage = entry.firstImagePath
             title = entry.arena.bytes[entry.titleRange]
             path = entry.arena.bytes[entry.pathRange]
             body = entry.arena.bytes[entry.bodyRange]
@@ -224,8 +240,8 @@ public struct SearchIndex: Sendable {
         let arena = items.isEmpty ? Arena.empty : Arena(bytes: bytes)
         entries = zip(items, ranges).map { item, range in
             Entry(
-                id: item.id, modifiedAt: item.modifiedAt, titleRange: range.title, pathRange: range.path,
-                bodyRange: range.body, previewRange: range.preview, arena: arena)
+                id: item.id, modifiedAt: item.modifiedAt, firstImagePath: item.firstImage, titleRange: range.title,
+                pathRange: range.path, bodyRange: range.body, previewRange: range.preview, arena: arena)
         }
         spans = ranges.map { range in
             Span(

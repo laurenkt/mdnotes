@@ -537,9 +537,9 @@ public final class LibraryController {
                         state.touchedSinceScan.insert(newID)
                         state.touchedSinceScan.formUnion(rewritten.keys)
                         state.index = state.index.applying(changes: changes, store: store)
-                        state.index = state.index.applying(changes: LibraryChanges(modified: Set(rewritten.keys))) {
-                            rewritten[$0]
-                        }
+                        state.index = state.index.applying(
+                            changes: LibraryChanges(modified: Set(rewritten.keys)), images: ImageStore(root: root)
+                        ) { rewritten[$0] }
                     }
                     publish(index, phase: phase, generation: generation)
                 }
@@ -605,9 +605,9 @@ public final class LibraryController {
             let (index, phase, generation) = worker.update { state in
                 guard state.phase != .idle else { return }
                 state.touchedSinceScan.insert(id)
-                state.index = state.index.applying(changes: LibraryChanges(modified: [id])) { _ in
-                    (modifiedAt: modifiedAt, body: text)
-                }
+                state.index = state.index.applying(
+                    changes: LibraryChanges(modified: [id]), images: ImageStore(root: root)
+                ) { _ in (modifiedAt: modifiedAt, body: text) }
             }
             if phase != .idle { publish(index, phase: phase, generation: generation) }
         }

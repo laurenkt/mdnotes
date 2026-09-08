@@ -45,10 +45,12 @@ extension SearchIndex {
         return applying(upserts: SearchIndex.fold(notes: notes, store: store), removing: [])
     }
 
-    /// Reads and folds the bodies of `notes` on all cores. Order of the result is unspecified.
-    /// A body that cannot be read folds to empty (L-7, L-8). Synchronous file I/O (PF-6).
+    /// Reads and folds the bodies of `notes` on all cores, resolving each body's first embedded
+    /// image against the store's root (S-11). Order of the result is unspecified. A body that
+    /// cannot be read folds to empty (L-7, L-8). Synchronous file I/O (PF-6).
     static func fold(notes: [ScannedNote], store: NoteStore) -> [(id: NoteID, note: FoldedNote)] {
         if notes.isEmpty { return [] }
+        let images = ImageStore(root: store.root)
         let chunkCount = max(1, min(64, notes.count / 128))
         let folded = Mutex<[(id: NoteID, note: FoldedNote)]>([])
         DispatchQueue.concurrentPerform(iterations: chunkCount) { chunk in
@@ -58,7 +60,8 @@ extension SearchIndex {
                 out.reserveCapacity(range.count)
                 for note in notes[range] {
                     let body = (try? store.read(note.id))?.indexedText ?? ""
-                    out.append((note.id, FoldedNote(id: note.id, modifiedAt: note.modifiedAt, body: body)))
+                    out.append(
+                        (note.id, FoldedNote(id: note.id, modifiedAt: note.modifiedAt, body: body, images: images)))
                 }
                 return out
             }

@@ -196,7 +196,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `CGImageSource` downsampling to a requested pixel size, LRU bounded at 50 MB, keyed by
       path and mtime, completion on main. Tests: hit, miss, eviction on size, invalidation on
       mtime change, never blocks the calling thread.
-- [ ] M8.2 First-image resolution: given a body, find the first `![[target]]` and resolve it
+- [x] M8.2 First-image resolution: given a body, find the first `![[target]]` and resolve it
       to an image file via the link resolver (K-1, S-11). Stored on the index snapshot as an
       optional path. Tests: none, one, first-of-several, unresolvable.
 - [ ] M8.3 Row thumbnails (S-11): 34 pt square at the row's right, drawn only when cached,

@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// The images pasted or dropped into the editor (I-1), and the files embeds name (I-2).
 ///
@@ -90,24 +91,47 @@ public struct ImageStore: Sendable {
     /// L-6). Only an existing regular file counts: a folder, or a name that would leave the
     /// root through an empty, `.` or `..` segment, is nil.
     public func url(forEmbed target: String) -> URL? {
+        relativePath(forEmbed: target).map { root.appendingPathComponent($0, isDirectory: false) }
+    }
+
+    /// The same lookup as `url(forEmbed:)`, answered as the file's `/`-separated path relative
+    /// to the root: `i/<name>` or `<name>` for a bare name, the text itself for a path. What the
+    /// search index stores for a note's first image (S-11), so a snapshot does not depend on
+    /// where the root is.
+    public func relativePath(forEmbed target: String) -> String? {
         let text = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         let segments = text.split(separator: "/", omittingEmptySubsequences: false)
         guard segments.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return nil }
-        let candidates: [URL]
-        if text.contains("/") {
-            candidates = [root.appendingPathComponent(text, isDirectory: false)]
-        } else {
-            candidates = [
-                folder.appendingPathComponent(text, isDirectory: false),
-                root.appendingPathComponent(text, isDirectory: false),
-            ]
-        }
-        return candidates.first(where: Self.isRegularFile)
+        let candidates = text.contains("/") ? [text] : ["\(Self.folderName)/\(text)", text]
+        return candidates.first { Self.isRegularFile(root.appendingPathComponent($0, isDirectory: false)) }
     }
 
     private static func isRegularFile(_ url: URL) -> Bool {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue
+    }
+
+    // MARK: - First image (S-11)
+
+    /// Whether a file named `path` is an image, decided by its extension the way I-1 decides
+    /// which dropped files are images: the extension's uniform type conforms to `public.image`.
+    /// Nothing is read; a file with no extension is not an image.
+    public static func isImageFile(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension
+        guard !ext.isEmpty else { return false }
+        return UTType(filenameExtension: ext)?.conforms(to: .image) == true
+    }
+
+    /// The root-relative path of the first embed in `links` that resolves to an existing image
+    /// file (S-11): the image a list row shows a thumbnail of. `links` are a body's references
+    /// in order of appearance, as `NoteReferences` lists them; plain wikilinks are skipped,
+    /// as is an embed that names nothing on disk or a file that is not an image (K-1, L-6).
+    /// Nil when no embed qualifies. Stats files: call it off the main thread (PF-6).
+    public func firstImage(in links: [LinkTarget]) -> String? {
+        for link in links where link.isEmbed {
+            if let path = relativePath(forEmbed: link.text), Self.isImageFile(path) { return path }
+        }
+        return nil
     }
 }

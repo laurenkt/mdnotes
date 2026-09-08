@@ -21,7 +21,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesCore/FSEventsWatcher.swift` — FSEvents stream over the root, reporting changes as note ids (X-1); a folder scan's report is not repeated by the note's own later event (X-2). `FSEventsWatcher.start/stop`, `Handler`, `WatchError`, `defaultLatency`.
 - `Sources/MDNotesCore/DownloadRequester.swift` — keeps a download request outstanding per evicted note, at most one per 60 s (L-9, ADR-0009). `DownloadRequester.requestDownloads`, `refreshOutstanding`, `Refresh`.
 - `Sources/MDNotesCore/MarkdownScanner.swift` — single left-to-right pass yielding headings, wikilinks, embeds, tags, code ranges. `MarkdownScanner.scan`, `Token`, `Kind`, `paragraphRange`.
-- `Sources/MDNotesCore/SearchIndex.swift` — immutable in-memory snapshot of all notes' searchable text (S-2/S-3/S-4, ADR-0003). `SearchIndex`, `.Entry`, `.Results`, `.Builder`, `query`, `queryTitles`.
+- `Sources/MDNotesCore/SearchIndex.swift` — immutable in-memory snapshot of all notes' searchable text (S-2/S-3/S-4, ADR-0003), each entry carrying its first embedded image's root-relative path (S-11). `SearchIndex`, `.Entry` (`firstImagePath`), `.Results`, `.Builder`, `query`, `queryTitles`.
 - `Sources/MDNotesCore/SearchIndexBuild.swift` — builds snapshots from scanned notes, titles-only first for fast launch. `SearchIndex.build`, `titlesOnly`, `applying(reading:store:)`.
 - `Sources/MDNotesCore/SearchIndexUpdate.swift` — applies watcher batches incrementally without a rescan (X-1). `LibraryChanges`, `SearchIndex.applying(changes:store:)`.
 - `Sources/MDNotesCore/NoteReferences.swift` — links and tags extracted from one body, feeding both indexes (K-1, T-1). `LinkTarget`, `NoteReferences(scanning:)`.
@@ -32,7 +32,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesCore/NoteCreation.swift` — query text to note to create, or a typed rejection (C-2/C-3). `NoteCreation.noteID(forQuery:)`, `Rejection`, `NoteStore.create`.
 - `Sources/MDNotesCore/NoteRename.swift` — edited title to renamed id or rejection, plus collision check (R-2). `NoteRename.noteID(renaming:toTitle:)`, `collision`, `NoteStore.rename`.
 - `Sources/MDNotesCore/LinkRewrite.swift` — pure plan for rewriting wikilinks after a rename (R-3). `LinkRewrite.plan`, `rewriting(_:replacing:)`, `Replacements`.
-- `Sources/MDNotesCore/ImageStore.swift` — where pasted/dropped images go under `i/` and which file an embed names (I-1, I-2). `ImageStore.write`, `url(forEmbed:)`, `fileName`, `Failure`.
+- `Sources/MDNotesCore/ImageStore.swift` — where pasted/dropped images go under `i/`, which file an embed names (I-1, I-2), and a body's first embed that resolves to an existing image file (S-11). `ImageStore.write`, `url(forEmbed:)`, `relativePath(forEmbed:)`, `firstImage(in:)`, `isImageFile`, `fileName`, `Failure`.
 
 ## Sources/MDNotesApp (AppKit layer: window, controllers, views; headlessly testable)
 
@@ -91,6 +91,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesCoreTests/NoteRenameTests.swift` — title to renamed id, rejections, and renames that never overwrite (R-2).
 - `Tests/MDNotesCoreTests/LinkRewriteTests.swift` — which links a rename must rewrite and how one body is rewritten (R-3).
 - `Tests/MDNotesCoreTests/ImageStoreTests.swift` — image file naming under `i/` and embed-to-file lookup (I-1, I-2).
+- `Tests/MDNotesCoreTests/FirstImageTests.swift` — first-image resolution: none, one, first of several, unresolvable, skipped code, image-by-extension; stored on the snapshot by build and by disk/memory updates (S-11, K-1).
 - `Tests/MDNotesCoreTests/SyntheticLibraryTests.swift` — the generator is deterministic and has the promised shape.
 - `Tests/MDNotesCoreTests/IndexPerfTests.swift` — core timing gates over the 20k-note library: full index, query (PF-2, PF-4).
 - `Tests/MDNotesCoreTests/IndexMemoryPerfTests.swift` — resident memory after one 20k index build; own class so it runs fresh (PF-5).
@@ -149,6 +150,6 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - Global hotkey: `Sources/MDNotesApp/GlobalHotKey.swift` (Carbon), value in `HotKey.swift`, recorded by `HotKeyRecorder.swift`, wired in `AppDelegate.setHotKey`.
 - Settings window: `Sources/MDNotesApp/PreferencesWindowController.swift`; backing defaults in `LibraryRootPreference.swift`, `EditorFontPreference.swift`, `HotKey.swift`.
 - Menus: `Sources/MDNotesApp/MainMenu.swift`; item enablement via `MainWindowController.validateMenuItem`; app-level items in `AppDelegate.swift`.
-- Images and embeds: `Sources/MDNotesApp/ImagePasteboard.swift` (decode off-main), `LibraryController.storeImage`, `Core/ImageStore.swift`; resolution via `LibraryController.locateEmbed`. Thumbnails: `ThumbnailCache.swift` (M8.1); rows and editor attachments not yet wired (M8.3, M8.5).
+- Images and embeds: `Sources/MDNotesApp/ImagePasteboard.swift` (decode off-main), `LibraryController.storeImage`, `Core/ImageStore.swift`; resolution via `LibraryController.locateEmbed`; each note's first existing image resolved at index time by `ImageStore.firstImage(in:)` into `SearchIndex.Entry.firstImagePath` (M8.2). Thumbnails: `ThumbnailCache.swift` (M8.1); rows and editor attachments not yet wired (M8.3, M8.5).
 - iCloud download status: `Core/NoteStore.isDownloaded`/`isAvailable`, `Core/DownloadRequester.swift`, `LibraryController.EvictionStatus`, `EvictionBar.swift` / `ReadOnlyNoticeBar.swift`.
 - Perf tests and budgets: budgets in `Sources/MDNotesTestSupport/PerfGate.swift`; fixtures in `SyntheticLibrary.swift`; gates in `Tests/MDNotesCoreTests/IndexPerfTests.swift`, `IndexMemoryPerfTests.swift`, `Tests/MDNotesAppTests/LaunchPerfTests.swift`, `ListPerfTests.swift`, `EditorPerfTests.swift`, `BacklinksPerfTests.swift`.
