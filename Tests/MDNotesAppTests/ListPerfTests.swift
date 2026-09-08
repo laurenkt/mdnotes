@@ -8,14 +8,19 @@ import XCTest
 /// PF-2 around the real controller path: a keystroke in the search field's field editor, the
 /// query over a 20k-note snapshot, the table reload and the layout of its visible rows, all on
 /// the main thread. Runs only in `scripts/check.sh full` (release); `MDNOTES_SKIP_PERF=1`
-/// skips it (ADR-0007).
+/// skips it (ADR-0007). PF-8: 10 % of the notes embed a generated PNG, so the visible rows'
+/// thumbnail lookups and requests (S-11) are inside the measured path.
 @MainActor
 final class ListPerfTests: XCTestCase {
+    /// Share of notes embedding an image (PF-8).
+    nonisolated private static let imageFraction = 0.1
+
     /// The 20k-note library, generated on first use and shared by every test in the class.
     nonisolated private static let library: Result<URL, any Error> = Result {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mdnotes-listperf-\(UUID().uuidString)", isDirectory: true)
-        try SyntheticLibrary.generate(at: root, options: .init(noteCount: PerfGate.referenceNoteCount))
+        try SyntheticLibrary.generate(
+            at: root, options: .init(noteCount: PerfGate.referenceNoteCount, imageFraction: imageFraction))
         return root
     }
 
@@ -91,6 +96,13 @@ final class ListPerfTests: XCTestCase {
         let table = controller.mainView.tableView
         let library = try XCTUnwrap(controller.library)
 
+        // PF-8: thumbnails are on. About a tenth of the notes resolve to an image file, and
+        // the rows look their thumbnails up under the library's root.
+        let withImages = library.snapshot.query("").filter { $0.firstImagePath != nil }.count
+        let expectedImages = Double(PerfGate.referenceNoteCount) * Self.imageFraction
+        XCTAssertEqual(Double(withImages), expectedImages, accuracy: expectedImages * 0.25, "10 % embed an image")
+        XCTAssertEqual(controller.listController.imageRoot, root)
+
         // Representative phrases typed a character at a time: a word in most titles and
         // bodies, a narrowing two-word query, a nested title, a mid-word prefix, a tag plus a
         // word, and a miss that scans every body to the end. Same set as the core gate.
@@ -151,5 +163,10 @@ final class ListPerfTests: XCTestCase {
             worstMedian = max(worstMedian, medians[worst])
         }
         print("PF-2 worst per-keystroke median: \(String(format: "%.2f", worstMedian)) ms")
+
+        // The rows shown along the way asked for their thumbnails, and the cache made them
+        // off the main thread while the keystrokes were being measured.
+        XCTAssertGreaterThan(controller.listController.thumbnails.count, 0, "thumbnails were generated")
+        XCTAssertLessThanOrEqual(controller.listController.thumbnails.bytes, ThumbnailCache.defaultMaximumBytes)
     }
 }

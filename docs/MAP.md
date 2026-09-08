@@ -43,9 +43,9 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/MainView.swift` — content layout per W-2/W-6: search field inset 8/10 pt on a window-background strip, eviction bar, message line, hairline `NSBox` separator, list, split, editor, backlinks. `MainView.searchStrip`, `searchSeparator`, `searchFieldVerticalInset`/`HorizontalInset`, `showMessage`, `focusSearchField`, `applyEditorFont`.
 - `Sources/MDNotesApp/LibraryController.swift` — owns one library: root, `NoteStore`, snapshots, background scan/index queue, watcher, CRUD. `LibraryController.start`, `apply`, `create`, `rename`, `delete`, `storeImage`, `EvictionStatus`, `Phase`.
 - `Sources/MDNotesApp/LibraryRootPreference.swift` — library folder in `UserDefaults`, defaulting to `~/Documents/MDnotes` (L-1). `LibraryRootPreference`.
-- `Sources/MDNotesApp/NoteListController.swift` — table data source/delegate over one `SearchIndex.Results`; inline title editing; date refresh on `NSCalendarDayChanged` and key window (S-6, S-9). `NoteListController.show`, `select`, `beginEditingTitle`, `dateText`, `refreshDates`, `now`.
+- `Sources/MDNotesApp/NoteListController.swift` — table data source/delegate over one `SearchIndex.Results`; inline title editing; date refresh on `NSCalendarDayChanged` and key window (S-6, S-9); row thumbnails looked up in `thumbnails` under `imageRoot` as rows are made, requested when not cached (S-11, PF-8). `NoteListController.show`, `select`, `beginEditingTitle`, `dateText`, `refreshDates`, `now`, `thumbnails`, `imageRoot`, `thumbnailPixelSize`, `thumbnailURL(for:)`.
 - `Sources/MDNotesApp/NoteTableView.swift` — intercepts arrows/Return/Tab before `NSTableView` handles them (S-7, S-8). `NoteTableView`.
-- `Sources/MDNotesApp/NoteRowView.swift` — one fixed-frame row: title, trailing date, snippet line (S-6, S-10, PF-2). `NoteRowView.configure`, `setDateText`, `beginEditingTitle`.
+- `Sources/MDNotesApp/NoteRowView.swift` — one fixed-frame row: title, trailing date, snippet line (S-6, S-10, PF-2), and for a note with an image a 34 pt square at the right end, empty until its cached thumbnail is handed over (S-11). `NoteRowView.configure`, `setDateText`, `beginEditingTitle`, `thumbnailView`, `thumbnailPath`, `showThumbnail(_:for:)`, `thumbnailSize`.
 - `Sources/MDNotesApp/RelativeDateText.swift` — Notes-style modified dates: `Today 11:53`, `Mon`, `3 Sep` (S-9). `RelativeDateText.string`, `band`, `Band`.
 - `Sources/MDNotesApp/EditorController.swift` — loads bodies off-main and applies them, autosaves, tracks edits, drives completions (S-8, E-4). `EditorController.load`, `flush`, `reloadFromDisk`, `insertEmbed`, `linkTargetAtCaret`.
 - `Sources/MDNotesApp/EditorTextView.swift` — intercepts Cmd-click and Cmd-Return for link opening (K-3). `EditorTextView`, `characterIndex`.
@@ -65,7 +65,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 
 ## Sources/MDNotesTestSupport (shared test helpers)
 
-- `Sources/MDNotesTestSupport/SyntheticLibrary.swift` — deterministic fake library on disk: nesting, tags, wikilinks, `i/`, large notes. `SyntheticLibrary.generate`, `Options`, `SplitMix64`.
+- `Sources/MDNotesTestSupport/SyntheticLibrary.swift` — deterministic fake library on disk: nesting, tags, wikilinks, large notes, and `imageFraction` (default 10 %, PF-8) of notes embedding a generated PNG of their own under `i/`; a hand-written PNG encoder needing only Foundation. `SyntheticLibrary.generate`, `Options`, `pngData(seed:width:height:)`, `imageName(forNoteAt:)`, `SplitMix64`.
 - `Sources/MDNotesTestSupport/PerfGate.swift` — executable perf budgets from `docs/SPEC.md`; a blown budget fails the test. `PerfGate.Budget`, `measure`, `report`, `residentMemoryMB`.
 
 ## Tests/MDNotesCoreTests (pure-logic tests, XCTest)
@@ -92,7 +92,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesCoreTests/LinkRewriteTests.swift` — which links a rename must rewrite and how one body is rewritten (R-3).
 - `Tests/MDNotesCoreTests/ImageStoreTests.swift` — image file naming under `i/` and embed-to-file lookup (I-1, I-2).
 - `Tests/MDNotesCoreTests/FirstImageTests.swift` — first-image resolution: none, one, first of several, unresolvable, skipped code, image-by-extension; stored on the snapshot by build and by disk/memory updates (S-11, K-1).
-- `Tests/MDNotesCoreTests/SyntheticLibraryTests.swift` — the generator is deterministic and has the promised shape.
+- `Tests/MDNotesCoreTests/SyntheticLibraryTests.swift` — the generator is deterministic and has the promised shape, including the share of notes embedding a generated PNG and the PNG bytes themselves.
 - `Tests/MDNotesCoreTests/IndexPerfTests.swift` — core timing gates over the 20k-note library: full index, query (PF-2, PF-4).
 - `Tests/MDNotesCoreTests/IndexMemoryPerfTests.swift` — resident memory after one 20k index build; own class so it runs fresh (PF-5).
 
@@ -127,13 +127,14 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/LinkRewriteSmokeTests.swift` — a committed rename rewriting links on disk atomically (R-3).
 - `Tests/MDNotesAppTests/ImageInsertSmokeTests.swift` — paste/drop writing under `i/` and embedding at the caret (I-1, I-2).
 - `Tests/MDNotesAppTests/ThumbnailCacheTests.swift` — miss, hit, in-flight joining, LRU eviction on size, invalidation on modification date, request never blocks and at most two jobs run, completions on main (PF-8).
+- `Tests/MDNotesAppTests/RowThumbnailSmokeTests.swift` — the row's 34 pt square: reserved and empty until cached, filled from the cache on redisplay, a non-image leaves it empty, a recycled row drops a stale completion, the table keeps a click on it for selection, root set by attach and cleared by detach; list snapshot with thumbnails (S-11, PF-8, V-1).
 - `Tests/MDNotesAppTests/ExternalEditSmokeTests.swift` — disk changes behind the app's back arriving via the real watcher (X-2, X-3, X-4).
 - `Tests/MDNotesAppTests/LibraryControllerSmokeTests.swift` — progressive list population and main-thread snapshot delivery (PF-6, PF-7).
 - `Tests/MDNotesAppTests/DownloadRequestSmokeTests.swift` — download requests after scan and after every watcher batch (L-9).
 - `Tests/MDNotesAppTests/EvictionBarSmokeTests.swift` — the eviction bar's count, free space and Storage Settings button (L-10).
 - `Tests/MDNotesAppTests/ReadOnlyNoticeSmokeTests.swift` — read-only body shown with the reason line above the editor (L-7, L-8).
 - `Tests/MDNotesAppTests/LaunchPerfTests.swift` — cold launch to interactive through the real `applicationDidFinishLaunching` (PF-1).
-- `Tests/MDNotesAppTests/ListPerfTests.swift` — keystroke, query, reload, visible-row layout over 20k notes (PF-2).
+- `Tests/MDNotesAppTests/ListPerfTests.swift` — keystroke, query, reload, visible-row layout over 20k notes, 10 % of them embedding an image so row thumbnail lookups are measured too (PF-2, PF-8).
 - `Tests/MDNotesAppTests/EditorPerfTests.swift` — keystroke, paragraph restyle, redraw in a 1 MB note (PF-3, E-3).
 - `Tests/MDNotesAppTests/BacklinksPerfTests.swift` — `BacklinksStrip.show` with 2,000 backlinks, expanded and collapsed, warm-up plus median in release (K-6, PF-6).
 
@@ -150,6 +151,6 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - Global hotkey: `Sources/MDNotesApp/GlobalHotKey.swift` (Carbon), value in `HotKey.swift`, recorded by `HotKeyRecorder.swift`, wired in `AppDelegate.setHotKey`.
 - Settings window: `Sources/MDNotesApp/PreferencesWindowController.swift`; backing defaults in `LibraryRootPreference.swift`, `EditorFontPreference.swift`, `HotKey.swift`.
 - Menus: `Sources/MDNotesApp/MainMenu.swift`; item enablement via `MainWindowController.validateMenuItem`; app-level items in `AppDelegate.swift`.
-- Images and embeds: `Sources/MDNotesApp/ImagePasteboard.swift` (decode off-main), `LibraryController.storeImage`, `Core/ImageStore.swift`; resolution via `LibraryController.locateEmbed`; each note's first existing image resolved at index time by `ImageStore.firstImage(in:)` into `SearchIndex.Entry.firstImagePath` (M8.2). Thumbnails: `ThumbnailCache.swift` (M8.1); rows and editor attachments not yet wired (M8.3, M8.5).
+- Images and embeds: `Sources/MDNotesApp/ImagePasteboard.swift` (decode off-main), `LibraryController.storeImage`, `Core/ImageStore.swift`; resolution via `LibraryController.locateEmbed`; each note's first existing image resolved at index time by `ImageStore.firstImage(in:)` into `SearchIndex.Entry.firstImagePath` (M8.2). Thumbnails: `ThumbnailCache.swift` (M8.1), owned by `NoteListController.thumbnails` and looked up under `imageRoot` (set by `MainWindowController.attach`) as rows are made, shown by `NoteRowView.showThumbnail` (M8.3); editor attachments not yet wired (M8.5).
 - iCloud download status: `Core/NoteStore.isDownloaded`/`isAvailable`, `Core/DownloadRequester.swift`, `LibraryController.EvictionStatus`, `EvictionBar.swift` / `ReadOnlyNoticeBar.swift`.
 - Perf tests and budgets: budgets in `Sources/MDNotesTestSupport/PerfGate.swift`; fixtures in `SyntheticLibrary.swift`; gates in `Tests/MDNotesCoreTests/IndexPerfTests.swift`, `IndexMemoryPerfTests.swift`, `Tests/MDNotesAppTests/LaunchPerfTests.swift`, `ListPerfTests.swift`, `EditorPerfTests.swift`, `BacklinksPerfTests.swift`.

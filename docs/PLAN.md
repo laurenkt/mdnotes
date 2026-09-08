@@ -199,7 +199,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M8.2 First-image resolution: given a body, find the first `![[target]]` and resolve it
       to an image file via the link resolver (K-1, S-11). Stored on the index snapshot as an
       optional path. Tests: none, one, first-of-several, unresolvable.
-- [ ] M8.3 Row thumbnails (S-11): 34 pt square at the row's right, drawn only when cached,
+- [x] M8.3 Row thumbnails (S-11): 34 pt square at the row's right, drawn only when cached,
       requested on row display, click selects the note. `ListPerfTests` re-run with 10 % of
       synthetic notes embedding a generated PNG (extend `SyntheticLibrary`). Snapshot inspected.
 - [ ] M8.4 Editor attachment plumbing (E-9, ADR-0012): one accessor that returns the view's

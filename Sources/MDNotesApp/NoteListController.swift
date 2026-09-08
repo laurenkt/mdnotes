@@ -14,12 +14,24 @@ import MDNotesCore
 /// field to be fixed. Escape reverts. Focus leaving the field commits a valid title and drops
 /// an invalid one. While a title is being edited, `show(_:fallbackRow:)` is held back and
 /// applied when the edit ends, so a snapshot arriving mid-edit cannot tear the field down.
+///
+/// S-11: a row for a note with an image gets its thumbnail from `thumbnails` as it is made:
+/// a cached image is shown at once, anything else is requested and the row stays empty until
+/// the completion, on main, finds the row still showing that note (PF-8). Paths in the
+/// snapshot are root-relative, so `imageRoot` is needed before any thumbnail is looked up.
 @MainActor
 public final class NoteListController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     /// Every row is this tall (S-6).
     nonisolated public static let rowHeight: CGFloat = 46
 
     public let tableView: NSTableView
+
+    /// S-11: where row thumbnails come from. Shared with whoever else shows thumbnails.
+    public let thumbnails: ThumbnailCache
+
+    /// The library root that entries' `firstImagePath`s are relative to. While nil no row
+    /// shows a thumbnail; the owner sets it when a library is attached and clears it after.
+    public var imageRoot: URL?
 
     /// What the list is showing, in row order.
     public private(set) var results: SearchIndex.Results
@@ -53,8 +65,9 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     /// The instant the relative words are seen from. Tests substitute a fixed one.
     public var now: @MainActor () -> Date = { Date() }
 
-    public init(tableView: NSTableView) {
+    public init(tableView: NSTableView, thumbnails: ThumbnailCache = ThumbnailCache()) {
         self.tableView = tableView
+        self.thumbnails = thumbnails
         results = SearchIndex.empty.query("")
         super.init()
         tableView.rowHeight = Self.rowHeight
@@ -284,7 +297,40 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
             tableView.makeView(withIdentifier: NoteRowView.identifier, owner: nil) as? NoteRowView ?? NoteRowView()
         let entry = results[row]
         view.configure(entry: entry, dateText: dateText(for: entry.modifiedAt))
+        showThumbnail(in: view, for: entry)
         return view
+    }
+
+    // MARK: - Thumbnails (S-11)
+
+    /// Pixels on the thumbnail's longest side: twice the square's side at the window's scale,
+    /// so the centre crop of any image up to 2:1 still fills the square at full resolution.
+    /// A window off screen reports no scale and is taken as Retina.
+    public var thumbnailPixelSize: Int {
+        let scale = tableView.window?.backingScaleFactor ?? 2
+        return Int(ceil(2 * NoteRowView.thumbnailSize * max(1, scale)))
+    }
+
+    /// The file the entry's first image is at, or nil when it has none or no root is known.
+    public func thumbnailURL(for entry: SearchIndex.Entry) -> URL? {
+        guard let path = entry.firstImagePath, let imageRoot else { return nil }
+        return imageRoot.appendingPathComponent(path, isDirectory: false)
+    }
+
+    /// Shows the cached thumbnail in `view` or asks for one. The completion checks the row is
+    /// still on the same note, so a recycled row never shows another note's image; a file
+    /// that turns out not to be an image leaves the square empty.
+    private func showThumbnail(in view: NoteRowView, for entry: SearchIndex.Entry) {
+        guard let path = entry.firstImagePath, let url = thumbnailURL(for: entry) else { return }
+        let pixelSize = thumbnailPixelSize
+        if let image = thumbnails.cachedImage(for: url, pixelSize: pixelSize) {
+            view.showThumbnail(image, for: path)
+            return
+        }
+        thumbnails.request(url, pixelSize: pixelSize) { [weak view] image in
+            guard let image, let view else { return }
+            view.showThumbnail(image, for: path)
+        }
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {

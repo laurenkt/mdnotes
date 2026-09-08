@@ -225,6 +225,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     public func attach(_ library: LibraryController) {
         if self.library != nil { detachLibrary() }
         self.library = library
+        // S-11: the snapshot's image paths are relative to this library's root.
+        listController.imageRoot = library.root
         library.onSnapshotChange = { [weak self] snapshot in self?.libraryDidPublish(snapshot) }
         library.onExternalChanges = { [weak self] changes in self?.libraryDidChangeExternally(changes) }
         library.onEvictionStatusChange = { [weak self] _ in self?.refreshEvictionBar() }
@@ -243,6 +245,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         library.onExternalChanges = nil
         library.onEvictionStatusChange = nil
         self.library = nil
+        listController.imageRoot = nil
         pendingRenames = [:]
         hideInlineMessage()
         refreshEvictionBar()
