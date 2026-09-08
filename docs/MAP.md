@@ -15,10 +15,10 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesCore/WordSplitter.swift` — splits query text into whitespace-delimited words (S-2). `WordSplitter.words`, `foldedWords`.
 - `Sources/MDNotesCore/BodySnippet.swift` — one-line list-row snippet from a body (S-6). `BodySnippet.make`, `maxCharacters`, `scanCharacters`.
 - `Sources/MDNotesCore/LibraryScanner.swift` — walks the root for `.md` files, skipping `Trash`/`templates`. `ScannedNote`, `LibraryScanner.scan`, `noteID(forRelativePath:)`.
-- `Sources/MDNotesCore/NoteStore.swift` — reads/writes one library root; iCloud availability and dataless detection (L-7/L-8). `NoteBody`, `NoteStore.read`, `url(for:)`, `requestDownload`, `isDownloaded`.
+- `Sources/MDNotesCore/NoteStore.swift` — reads/writes one library root; iCloud availability and dataless detection (L-7/L-8). `NoteBody`, `NoteStore.read`, `url(for:)`, `requestDownload`, `isDownloaded`, `modificationDate(atExactly:)`.
 - `Sources/MDNotesCore/AtomicWriter.swift` — temp-file-plus-rename writes so readers never see a mix (E-5). `AtomicWriter.write(_:to:)`, `Interruption` hook for tests.
 - `Sources/MDNotesCore/OwnWrites.swift` — ledger of this process's own writes so the watcher ignores their echoes (E-6). `OwnWrites.record`, `contains`, `suppressing(_:store:)`.
-- `Sources/MDNotesCore/FSEventsWatcher.swift` — FSEvents stream over the root, reporting changes as note ids (X-1). `FSEventsWatcher.start/stop`, `Handler`, `WatchError`, `defaultLatency`.
+- `Sources/MDNotesCore/FSEventsWatcher.swift` — FSEvents stream over the root, reporting changes as note ids (X-1); a folder scan's report is not repeated by the note's own later event (X-2). `FSEventsWatcher.start/stop`, `Handler`, `WatchError`, `defaultLatency`.
 - `Sources/MDNotesCore/DownloadRequester.swift` — keeps a download request outstanding per evicted note, at most one per 60 s (L-9, ADR-0009). `DownloadRequester.requestDownloads`, `refreshOutstanding`, `Refresh`.
 - `Sources/MDNotesCore/MarkdownScanner.swift` — single left-to-right pass yielding headings, wikilinks, embeds, tags, code ranges. `MarkdownScanner.scan`, `Token`, `Kind`, `paragraphRange`.
 - `Sources/MDNotesCore/SearchIndex.swift` — immutable in-memory snapshot of all notes' searchable text (S-2/S-3/S-4, ADR-0003). `SearchIndex`, `.Entry`, `.Results`, `.Builder`, `query`, `queryTitles`.
@@ -77,7 +77,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesCoreTests/NoteStoreTests.swift` — reading bodies, availability probe, dataless and unwritable cases.
 - `Tests/MDNotesCoreTests/AtomicWriterTests.swift` — temp-then-rename semantics, interrupted commits, no torn reads (E-5).
 - `Tests/MDNotesCoreTests/OwnWritesTests.swift` — the own-write ledger the watcher consults to suppress echoes (E-6).
-- `Tests/MDNotesCoreTests/FSEventsWatcherTests.swift` — real watcher over a temp library with real file ops, every wait timed out (X-1).
+- `Tests/MDNotesCoreTests/FSEventsWatcherTests.swift` — real watcher over a temp library with real file ops, every wait timed out (X-1); a note written behind a folder event reported once (X-2).
 - `Tests/MDNotesCoreTests/DownloadRequesterTests.swift` — one request per dataless note per 60 s, repeated after re-eviction (L-9).
 - `Tests/MDNotesCoreTests/MarkdownScannerTests.swift` — token kinds and ranges: headings, links, embeds, tags, inline and fenced code.
 - `Tests/MDNotesCoreTests/SearchIndexTests.swift` — snapshot building, query and title-query matching, ordering (S-2, S-3).

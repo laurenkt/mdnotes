@@ -254,6 +254,83 @@ final class FSEventsWatcherTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(watcher).knownNotes.contains(id("flicker.md")))
     }
 
+    // MARK: X-1, X-2: a note the folder scan is ahead of is reported once
+
+    /// A folder event's scan judges the disk as it is when the callback runs, which can be ahead
+    /// of the event stream: a note written after the folder event, but before the callback
+    /// runs, is on disk for the scan, and its own event is still to come. The scan reports it
+    /// added; the event must then not report it modified, or the note is read twice and an open
+    /// note reloaded once more than needed (X-2, I-5).
+    ///
+    /// The window is forced open by holding the watcher's queue in the callback for a warm-up
+    /// note while the folder is created and, one latency later, the note under it is written.
+    /// FSEvents delivers the two as separate batches once the queue is free.
+    func testX2_noteWrittenBehindAFolderEventIsReportedOnce() throws {
+        let latency: TimeInterval = 0.05
+        let recorder = recorder
+        let held = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let warm = id("warm.md")
+        Thread.sleep(forTimeInterval: 0.2)  // settle, as `startWatching` does
+        let watcher = FSEventsWatcher(root: root, knownNotes: [], latency: latency) { changes in
+            recorder.record(changes)
+            if changes.added.contains(warm) {
+                held.signal()
+                release.wait()
+            }
+        }
+        try watcher.start()
+        self.watcher = watcher
+
+        try write("warm.md")
+        XCTAssertEqual(held.wait(timeout: .now() + timeout), .success, "the warm-up batch never arrived")
+        try FileManager.default.createDirectory(at: url("sub"), withIntermediateDirectories: true)
+        Thread.sleep(forTimeInterval: latency * 6)
+        try write("sub/late.md")
+        release.signal()
+
+        waitFor("sub/late.md reported") {
+            $0.added.contains(self.id("sub/late.md")) || $0.modified.contains(self.id("sub/late.md"))
+        }
+        // Give the note's own event time to arrive in a batch of its own.
+        recorder.wait(timeout: 1) { _ in false }
+        XCTAssertEqual(recorder.union.added, [warm, id("sub/late.md")], "\(recorder.all)")
+        XCTAssertEqual(recorder.union.modified, [], "the scan already reported it: \(recorder.all)")
+        XCTAssertEqual(recorder.union.removed, [], "\(recorder.all)")
+    }
+
+    /// The same window, but the note is edited again after the scan and before its events
+    /// arrive: that edit is news and must be reported.
+    func testX2_noteEditedAfterTheScanIsStillReportedModified() throws {
+        let latency: TimeInterval = 0.05
+        let recorder = recorder
+        let held = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let warm = id("warm.md")
+        Thread.sleep(forTimeInterval: 0.2)
+        let watcher = FSEventsWatcher(root: root, knownNotes: [], latency: latency) { changes in
+            recorder.record(changes)
+            if changes.added.contains(warm) {
+                held.signal()
+                release.wait()
+            }
+        }
+        try watcher.start()
+        self.watcher = watcher
+
+        try write("warm.md")
+        XCTAssertEqual(held.wait(timeout: .now() + timeout), .success, "the warm-up batch never arrived")
+        try FileManager.default.createDirectory(at: url("sub"), withIntermediateDirectories: true)
+        Thread.sleep(forTimeInterval: latency * 6)
+        try write("sub/late.md", "one")
+        release.signal()
+        waitFor("sub/late.md added") { $0.added.contains(self.id("sub/late.md")) }
+        // Written after the scan reported it, with a modification date the scan did not see.
+        Thread.sleep(forTimeInterval: latency * 6)
+        try write("sub/late.md", "two")
+        waitFor("sub/late.md modified") { $0.modified.contains(self.id("sub/late.md")) }
+    }
+
     // MARK: X-1 with L-2, L-3, L-6: only notes are reported
 
     func testX1_nonNotesAndSkippedPathsAreIgnored() throws {

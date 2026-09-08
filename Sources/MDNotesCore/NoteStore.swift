@@ -82,6 +82,18 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// The modification date of the file at exactly `url`, its name matching in case (L-4), as
+    /// `fileExistsExactly` requires. Throws if there is no such file.
+    public static func modificationDate(atExactly url: URL) throws -> Date {
+        try autoreleasepool {
+            let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .nameKey])
+            guard nameMatches(values.name, url: url) else {
+                throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: url.path])
+            }
+            return values.contentModificationDate ?? .distantPast
+        }
+    }
+
     /// True if a file exists at exactly `url`, its name matching in case (L-4), not merely a
     /// case variant of it on a case-insensitive volume.
     public static func fileExistsExactly(at url: URL) -> Bool {

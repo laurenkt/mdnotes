@@ -12,6 +12,13 @@ import Synchronization
 /// plus an addition of the new one, and a folder rename or removal as the same for every note
 /// under it. A dropped-events flag rescans the whole root and diffs it against the known notes.
 ///
+/// A scan judges the disk as it is when the callback runs, which can be ahead of the stream: a
+/// note written after the folder event but before the callback is on disk for the scan, and its
+/// own event is still queued. The watcher remembers the modification date each scan saw, and a
+/// later event for a note whose date is unchanged since is that echo and is not reported again,
+/// so the note is read once and an open note is not reloaded twice (X-2, I-5). A note edited
+/// after the scan has a new date and is reported as modified like any other.
+///
 /// Paths a full scan would skip (L-3, L-6) are ignored. The handler runs on a private serial
 /// queue, never the main thread (PF-6), with a non-empty batch per callback. Own writes are
 /// not filtered here; that is `OwnWrites` (E-6). Safe to start and stop from any thread, but
@@ -37,6 +44,9 @@ public final class FSEventsWatcher: Sendable {
     private struct State {
         var stream: Int = 0
         var known: Set<NoteID> = []
+        /// Notes a scan reported, with the modification date it saw, until their own event
+        /// arrives or they are reported again.
+        var scanned: [NoteID: Date] = [:]
     }
 
     private let state: Mutex<State>
@@ -187,23 +197,28 @@ public final class FSEventsWatcher: Sendable {
     }
 
     private func handle(_ events: [(path: String, flags: FSEventStreamEventFlags)]) {
-        // Only this queue changes `known`, so reading it before the disk work and writing it
-        // after is consistent, and the lock is not held across file I/O.
-        let changes = fold(events, known: state.withLock { $0.known })
-        if changes.isEmpty { return }
+        // Only this queue changes `known` and `scanned`, so reading them before the disk work
+        // and writing after is consistent, and the lock is not held across file I/O.
+        let (known, scanned) = state.withLock { ($0.known, $0.scanned) }
+        let (changes, stillScanned) = fold(events, known: known, scanned: scanned)
         state.withLock { state in
             state.known.formUnion(changes.added)
             state.known.formUnion(changes.modified)
             state.known.subtract(changes.removed)
+            state.scanned = stillScanned
         }
+        if changes.isEmpty { return }
         handler(changes)
     }
 
-    /// One batch of events as `LibraryChanges`, judged against `known` and the disk as it is now.
-    private func fold(_ events: [(path: String, flags: FSEventStreamEventFlags)], known: Set<NoteID>)
-        -> LibraryChanges
-    {
+    /// One batch of events as `LibraryChanges`, judged against `known` and the disk as it is now,
+    /// plus the scan-reported notes still awaiting their own event: `scanned` less those this
+    /// batch settled, plus those this batch's scans reported.
+    private func fold(
+        _ events: [(path: String, flags: FSEventStreamEventFlags)], known: Set<NoteID>, scanned: [NoteID: Date]
+    ) -> (LibraryChanges, [NoteID: Date]) {
         var changes = LibraryChanges()
+        var scanned = scanned
         var folders: [String: Bool] = [:]  // relative folder path -> whether events were dropped
         var files: Set<String> = []
 
@@ -235,25 +250,37 @@ public final class FSEventsWatcher: Sendable {
         for (folder, dropped) in folders where LibraryScanner.isScannedFolder(relativePath: folder) {
             let prefix = folder.isEmpty ? "" : folder + "/"
             let before = known.filter { $0.relativePath.hasPrefix(prefix) }
-            let present = Set(((try? LibraryScanner.scan(root: root, folder: folder)) ?? []).map(\.id))
+            let found = (try? LibraryScanner.scan(root: root, folder: folder)) ?? []
+            let present = Set(found.map(\.id))
             changes.added.formUnion(present.subtracting(before))
             changes.removed.formUnion(before.subtracting(present))
             if dropped { changes.modified.formUnion(present.intersection(before)) }
+            for note in found where !before.contains(note.id) || dropped { scanned[note.id] = note.modifiedAt }
+            for id in before.subtracting(present) { scanned[id] = nil }
         }
         for relative in files {
             guard let id = LibraryScanner.noteID(forRelativePath: relative) else { continue }
             // Exact about case (L-4): after a rename of `Alpha.md` to `alpha.md` the old path
             // still "exists" on a case-insensitive volume, but the old note is gone.
-            if NoteStore.fileExistsExactly(at: URL(fileURLWithPath: rootPath + "/" + relative, isDirectory: false)) {
-                if known.contains(id) { changes.modified.insert(id) } else { changes.added.insert(id) }
-            } else {
+            let url = URL(fileURLWithPath: rootPath + "/" + relative, isDirectory: false)
+            guard let modifiedAt = try? NoteStore.modificationDate(atExactly: url) else {
                 changes.removed.insert(id)
+                scanned[id] = nil
+                continue
             }
+            if !known.contains(id) {
+                changes.added.insert(id)
+            } else if scanned[id] != modifiedAt {
+                changes.modified.insert(id)
+            }
+            // Otherwise this is the event for the change a scan already reported (I-5). Either
+            // way the note has caught up with the stream.
+            scanned[id] = nil
         }
         // Disk is the authority: a note that exists now is not removed, whatever else was seen.
         changes.removed.subtract(changes.added)
         changes.removed.subtract(changes.modified)
-        return changes
+        return (changes, scanned)
     }
 
     /// `path` relative to the root with `/` separators, `""` for the root itself, or nil if the
