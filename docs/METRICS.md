@@ -6,3 +6,4 @@ whether the brief (`scripts/task-brief.sh`) is keeping orientation cheap.
 
 | When | Item | Subagent tokens | Minutes | Commit |
 |---|---|---|---|---|
+| 2026-09-08 09:12 | probe | 1 | 1 | 9ba8ff5 |
