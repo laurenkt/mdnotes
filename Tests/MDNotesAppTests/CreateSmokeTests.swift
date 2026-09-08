@@ -331,7 +331,7 @@ final class CreateSmokeTests: XCTestCase {
         controller.mainView.layoutSubtreeIfNeeded()
         let label = controller.mainView.messageLabel
         XCTAssertGreaterThan(label.frame.height, 0)
-        XCTAssertLessThanOrEqual(label.frame.maxY, controller.mainView.searchField.frame.minY)
+        XCTAssertLessThanOrEqual(label.frame.maxY, controller.mainView.searchStrip.frame.minY)
         XCTAssertGreaterThanOrEqual(label.frame.minY, controller.mainView.splitView.frame.maxY)
 
         // The next keystroke clears it.

@@ -40,7 +40,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/AppDelegate.swift` — launch: opens library root, builds window, menu, hotkey, Settings; hotkey toggle, hide-on-close, Dock reopen, termination (W-3, W-4, E-4). `AppDelegate.openLibrary`, `setHotKey`, `toggleFromHotKey`, `showMainWindow`, `hideMainWindow`, `isAppActive`.
 - `Sources/MDNotesApp/MainMenu.swift` — code-built menu bar (P-2); targetless items resolved through the responder chain. `MainMenu` (App/Edit/Note/View/Window menus; View holds Bigger/Smaller/Actual Size (E-8) and the backlinks toggle).
 - `Sources/MDNotesApp/MainWindowController.swift` — the single main window (W-1), floating and following the active Space (W-5): search field, list, editor wiring; commit/rename/delete/open-link/insert-image actions; View menu font size actions (E-8). `MainWindowController.attach`, `commitQuery`, `commitTitle`, `openLink`, `search`, `makeTextBigger/Smaller/ActualSize`, `validateMenuItem`, `windowLevel`, `overlayLevel`.
-- `Sources/MDNotesApp/MainView.swift` — content layout per W-2/W-6: search field, eviction bar, message line, list, split, editor, backlinks. `MainView.showMessage`, `focusSearchField`, `applyEditorFont`.
+- `Sources/MDNotesApp/MainView.swift` — content layout per W-2/W-6: search field inset 8/10 pt on a window-background strip, eviction bar, message line, hairline `NSBox` separator, list, split, editor, backlinks. `MainView.searchStrip`, `searchSeparator`, `searchFieldVerticalInset`/`HorizontalInset`, `showMessage`, `focusSearchField`, `applyEditorFont`.
 - `Sources/MDNotesApp/LibraryController.swift` — owns one library: root, `NoteStore`, snapshots, background scan/index queue, watcher, CRUD. `LibraryController.start`, `apply`, `create`, `rename`, `delete`, `storeImage`, `EvictionStatus`, `Phase`.
 - `Sources/MDNotesApp/LibraryRootPreference.swift` — library folder in `UserDefaults`, defaulting to `~/Documents/MDnotes` (L-1). `LibraryRootPreference`.
 - `Sources/MDNotesApp/NoteListController.swift` — table data source/delegate over one `SearchIndex.Results`; inline title editing; date refresh on `NSCalendarDayChanged` and key window (S-6, S-9). `NoteListController.show`, `select`, `beginEditingTitle`, `dateText`, `refreshDates`, `now`.
@@ -96,12 +96,12 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 
 ## Tests/MDNotesAppTests (headless AppKit smoke tests; real NSEvents, no UI clicks)
 
-- `Tests/MDNotesAppTests/MainWindowFixtures.swift` — shared fixture: `makeMainWindowController(autosaveClock:)` plus a main-actor box for teardown.
+- `Tests/MDNotesAppTests/MainWindowFixtures.swift` — shared fixture: `makeMainWindowController(autosaveClock:)` plus a main-actor box for teardown; `MainView.searchSeparatorRect` (the hairline's alignment rect).
 - `Tests/MDNotesAppTests/WindowSnapshots.swift` — V-1 rendering helper: `writeWindowSnapshots(of:named:)` for a `MainWindowController`, `writeWindowSnapshots(ofWindow:named:)` for any window; writes `build/snapshots/<name>-{light,dark}.png` at 2x via `bitmapImageRepForCachingDisplay` (a hand-built 2x rep when the headless window is 1x).
 - `Tests/MDNotesAppTests/WindowSnapshotTests.swift` — the helper itself: the main window writes `main-window-{light,dark}.png` at 2x pixel size, light and dark differ, window appearance restored (V-1).
 - `Tests/MDNotesAppTests/ManualAutosaveClock.swift` — `AutosaveClock` that only advances when a test says so; timers fire in deadline order (E-4).
 - `Tests/MDNotesAppTests/AppSmokeTests.swift` — the smallest headless launch: real controllers without a running app.
-- `Tests/MDNotesAppTests/LayoutSmokeTests.swift` — view stacking order at a given size, frame and split-position persistence (W-1, W-2).
+- `Tests/MDNotesAppTests/LayoutSmokeTests.swift` — view stacking order at a given size, title bar, search strip insets and hairline, frame and split-position persistence (W-1, W-2, W-6).
 - `Tests/MDNotesAppTests/MenuSmokeTests.swift` — menu items found by action, sent down the responder chain; Cmd-W and close button hide, Dock reopen, quit writes edits (W-4).
 - `Tests/MDNotesAppTests/WindowLevelSmokeTests.swift` — main window `.floating` and `moveToActiveSpace`; completion panel and Settings at `overlayLevel` above it (W-5).
 - `Tests/MDNotesAppTests/BundleTests.swift` — runs `scripts/info-plist.sh` directly to cover the emitted Info.plist.

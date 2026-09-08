@@ -139,15 +139,17 @@ final class EvictionBarSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.bar.label.stringValue, "2 notes not downloaded from iCloud. Search is incomplete.")
         XCTAssertTrue(fixture.bar.storageSettingsButton.isHidden, "free space unknown: no button")
 
-        // Directly under the search field, full width, one thin line; the split below it.
+        // Directly under the search field's strip, full width, one thin line; the hairline
+        // and the split below it (W-6).
         layout(fixture)
-        let search = fixture.view.searchField.frame
+        let strip = fixture.view.searchStrip.frame
         let bar = fixture.bar.frame
-        XCTAssertEqual(bar.maxY, search.minY, accuracy: 0.5)
+        XCTAssertEqual(bar.maxY, strip.minY, accuracy: 0.5)
         XCTAssertEqual(bar.minX, 0, accuracy: 0.5)
-        XCTAssertEqual(bar.width, search.width, accuracy: 0.5)
+        XCTAssertEqual(bar.width, strip.width, accuracy: 0.5)
         XCTAssertEqual(bar.height, EvictionBar.height, accuracy: 0.5)
-        XCTAssertEqual(fixture.view.splitView.frame.maxY, bar.minY, accuracy: 0.5)
+        XCTAssertEqual(fixture.view.searchSeparatorRect.maxY, bar.minY, accuracy: 0.5)
+        XCTAssertEqual(fixture.view.splitView.frame.maxY, fixture.view.searchSeparatorRect.minY, accuracy: 0.5)
         XCTAssertTrue(fixture.view.messageLabel.isHidden)
     }
 
@@ -160,7 +162,7 @@ final class EvictionBarSmokeTests: XCTestCase {
         XCTAssertNil(fixture.bar.datalessCount)
         XCTAssertEqual(fixture.library.evictionStatus, .none)
         layout(fixture)
-        XCTAssertEqual(fixture.view.splitView.frame.maxY, fixture.view.searchField.frame.minY, accuracy: 0.5)
+        XCTAssertEqual(fixture.view.searchSeparatorRect.maxY, fixture.view.searchStrip.frame.minY, accuracy: 0.5)
     }
 
     func testL10_barHidesWithinTwoSecondsOfTheLastNoteBecomingReadable() async {

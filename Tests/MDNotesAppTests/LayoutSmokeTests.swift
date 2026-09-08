@@ -2,8 +2,9 @@ import AppKit
 import MDNotesApp
 import XCTest
 
-/// Headless layout smoke tests for W-1 and W-2: the views exist, are stacked in the specified
-/// order at a given window size, and the frame and split position persist.
+/// Headless layout smoke tests for W-1, W-2 and W-6: the views exist, are stacked in the
+/// specified order at a given window size with the W-6 insets, and the frame and split
+/// position persist.
 @MainActor
 final class LayoutSmokeTests: XCTestCase {
     override func setUp() async throws {
@@ -45,16 +46,20 @@ final class LayoutSmokeTests: XCTestCase {
         XCTAssertIdentical(view.listScrollView.documentView, view.tableView)
         XCTAssertIdentical(view.editorScrollView.documentView, view.textView)
 
-        // Search field across the top, full width.
-        let search = view.searchField.frame
-        XCTAssertEqual(search.maxY, size.height, accuracy: 0.5)
-        XCTAssertEqual(search.minX, 0, accuracy: 0.5)
-        XCTAssertEqual(search.width, size.width, accuracy: 0.5)
-        XCTAssertGreaterThan(search.height, 0)
+        // Search strip across the top, full width, the field inside it (W-6).
+        let strip = view.searchStrip.frame
+        XCTAssertEqual(strip.maxY, size.height, accuracy: 0.5)
+        XCTAssertEqual(strip.minX, 0, accuracy: 0.5)
+        XCTAssertEqual(strip.width, size.width, accuracy: 0.5)
+        XCTAssertGreaterThan(view.searchField.frame.height, 0)
+        XCTAssertTrue(view.searchField.isDescendant(of: view.searchStrip))
 
-        // Split view directly below it, full width, reaching the bottom (strip hidden, K-6).
+        // The hairline directly under the strip, then the split view, full width, reaching the
+        // bottom (backlinks strip hidden, K-6).
+        let separator = view.searchSeparatorRect
+        XCTAssertEqual(separator.maxY, strip.minY, accuracy: 0.5)
         let split = view.splitView.frame
-        XCTAssertEqual(split.maxY, search.minY, accuracy: 0.5)
+        XCTAssertEqual(split.maxY, separator.minY, accuracy: 0.5)
         XCTAssertEqual(split.width, size.width, accuracy: 0.5)
         XCTAssertTrue(view.backlinksStrip.isHidden)
         XCTAssertEqual(split.minY, 0, accuracy: 0.5)
@@ -87,7 +92,51 @@ final class LayoutSmokeTests: XCTestCase {
         XCTAssertEqual(strip.minY, 0, accuracy: 0.5)
         XCTAssertEqual(strip.width, size.width, accuracy: 0.5)
         XCTAssertEqual(view.splitView.frame.minY, strip.maxY, accuracy: 0.5)
-        XCTAssertEqual(view.splitView.frame.maxY, view.searchField.frame.minY, accuracy: 0.5)
+        XCTAssertEqual(view.splitView.frame.maxY, view.searchSeparatorRect.minY, accuracy: 0.5)
+    }
+
+    func testW6_titleBarShowsTheWindowTitle() throws {
+        let controller = makeLaidOutController(size: NSSize(width: 800, height: 600))
+        let window = try XCTUnwrap(controller.window)
+        XCTAssertTrue(window.styleMask.contains(.titled))
+        XCTAssertEqual(window.titleVisibility, .visible)
+        XCTAssertFalse(window.titlebarAppearsTransparent)
+        XCTAssertEqual(window.title, "MDNotes")
+        XCTAssertNil(window.toolbar, "the search field lives in the content area, not a toolbar")
+    }
+
+    func testW6_searchFieldIsInsetOnAStripAboveAHairline() {
+        let size = NSSize(width: 800, height: 600)
+        let controller = makeLaidOutController(size: size)
+        let view = controller.mainView
+        let strip = view.searchStrip.frame
+        let field = view.searchField.frame  // in the strip's coordinates
+
+        // 8 pt above and below, 10 pt either side (W-6).
+        XCTAssertEqual(field.minX, MainView.searchFieldHorizontalInset, accuracy: 0.5)
+        XCTAssertEqual(strip.width - field.maxX, MainView.searchFieldHorizontalInset, accuracy: 0.5)
+        XCTAssertEqual(field.minY, MainView.searchFieldVerticalInset, accuracy: 0.5)
+        XCTAssertEqual(strip.height - field.maxY, MainView.searchFieldVerticalInset, accuracy: 0.5)
+        XCTAssertEqual(strip.height, field.height + 2 * MainView.searchFieldVerticalInset, accuracy: 0.5)
+        XCTAssertEqual(MainView.searchFieldVerticalInset, 8)
+        XCTAssertEqual(MainView.searchFieldHorizontalInset, 10)
+
+        // A standard search field with its default bezel, on a strip that paints nothing of
+        // its own so the window background shows through; no custom drawing (W-6).
+        XCTAssertTrue(view.searchField.isBezeled)
+        XCTAssertEqual(view.searchField.bezelStyle, .roundedBezel)
+        XCTAssertFalse(view.searchStrip.wantsLayer)
+        XCTAssertTrue(type(of: view.searchStrip) == NSView.self, "a plain view, nothing custom")
+        XCTAssertEqual(view.window?.backgroundColor, .windowBackgroundColor)
+
+        // The hairline: the standard separator box, one point tall, edge to edge.
+        let separator = view.searchSeparatorRect
+        XCTAssertEqual(view.searchSeparator.boxType, .separator)
+        XCTAssertEqual(separator.height, MainView.searchSeparatorHeight, accuracy: 0.5)
+        XCTAssertEqual(separator.minX, 0, accuracy: 0.5)
+        XCTAssertEqual(separator.width, size.width, accuracy: 0.5)
+        XCTAssertEqual(separator.maxY, strip.minY, accuracy: 0.5)
+        XCTAssertEqual(view.splitView.frame.maxY, separator.minY, accuracy: 0.5)
     }
 
     func testW2_listKeepsItsHeightWhenTheWindowGrows() {

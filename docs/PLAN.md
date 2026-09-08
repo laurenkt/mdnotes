@@ -175,7 +175,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M7.1 Snapshot helper in TestSupport or AppTests (V-1): render a window's content view at
       2x in light and dark to `build/snapshots/<name>-<appearance>.png`. Test: writes two
       files for the main window.
-- [ ] M7.2 Main window layout per W-6: title bar with title, search field inset 8/10 pt on a
+- [x] M7.2 Main window layout per W-6: title bar with title, search field inset 8/10 pt on a
       `windowBackgroundColor` strip, hairline `separatorColor` beneath, list, split, editor,
       backlinks. Remove any non-semantic colours. Smoke test asserts frames and insets;
       snapshot inspected against direction B on the canvas.

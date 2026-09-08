@@ -1,11 +1,17 @@
 import AppKit
 
-/// The main window's content (W-2): search field across the top, the eviction bar (L-10) and
-/// the inline message (C-3) under it when shown, the note list below, the editor below the
-/// list, and the backlinks strip below the editor. The list/editor boundary is a draggable
-/// `NSSplitView` divider whose position persists across launches (W-1).
+/// The main window's content (W-2, W-6): the search field inset on a window-background strip
+/// across the top, the eviction bar (L-10) and the inline message (C-3) under it when shown, a
+/// hairline separator, the note list below, the editor below the list, and the backlinks
+/// strip below the editor. The list/editor boundary is a draggable `NSSplitView` divider
+/// whose position persists across launches (W-1).
 ///
-/// This is layout only. Data sources, delegates and behaviour are wired by later tasks.
+/// Direction B of the design canvas (ADR-0013): the strip draws nothing itself, so the
+/// window's own `windowBackgroundColor` shows through; the separator is a standard `NSBox`
+/// separator; the field keeps its default bezel. No view here sets a colour that is not a
+/// semantic `NSColor`.
+///
+/// This is layout only. Data sources, delegates and behaviour are wired elsewhere.
 @MainActor
 public final class MainView: NSView, NSSplitViewDelegate {
     /// `UserDefaults` key under which the divider position (the list's height) persists (W-1).
@@ -14,11 +20,21 @@ public final class MainView: NSView, NSSplitViewDelegate {
     nonisolated public static let defaultListHeight: CGFloat = 220
     /// Height of the backlinks strip when it is shown (K-6).
     nonisolated public static let backlinksStripHeight: CGFloat = 28
+    /// W-6: the search field's inset from the top and bottom of its strip.
+    nonisolated public static let searchFieldVerticalInset: CGFloat = 8
+    /// W-6: the search field's inset from the leading and trailing edges of its strip.
+    nonisolated public static let searchFieldHorizontalInset: CGFloat = 10
+    /// W-6: the hairline under the strip, in points.
+    nonisolated public static let searchSeparatorHeight: CGFloat = 1
     /// The height the editor's text container and view may grow to: the value
     /// `NSTextView.scrollableTextView()` uses, so layout is unchanged by the subclass.
     nonisolated private static let unboundedEditorHeight: CGFloat = 10_000_000
 
+    /// W-6: the window-background strip across the top that holds the search field.
+    public let searchStrip: NSView
     public let searchField: NSSearchField
+    /// W-6: the hairline between the strip (and the bars under it, when shown) and the list.
+    public let searchSeparator: NSBox
     /// L-10: the bar directly under the search field. Hidden until the window controller gives
     /// it a dataless count.
     public let evictionBar: EvictionBar
@@ -64,6 +80,8 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public override init(frame frameRect: NSRect) {
         defaults = .standard
         searchField = Self.makeSearchField()
+        searchStrip = Self.makeSearchStrip(holding: searchField)
+        searchSeparator = Self.makeSearchSeparator()
         evictionBar = EvictionBar()
         messageLabel = Self.makeMessageLabel()
         (listScrollView, tableView) = Self.makeList()
@@ -73,7 +91,9 @@ public final class MainView: NSView, NSSplitViewDelegate {
         editorPane = Self.makeEditorPane(notice: readOnlyNotice, editor: editorScrollView)
         backlinksStrip = BacklinksStrip(defaults: defaults)
         splitView = Self.makeSplitView(top: listScrollView, bottom: editorPane)
-        stack = NSStackView(views: [searchField, evictionBar, messageLabel, splitView, backlinksStrip])
+        stack = NSStackView(views: [
+            searchStrip, evictionBar, messageLabel, searchSeparator, splitView, backlinksStrip,
+        ])
         super.init(frame: frameRect)
 
         splitView.delegate = self
@@ -92,7 +112,8 @@ public final class MainView: NSView, NSSplitViewDelegate {
             backlinksStrip.heightAnchor.constraint(equalToConstant: Self.backlinksStripHeight),
         ])
         // The split view takes every point the search field and strip do not need.
-        searchField.setContentHuggingPriority(.required, for: .vertical)
+        searchStrip.setContentHuggingPriority(.required, for: .vertical)
+        searchSeparator.setContentHuggingPriority(.required, for: .vertical)
         evictionBar.setContentHuggingPriority(.required, for: .vertical)
         messageLabel.setContentHuggingPriority(.required, for: .vertical)
         backlinksStrip.setContentHuggingPriority(.required, for: .vertical)
@@ -235,6 +256,33 @@ public final class MainView: NSView, NSSplitViewDelegate {
         field.sendsWholeSearchString = false
         field.translatesAutoresizingMaskIntoConstraints = false
         return field
+    }
+
+    /// W-6: a plain view that paints nothing, so the window background shows through, with
+    /// the field inset 8 pt vertically and 10 pt horizontally.
+    private static func makeSearchStrip(holding field: NSSearchField) -> NSView {
+        let strip = NSView()
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        strip.addSubview(field)
+        NSLayoutConstraint.activate([
+            field.topAnchor.constraint(equalTo: strip.topAnchor, constant: searchFieldVerticalInset),
+            field.bottomAnchor.constraint(equalTo: strip.bottomAnchor, constant: -searchFieldVerticalInset),
+            field.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: searchFieldHorizontalInset),
+            field.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -searchFieldHorizontalInset),
+        ])
+        return strip
+    }
+
+    /// W-6: the standard separator box, one point tall, drawn by AppKit in `separatorColor`.
+    private static func makeSearchSeparator() -> NSBox {
+        // A separator box is horizontal when it starts wider than tall; from a zero frame it
+        // would hug its width as a vertical line.
+        let box = NSBox(frame: NSRect(x: 0, y: 0, width: 100, height: searchSeparatorHeight))
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        box.heightAnchor.constraint(equalToConstant: searchSeparatorHeight).isActive = true
+        return box
     }
 
     private static func makeMessageLabel() -> NSTextField {

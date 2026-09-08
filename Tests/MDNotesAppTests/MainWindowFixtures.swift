@@ -24,3 +24,11 @@ extension XCTestCase {
         return box.controller
     }
 }
+
+extension MainView {
+    /// The W-6 hairline's layout rectangle. A separator box's frame carries a 2 pt alignment
+    /// inset on every side; this is the one-point-tall rectangle the stack lays out.
+    var searchSeparatorRect: NSRect {
+        searchSeparator.alignmentRect(forFrame: searchSeparator.frame)
+    }
+}
