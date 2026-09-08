@@ -185,7 +185,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M7.4 Settings window per PR-1: title `Settings`, `Settings…` Cmd-comma, fixed size,
       `NSGridView` with right-aligned captions, Notes folder row, Global shortcut row, 20 pt
       margins. Smoke test asserts style mask, title, grid rows. Snapshot inspected.
-- [ ] M7.5 Menu audit: View menu holds Bigger/Smaller/Actual Size and Backlinks; Window menu
+- [x] M7.5 Menu audit: View menu holds Bigger/Smaller/Actual Size and Backlinks; Window menu
       standard; File menu gains `New from Template` placeholder submenu (filled in M9). Smoke
       test on menu titles and key equivalents.
 - [ ] M7.6 Manual acceptance pass for M7; discrepancies become tasks above this line.

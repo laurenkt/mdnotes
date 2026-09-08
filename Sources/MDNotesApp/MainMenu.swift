@@ -9,18 +9,26 @@ import AppKit
 /// The window handles Cmd-L, Cmd-R, Cmd-Delete, Cmd-Shift-B and Cmd-, itself before the menu
 /// is asked (`MainView.performKeyEquivalent`); the items here show those shortcuts and take
 /// them when the window declines, as a disabled item lets a key go on to the focused view.
-/// There is no File menu and no Save item: the search field creates notes (S-1) and autosave
-/// writes them (E-4).
+/// The File menu holds `New from Template` (TP-6) and Close; there is no New item and no Save
+/// item, as the search field creates notes (S-1) and autosave writes them (E-4). The Window
+/// menu is the standard one: Minimize, Zoom, Bring All to Front and the windows AppKit lists.
 @MainActor
 public enum MainMenu {
     /// The application's name as the menu titles use it.
     public static let appName = "MDNotes"
 
     public static let appMenuTitle = appName
+    public static let fileMenuTitle = "File"
     public static let editMenuTitle = "Edit"
     public static let noteMenuTitle = "Note"
     public static let viewMenuTitle = "View"
     public static let windowMenuTitle = "Window"
+
+    /// TP-6: `File > New from Template`. Until M9 fills the submenu from the template store it
+    /// holds one disabled placeholder row, `noTemplatesItemTitle`, as an empty list is shown.
+    public static let newFromTemplateItemTitle = "New from Template"
+    public static let noTemplatesItemTitle = "No Templates"
+    public static let closeItemTitle = "Close"
 
     public static let searchItemTitle = "Search"
     public static let renameItemTitle = "Rename Note"
@@ -37,13 +45,13 @@ public enum MainMenu {
     /// The Delete key as a menu item spells it (`NSBackspaceCharacter`), shown as ⌫.
     public static let deleteKeyEquivalent = "\u{8}"
 
-    /// Builds the whole menu bar: the application menu, Edit, Note, View and Window. The
+    /// Builds the whole menu bar: the application menu, File, Edit, Note, View and Window. The
     /// Window menu is returned separately so the caller can hand it to the application as its
     /// windows menu.
     public static func make() -> (mainMenu: NSMenu, windowMenu: NSMenu) {
         let main = NSMenu(title: "Main")
         let window = makeWindowMenu()
-        for menu in [makeAppMenu(), makeEditMenu(), makeNoteMenu(), makeViewMenu(), window] {
+        for menu in [makeAppMenu(), makeFileMenu(), makeEditMenu(), makeNoteMenu(), makeViewMenu(), window] {
             let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
             item.submenu = menu
             main.addItem(item)
@@ -64,6 +72,22 @@ public enum MainMenu {
         menu.addItem(item("Show All", #selector(NSApplication.unhideAllApplications(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q"))
+        return menu
+    }
+
+    private static func makeFileMenu() -> NSMenu {
+        let menu = NSMenu(title: fileMenuTitle)
+        // TP-6: the submenu lists templates by name once M9 builds it from the template store.
+        // A placeholder row keeps the item from opening onto nothing; it has no action, so
+        // the menu leaves it disabled.
+        let templates = NSMenu(title: newFromTemplateItemTitle)
+        templates.addItem(NSMenuItem(title: noTemplatesItemTitle, action: nil, keyEquivalent: ""))
+        let newFromTemplate = NSMenuItem(title: newFromTemplateItemTitle, action: nil, keyEquivalent: "")
+        newFromTemplate.submenu = templates
+        menu.addItem(newFromTemplate)
+        menu.addItem(.separator())
+        // W-4: closing the window hides it; the delegate declines to quit on the last close.
+        menu.addItem(item(closeItemTitle, #selector(NSWindow.performClose(_:)), "w"))
         return menu
     }
 
@@ -107,13 +131,14 @@ public enum MainMenu {
         return menu
     }
 
+    /// The standard Window menu. AppKit appends the open windows below `Bring All to Front`
+    /// once the menu is the application's windows menu.
     private static func makeWindowMenu() -> NSMenu {
         let menu = NSMenu(title: windowMenuTitle)
         menu.addItem(item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"))
         menu.addItem(item("Zoom", #selector(NSWindow.performZoom(_:))))
         menu.addItem(.separator())
-        // W-4: closing the window quits the app.
-        menu.addItem(item("Close", #selector(NSWindow.performClose(_:)), "w"))
+        menu.addItem(item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))))
         return menu
     }
 

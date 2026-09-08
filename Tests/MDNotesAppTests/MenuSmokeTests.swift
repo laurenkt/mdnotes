@@ -167,51 +167,133 @@ final class MenuSmokeTests: XCTestCase {
                 characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode))
     }
 
-    // MARK: - The menu bar: app, Edit, Note, View and Window menus, built in code (P-2)
+    // MARK: - The menu bar: app, File, Edit, Note, View and Window menus, built in code (P-2)
 
-    func testP2_launchInstallsTheMenuBarWithTheStandardMenusAndNoFileOrSaveItem() async throws {
+    /// One row of the menu audit: an item's title and the shortcut it shows, or nil for a
+    /// separator.
+    private typealias Row = (title: String, key: String, modifiers: NSEvent.ModifierFlags)?
+
+    /// The whole menu bar as the audit expects it, menu by menu, in order. The Window menu's
+    /// own items only; AppKit appends the open windows below them.
+    private static let expectedMenus: [(title: String, rows: [Row])] = [
+        (
+            MainMenu.appMenuTitle,
+            [
+                ("About MDNotes", "", .command), nil, ("Settings\u{2026}", ",", .command), nil,
+                ("Hide MDNotes", "h", .command), ("Hide Others", "h", [.command, .option]),
+                ("Show All", "", .command), nil, ("Quit MDNotes", "q", .command),
+            ]
+        ),
+        (
+            MainMenu.fileMenuTitle,
+            [(MainMenu.newFromTemplateItemTitle, "", .command), nil, (MainMenu.closeItemTitle, "w", .command)]
+        ),
+        (
+            MainMenu.editMenuTitle,
+            [
+                ("Undo", "z", .command), ("Redo", "z", [.command, .shift]), nil, ("Cut", "x", .command),
+                ("Copy", "c", .command), ("Paste", "v", .command), ("Select All", "a", .command),
+            ]
+        ),
+        (
+            MainMenu.noteMenuTitle,
+            [
+                (MainMenu.searchItemTitle, "l", .command), nil, (MainMenu.renameItemTitle, "r", .command),
+                (MainMenu.deleteItemTitle, MainMenu.deleteKeyEquivalent, .command),
+            ]
+        ),
+        (
+            MainMenu.viewMenuTitle,
+            [
+                (MainMenu.biggerItemTitle, "+", .command), (MainMenu.smallerItemTitle, "-", .command),
+                (MainMenu.actualSizeItemTitle, "0", .command), nil,
+                (MainMenu.hideBacklinksItemTitle, "b", [.command, .shift]),
+            ]
+        ),
+        (
+            MainMenu.windowMenuTitle,
+            [("Minimize", "m", .command), ("Zoom", "", .command), nil, ("Bring All to Front", "", .command)]
+        ),
+    ]
+
+    func testP2_launchInstallsTheMenuBarWithTheStandardMenusAndNoSaveItem() async throws {
         let delegate = try await launch()
         let menu = try XCTUnwrap(delegate.mainMenu)
         XCTAssertTrue(NSApp.mainMenu === menu, "installed as the application's menu bar")
-        XCTAssertEqual(
-            menu.items.map(\.title),
-            [
-                MainMenu.appMenuTitle, MainMenu.editMenuTitle, MainMenu.noteMenuTitle, MainMenu.viewMenuTitle,
-                MainMenu.windowMenuTitle,
-            ])
+        XCTAssertEqual(menu.items.map(\.title), Self.expectedMenus.map(\.title))
         XCTAssertTrue(
             NSApp.windowsMenu === (try submenu(titled: MainMenu.windowMenuTitle, of: menu)),
             "the Window menu is the application's windows menu")
+
+        // Every title and key equivalent, menu by menu (the audit M7.5 asks for). AppKit
+        // appends a separator and the open windows to the windows menu; those are its.
+        for expected in Self.expectedMenus {
+            var actual = Array(
+                try submenu(titled: expected.title, of: menu).items.prefix {
+                    $0.action != #selector(NSWindow.makeKeyAndOrderFront(_:))
+                })
+            while actual.last?.isSeparatorItem == true { actual.removeLast() }
+            XCTAssertEqual(actual.count, expected.rows.count, "\(expected.title) menu has \(expected.rows.count) rows")
+            for (item, row) in zip(actual, expected.rows) {
+                guard let row else {
+                    XCTAssertTrue(item.isSeparatorItem, "a separator in \(expected.title) before \(item.title)")
+                    continue
+                }
+                XCTAssertFalse(item.isSeparatorItem, "\(row.title) in \(expected.title)")
+                XCTAssertEqual(item.title, row.title, "\(expected.title) menu")
+                assertShortcut(item, row.key, row.modifiers)
+            }
+        }
+
         // AppKit appends the open windows to the windows menu, each targeted at its window;
-        // every item the app builds sends its action down the responder chain instead.
+        // every item the app builds sends its action down the responder chain instead. The
+        // one exception is the template placeholder, which has no action so it stays disabled.
         let built = items(in: menu).filter {
             $0.submenu == nil && !$0.isSeparatorItem && $0.action != #selector(NSWindow.makeKeyAndOrderFront(_:))
         }
-        XCTAssertEqual(built.filter { $0.target != nil || $0.action == nil }.map(\.title), [])
-        XCTAssertEqual(built.count, 22)
+        XCTAssertEqual(built.filter { $0.target != nil }.map(\.title), [])
+        XCTAssertEqual(built.filter { $0.action == nil }.map(\.title), [MainMenu.noTemplatesItemTitle])
+        XCTAssertEqual(built.count, 24)
 
-        let app = try submenu(titled: MainMenu.appMenuTitle, of: menu)
+        // S-1 creates notes and E-4 saves them: no New item, no Save item.
         XCTAssertEqual(
-            app.items.filter { !$0.isSeparatorItem }.map(\.title),
-            ["About MDNotes", "Settings\u{2026}", "Hide MDNotes", "Hide Others", "Show All", "Quit MDNotes"])
-        XCTAssertEqual(
-            try item(#selector(NSApplication.orderFrontStandardAboutPanel(_:)), in: app).title, "About MDNotes")
-        assertShortcut(try item(#selector(NSApplication.hide(_:)), in: app), "h")
-        assertShortcut(try item(#selector(NSApplication.hideOtherApplications(_:)), in: app), "h", [.command, .option])
-        assertShortcut(try item(#selector(NSApplication.unhideAllApplications(_:)), in: app), "")
-        assertShortcut(try item(#selector(NSApplication.terminate(_:)), in: app), "q")
+            items(in: menu).filter {
+                let title = $0.title.lowercased()
+                return title.hasPrefix("save") || title == "new" || title.hasPrefix("new note")
+            }.map(\.title), [])
+    }
 
-        let window = try submenu(titled: MainMenu.windowMenuTitle, of: menu)
-        XCTAssertEqual(
-            window.items.filter { !$0.isSeparatorItem && $0.action != #selector(NSWindow.makeKeyAndOrderFront(_:)) }
-                .map(\.title), ["Minimize", "Zoom", "Close"])
-        assertShortcut(try item(#selector(NSWindow.performMiniaturize(_:)), in: window), "m")
-        assertShortcut(try item(#selector(NSWindow.performZoom(_:)), in: window), "")
-        assertShortcut(try item(#selector(NSWindow.performClose(_:)), in: window), "w")
+    // MARK: - TP-6: File > New from Template, a placeholder until M9 fills it
 
-        // S-1 creates notes and E-4 saves them: no File menu, no Save item.
-        XCTAssertNil(menu.items.first { $0.title == "File" })
-        XCTAssertEqual(items(in: menu).filter { $0.title.lowercased().hasPrefix("save") }.map(\.title), [])
+    func testTP6_fileMenuHoldsANewFromTemplatePlaceholderSubmenuAndClose() async throws {
+        let delegate = try await launch()
+        let file = try submenu(titled: MainMenu.fileMenuTitle, of: delegate.mainMenu)
+        XCTAssertEqual(
+            file.items.filter { !$0.isSeparatorItem }.map(\.title),
+            [MainMenu.newFromTemplateItemTitle, MainMenu.closeItemTitle])
+        XCTAssertEqual(MainMenu.newFromTemplateItemTitle, "New from Template", "as TP-6 names it")
+
+        let newFromTemplate = try XCTUnwrap(file.items.first { $0.title == MainMenu.newFromTemplateItemTitle })
+        assertShortcut(newFromTemplate, "")
+        XCTAssertTrue(newFromTemplate.hasSubmenu, "the item only opens its submenu")
+        let templates = try XCTUnwrap(newFromTemplate.submenu, "New from Template is a submenu")
+        XCTAssertEqual(templates.title, MainMenu.newFromTemplateItemTitle)
+        XCTAssertEqual(templates.items.map(\.title), [MainMenu.noTemplatesItemTitle], "one placeholder row")
+        let placeholder = try XCTUnwrap(templates.items.first)
+        XCTAssertNil(placeholder.action)
+        XCTAssertNil(placeholder.target)
+        assertShortcut(placeholder, "")
+        XCTAssertTrue(templates.autoenablesItems)
+        templates.update()
+        XCTAssertFalse(placeholder.isEnabled, "no action, so the menu leaves it disabled")
+
+        // Close moved here from the Window menu with the File menu's arrival; still Cmd-W.
+        let close = try item(#selector(NSWindow.performClose(_:)), in: delegate.mainMenu)
+        XCTAssertTrue(file.items.contains(close), "Close is in the File menu")
+        assertShortcut(close, "w")
+        XCTAssertEqual(
+            items(in: delegate.mainMenu).filter { $0.action == #selector(NSWindow.performClose(_:)) }.count, 1,
+            "and nowhere else")
     }
 
     // MARK: - E-7: the Edit menu carries undo and redo, and the clipboard
