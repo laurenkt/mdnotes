@@ -31,4 +31,24 @@ final class WindowSnapshotTests: XCTestCase {
         XCTAssertNotEqual(pngs[0], pngs[1], "light and dark appearances render differently")
         XCTAssertNil(window.appearance, "the window follows the system appearance again afterwards")
     }
+
+    /// I-7: a window whose content view paints no background (Settings, PR-1) still writes an
+    /// opaque PNG in both appearances, filled with `windowBackgroundColor` as the window renders it.
+    func testV1_transparentContentViewIsRenderedOnTheWindowBackground() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 120, height: 80), styleMask: [.titled],
+            backing: .buffered, defer: false)
+        window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 80))
+
+        let written = try writeWindowSnapshots(ofWindow: window, named: "transparent-content")
+
+        var corners: [NSColor] = []
+        for url in written {
+            let rep = try XCTUnwrap(NSBitmapImageRep(data: try Data(contentsOf: url)), url.path)
+            let corner = try XCTUnwrap(rep.colorAt(x: 1, y: 1), url.path)
+            XCTAssertEqual(corner.alphaComponent, 1, accuracy: 0.001, "\(url.lastPathComponent) is opaque")
+            corners.append(corner)
+        }
+        XCTAssertNotEqual(corners[0], corners[1], "light and dark backgrounds differ")
+    }
 }

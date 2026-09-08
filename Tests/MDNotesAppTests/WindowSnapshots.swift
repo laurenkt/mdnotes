@@ -29,6 +29,7 @@ extension XCTestCase {
             view.displayIfNeeded()
             let bounds = view.bounds
             let rep = try Self.cachingRep(for: view, in: bounds, scale: 2)
+            Self.fillWindowBackground(of: window, into: rep, in: bounds)
             view.cacheDisplay(in: bounds, to: rep)
             guard let png = rep.representation(using: .png, properties: [:]) else {
                 throw CocoaError(.fileWriteUnknown)
@@ -39,6 +40,22 @@ extension XCTestCase {
         }
         window.appearance = nil
         return written
+    }
+
+    /// A content view that paints no background (Settings, PR-1) caches as transparent pixels,
+    /// so the window's own background is painted behind it first, resolved in the appearance
+    /// the window is currently rendering (I-7).
+    @MainActor
+    private static func fillWindowBackground(of window: NSWindow, into rep: NSBitmapImageRep, in bounds: NSRect) {
+        guard let context = NSGraphicsContext(bitmapImageRep: rep) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        window.effectiveAppearance.performAsCurrentDrawingAppearance {
+            (window.backgroundColor ?? NSColor.windowBackgroundColor).setFill()
+            bounds.fill()
+        }
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// `bitmapImageRepForCachingDisplay` sized by the window's backing scale, which is what V-1
