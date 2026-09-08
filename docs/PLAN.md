@@ -202,7 +202,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M8.3 Row thumbnails (S-11): 34 pt square at the row's right, drawn only when cached,
       requested on row display, click selects the note. `ListPerfTests` re-run with 10 % of
       synthetic notes embedding a generated PNG (extend `SyntheticLibrary`). Snapshot inspected.
-- [ ] M8.4 Editor attachment plumbing (E-9, ADR-0012): one accessor that returns the view's
+- [x] M8.4 Editor attachment plumbing (E-9, ADR-0012): one accessor that returns the view's
       text without attachment characters, used by save, copy, search, link and tag parsing and
       styler ranges. Tests: round trip with attachments present leaves the file byte-identical.
 - [ ] M8.5 Inline thumbnails (E-9): attachment on the line below a resolving embed, 240 by 160

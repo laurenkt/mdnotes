@@ -12,6 +12,11 @@ import AppKit
 /// pasteboard is handed to `onInsertImage` and, if it takes it, the text view never sees the
 /// paste or drop. A plain text view would otherwise ignore image data and insert a dropped
 /// file's path. Text pastes and drops keep their `NSTextView` behaviour.
+///
+/// A copy, cut or drag of a selection that covers a display-only thumbnail attachment (E-9)
+/// writes the text as the file holds it, through `EditorText`, so the attachment characters
+/// never leave the view. Without an attachment on show the selection is written as
+/// `NSTextView` writes it.
 @MainActor
 public final class EditorTextView: NSTextView {
     /// A click with Command down and no other modifier, with the insertion index the click
@@ -75,6 +80,20 @@ public final class EditorTextView: NSTextView {
             if rect.contains(point) { return candidate }
         }
         return nil
+    }
+
+    // MARK: - Copy (E-9)
+
+    /// What `copy:`, `cut:` and a drag write for the selection. With a display-only attachment
+    /// on show (E-9) the selected ranges are written as the file's text, one string, the
+    /// attachment characters left out; otherwise as `NSTextView` writes them.
+    public override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard let storage = textStorage else { return super.writeSelection(to: pboard, types: types) }
+        let text = EditorText(storage: storage)
+        guard text.hasDisplayOnlyRuns else { return super.writeSelection(to: pboard, types: types) }
+        let string = selectedRanges.map { text.string(inStorageRange: $0.rangeValue) }.joined(separator: "\n")
+        pboard.declareTypes([.string], owner: nil)
+        return pboard.setString(string, forType: .string)
     }
 
     // MARK: - Image paste and drop (I-1)

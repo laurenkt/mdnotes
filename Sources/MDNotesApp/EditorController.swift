@@ -48,6 +48,13 @@ import MDNotesCore
 ///
 /// A plain click on a tag (T-4) is intercepted by `EditorTextView` and handed to the window
 /// controller; `tag(at:)` is what names the tag under the pointer.
+///
+/// The storage may show display-only thumbnail attachments below image embeds (E-9,
+/// ADR-0012), added and removed through `addAttachment` and `removeAttachments`. They are not
+/// in the file and are not edits: `text` is the one accessor for the file's text and leaves
+/// them out, the save writes `text`, the undo bookkeeping compares `text`, and the link and tag
+/// lookups map the storage index they are given through `EditorText` before scanning. Adding
+/// or removing one neither starts the autosave delay nor registers with undo.
 @MainActor
 public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
     /// How long after the last edit the note is written (E-4).
@@ -127,6 +134,9 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// True while the controller itself is replacing the text, so the storage's edit
     /// notification is not taken for a user edit.
     private var isReplacingText = false
+    /// True while a display-only attachment run is being added or removed (E-9), so the
+    /// storage's edit notification is neither styled nor taken for a user edit.
+    private var isEditingAttachments = false
 
     public init(textView: NSTextView, clock: any AutosaveClock = SystemAutosaveClock()) {
         self.textView = textView
@@ -154,6 +164,75 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// not. Called when the library publishes; the styler re-styles the links it changed.
     public func refreshLinkStyling() {
         styler.restyleLinks()
+    }
+
+    // MARK: - The file's text (E-9)
+
+    /// The text as the file holds it: the view's text without the display-only attachment
+    /// characters (E-9, ADR-0012). The one accessor every reader of the view's text uses; the
+    /// save writes exactly this.
+    public var text: String { editorText.string }
+
+    /// The file's text with the mapping between its indices and the storage's.
+    private var editorText: EditorText {
+        EditorText(storage: textView.textStorage ?? NSTextStorage())
+    }
+
+    /// The storage ranges of the display-only attachment runs (E-9), ascending; empty while
+    /// none is shown.
+    public var attachmentRanges: [NSRange] { editorText.displayOnlyRanges }
+
+    /// Shows `attachment` on a line of its own directly below the line containing storage index
+    /// `index` (E-9), after any attachment already below that line; an index on an attachment
+    /// line counts as the line the attachment is below. The two characters added, a line break
+    /// and the attachment character, both carry `EditorText.displayOnlyAttribute` and are the
+    /// only way a display-only run comes to be: `text` leaves them out, the storage delegate
+    /// does not take them for an edit (E-4) and nothing registers with undo (E-7). A caret at
+    /// or after the insertion point moves with the text it was in.
+    public func addAttachment(_ attachment: NSTextAttachment, belowLineContaining index: Int) {
+        guard let storage = textView.textStorage else { return }
+        let text = editorText
+        let onFileText = text.storageIndex(forFileIndex: text.fileIndex(forStorageIndex: index))
+        let backing = storage.mutableString
+        var contentsEnd = 0
+        backing.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: onFileText, length: 0))
+        var at = contentsEnd
+        while let run = text.displayOnlyRanges.first(where: { $0.location == at }) { at = NSMaxRange(run) }
+
+        let run = NSMutableAttributedString(string: "\n")
+        run.append(NSAttributedString(attachment: attachment))
+        run.addAttributes(
+            [EditorText.displayOnlyAttribute: true, .font: styler.baseFont, .foregroundColor: styler.baseColor],
+            range: NSRange(location: 0, length: run.length))
+        editAttachments {
+            storage.insert(run, at: at)
+        }
+    }
+
+    /// Removes the display-only attachment runs that `range`, a storage range, overlaps (E-9):
+    /// every run when `range` is nil, and for an empty range the run containing its location.
+    /// Not an edit and not undoable, as `addAttachment` is not.
+    public func removeAttachments(in range: NSRange? = nil) {
+        guard let storage = textView.textStorage else { return }
+        let runs = editorText.displayOnlyRanges.filter { run in
+            guard let range else { return true }
+            return range.length == 0
+                ? NSLocationInRange(range.location, run) : NSIntersectionRange(run, range).length > 0
+        }
+        guard !runs.isEmpty else { return }
+        editAttachments {
+            for run in runs.reversed() { storage.deleteCharacters(in: run) }
+        }
+    }
+
+    /// Runs `edit` on the storage as one editing pass with the delegate's edit handling off.
+    private func editAttachments(_ edit: () -> Void) {
+        guard let storage = textView.textStorage else { return }
+        isEditingAttachments = true
+        defer { isEditingAttachments = false }
+        storage.beginEditing()
+        edit()
+        storage.endEditing()
     }
 
     /// Replaces the whole text without it counting as an edit or registering with undo (E-7).
@@ -226,7 +305,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     private func leaveShownNote() {
         textView.breakUndoCoalescing()
         if let shownNoteID {
-            undoStack(for: shownNoteID).textWhenLeft = textView.string
+            undoStack(for: shownNoteID).textWhenLeft = text
         }
         shownNoteID = nil
         scratchUndoManager = UndoManager()
@@ -242,8 +321,10 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// while the character edit is being processed widen its range, and the text view then
     /// moves the insertion point to the end of the widened range instead of past the typed
     /// character. Then, unless the replacement is programmatic, as `load`'s is, the autosave
-    /// delay restarts (E-4). The protocol is not main-actor isolated in the SDK, but the
-    /// storage belongs to a view that is only ever edited on the main thread.
+    /// delay restarts (E-4). A display-only attachment run being added or removed (E-9) is
+    /// neither: the text it belongs to is unchanged. The protocol is not main-actor isolated
+    /// in the SDK, but the storage belongs to a view that is only ever edited on the main
+    /// thread.
     nonisolated public func textStorage(
         _ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
         range editedRange: NSRange,
@@ -251,6 +332,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     ) {
         guard editedMask.contains(.editedCharacters) else { return }
         MainActor.assumeIsolated {
+            guard !isEditingAttachments else { return }
             styler.restyleAfterEdit(in: editedRange)
             textDidEdit()
         }
@@ -281,16 +363,20 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// insertion index lands on an end when it hits the outer half of a bracket. Where two
     /// links meet, the earlier one wins. A `[[link]]` inside a code span or fenced block is not
     /// a link (E-2), so the paragraphs around the index are scanned as the styler scans them,
-    /// with fenced blocks covered whole.
+    /// with fenced blocks covered whole. `index` is a storage index (E-9): one on an attachment
+    /// line counts as the end of the line above it, so a caret on a thumbnail is touching the
+    /// embed that ends its line.
     public func linkTarget(at index: Int) -> LinkTarget? {
         guard let storage = textView.textStorage, index >= 0, index <= storage.length else { return nil }
-        let units = EditorStyler.units(of: storage)
-        let paragraphs = MarkdownScanner.paragraphRange(in: units, editedRange: NSRange(location: index, length: 0))
-        for token in MarkdownScanner.scan(units, in: paragraphs) {
+        let text = editorText
+        let index = text.fileIndex(forStorageIndex: index)
+        let paragraphs = MarkdownScanner.paragraphRange(
+            in: text.units, editedRange: NSRange(location: index, length: 0))
+        for token in MarkdownScanner.scan(text.units, in: paragraphs) {
             guard case .wikilink(let target, _, let isEmbed) = token.kind else { continue }
             if token.range.location > index { break }
             guard index <= token.range.location + token.range.length else { continue }
-            return LinkTarget(text: storage.mutableString.substring(with: target), isEmbed: isEmbed)
+            return LinkTarget(text: text.string(inFileRange: target), isEmbed: isEmbed)
         }
         return nil
     }
@@ -315,16 +401,28 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// tag. A `#word` inside a code span or fenced block is not a tag (T-1), so the paragraphs
     /// around the index are scanned as the styler scans them, with fenced blocks covered whole.
     public func tag(at index: Int) -> String? {
-        guard let storage = textView.textStorage, let range = tagRange(at: index) else { return nil }
-        return storage.mutableString.substring(with: range)
+        let text = editorText
+        guard let range = tagFileRange(at: index, in: text) else { return nil }
+        return text.string(inFileRange: range)
     }
 
-    /// The range of the tag containing the character at `index`, `#` included, or nil.
+    /// The storage range of the tag containing the character at storage index `index`, `#`
+    /// included, or nil. A character of an attachment line (E-9) is in no tag.
     public func tagRange(at index: Int) -> NSRange? {
-        guard let storage = textView.textStorage, index >= 0, index < storage.length else { return nil }
-        let units = EditorStyler.units(of: storage)
-        let paragraphs = MarkdownScanner.paragraphRange(in: units, editedRange: NSRange(location: index, length: 0))
-        for token in MarkdownScanner.scan(units, in: paragraphs) {
+        let text = editorText
+        guard let range = tagFileRange(at: index, in: text) else { return nil }
+        return text.storageRange(forFileRange: range)
+    }
+
+    /// The file range of the tag containing the character at storage index `index`, or nil.
+    private func tagFileRange(at index: Int, in text: EditorText) -> NSRange? {
+        guard let storage = textView.textStorage, index >= 0, index < storage.length,
+            !text.displayOnlyRanges.contains(where: { NSLocationInRange(index, $0) })
+        else { return nil }
+        let index = text.fileIndex(forStorageIndex: index)
+        let paragraphs = MarkdownScanner.paragraphRange(
+            in: text.units, editedRange: NSRange(location: index, length: 0))
+        for token in MarkdownScanner.scan(text.units, in: paragraphs) {
             guard case .tag = token.kind else { continue }
             if token.range.location > index { break }
             guard index < token.range.location + token.range.length else { continue }
@@ -483,7 +581,8 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
             return
         }
         hasUnsavedEdits = false
-        let text = textView.string
+        // E-9: the file's text, without any display-only attachment characters.
+        let text = text
         let generation = generation
         queue.async { [self] in
             let result = Result { try library.save(text, to: noteID) }

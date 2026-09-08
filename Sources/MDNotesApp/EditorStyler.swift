@@ -33,6 +33,13 @@ import MDNotesCore
 /// The base font is the editor font preference (E-8); `MainView` reports a change through
 /// `baseFont`, which re-styles the whole text, since setting the text view's font has just
 /// flattened every weight.
+///
+/// The storage may show display-only thumbnail attachments that are not in the file (E-9).
+/// Every scan here is of `EditorText`, the file's text with those left out, and every token
+/// range it yields is mapped back to storage coordinates before an attribute is set, so an
+/// attachment line neither shifts nor splits what the scanner sees. A paragraph range that
+/// covers an attachment line resets that line's font and colour with the rest, which changes
+/// nothing visible; the run's own marker attribute is never touched.
 @MainActor
 public final class EditorStyler {
     /// Attribute carried by every styled run; its value is a `TokenStyle` raw value. Lets the
@@ -138,25 +145,12 @@ public final class EditorStyler {
     /// attributes may be out of step with the text.
     public func restyleAll() {
         guard let storage = textView.textStorage, !isRestyling else { return }
-        let whole = NSRange(location: 0, length: storage.length)
-        let tokens = MarkdownScanner.scan(Self.units(of: storage), in: whole)
+        let text = EditorText(storage: storage)
+        let whole = NSRange(location: 0, length: text.units.count)
+        let tokens = MarkdownScanner.scan(text.units, in: whole)
         storage.beginEditing()
-        apply(tokens, in: whole, to: storage)
+        apply(tokens, in: NSRange(location: 0, length: storage.length), of: text, to: storage)
         storage.endEditing()
-    }
-
-    /// The storage's text as UTF-16 units, copied out in one call. A `String` bridged from
-    /// the storage iterates its units one message at a time, which on a 1 MB note costs more
-    /// than the whole PF-3 budget; the bulk copy is a fraction of a millisecond.
-    static func units(of storage: NSTextStorage) -> [UInt16] {
-        let length = storage.length
-        let backing = storage.mutableString
-        return [UInt16](unsafeUninitializedCapacity: length) { buffer, initialized in
-            if let base = buffer.baseAddress, length > 0 {
-                backing.getCharacters(base, range: NSRange(location: 0, length: length))
-            }
-            initialized = length
-        }
     }
 
     /// E-3: called by the text storage delegate once an edit to the characters has been
@@ -166,28 +160,32 @@ public final class EditorStyler {
     /// are one nested editing pass of their own.
     public func restyleAfterEdit(in editedRange: NSRange) {
         guard let storage = textView.textStorage, !isRestyling else { return }
-        let units = Self.units(of: storage)
-        var range = MarkdownScanner.paragraphRange(in: units, editedRange: editedRange)
-        var tokens = MarkdownScanner.scan(units, in: range)
-        if hasStaleFencedStyling(storage, in: range, inserted: editedRange, fenced: tokens) {
-            range.length = units.count - range.location
-            tokens = MarkdownScanner.scan(units, in: range)
+        let text = EditorText(storage: storage)
+        let edited = text.fileRange(forStorageRange: editedRange)
+        var range = MarkdownScanner.paragraphRange(in: text.units, editedRange: edited)
+        var tokens = MarkdownScanner.scan(text.units, in: range)
+        if hasStaleFencedStyling(storage, in: range, inserted: editedRange, fenced: tokens, of: text) {
+            range.length = text.units.count - range.location
+            tokens = MarkdownScanner.scan(text.units, in: range)
         }
         storage.beginEditing()
-        apply(tokens, in: range, to: storage)
+        apply(tokens, in: text.storageRange(forFileRange: range), of: text, to: storage)
         storage.endEditing()
     }
 
-    /// Whether `range` still carries fenced-code styling that none of the fenced blocks in
-    /// `tokens` covers, other than on the text just inserted (which only carries whatever the
-    /// typing attributes were). Such styling belongs to a block that an edit has unfenced,
-    /// and the block's remainder below the paragraph must be re-styled too.
+    /// Whether `range` (file indices) still carries fenced-code styling that none of the
+    /// fenced blocks in `tokens` covers, other than on the text just inserted (`inserted`, a
+    /// storage range, which only carries whatever the typing attributes were). Such styling
+    /// belongs to a block that an edit has unfenced, and the block's remainder below the
+    /// paragraph must be re-styled too.
     private func hasStaleFencedStyling(
-        _ storage: NSTextStorage, in range: NSRange, inserted: NSRange, fenced tokens: [MarkdownScanner.Token]
+        _ storage: NSTextStorage, in range: NSRange, inserted: NSRange, fenced tokens: [MarkdownScanner.Token],
+        of text: EditorText
     ) -> Bool {
-        let fenced = tokens.filter { $0.kind == .fencedCode }.map(\.range)
+        let fenced = tokens.filter { $0.kind == .fencedCode }.map { text.storageRange(forFileRange: $0.range) }
         var stale = false
-        storage.enumerateAttribute(Self.tokenAttribute, in: range, options: []) { value, run, stop in
+        let storageRange = text.storageRange(forFileRange: range)
+        storage.enumerateAttribute(Self.tokenAttribute, in: storageRange, options: []) { value, run, stop in
             guard value as? String == TokenStyle.fencedCode.rawValue else { return }
             if Self.range(inserted, contains: run) { return }
             if fenced.contains(where: { Self.range($0, contains: run) }) { return }
@@ -207,14 +205,16 @@ public final class EditorStyler {
     /// pass; the text and every other run are untouched. Nothing happens when no link changed.
     public func restyleLinks() {
         guard let storage = textView.textStorage, !isRestyling else { return }
-        let whole = NSRange(location: 0, length: storage.length)
+        let text = EditorText(storage: storage)
+        let whole = NSRange(location: 0, length: text.units.count)
         let index = linkIndex()
         var changes: [(range: NSRange, style: TokenStyle)] = []
-        for token in MarkdownScanner.scan(Self.units(of: storage), in: whole) {
+        for token in MarkdownScanner.scan(text.units, in: whole) {
             guard case .wikilink(let target, _, let isEmbed) = token.kind else { continue }
-            let style = linkStyle(target: target, isEmbed: isEmbed, in: storage, index: index)
-            let current = storage.attribute(Self.tokenAttribute, at: token.range.location, effectiveRange: nil)
-            if current as? String != style.rawValue { changes.append((token.range, style)) }
+            let style = linkStyle(target: target, isEmbed: isEmbed, in: text, index: index)
+            let range = text.storageRange(forFileRange: token.range)
+            let current = storage.attribute(Self.tokenAttribute, at: range.location, effectiveRange: nil)
+            if current as? String != style.rawValue { changes.append((range, style)) }
         }
         guard !changes.isEmpty else { return }
         isRestyling = true
@@ -228,15 +228,19 @@ public final class EditorStyler {
 
     /// The style of a link token (K-2): an embed links to a non-note file and is never
     /// ambiguous; any other target is ambiguous when the index says several notes share it.
-    private func linkStyle(target: NSRange, isEmbed: Bool, in storage: NSTextStorage, index: LinkIndex) -> TokenStyle {
+    /// `target` is a range of file indices into `text`.
+    private func linkStyle(target: NSRange, isEmbed: Bool, in text: EditorText, index: LinkIndex) -> TokenStyle {
         guard !isEmbed else { return .wikilink }
-        return index.resolve(storage.mutableString.substring(with: target)).isAmbiguous ? .ambiguousLink : .wikilink
+        return index.resolve(text.string(inFileRange: target)).isAmbiguous ? .ambiguousLink : .wikilink
     }
 
-    /// Resets `range` to the base font and colour, then applies `tokens`. A heading line's
-    /// links and tags are applied after the heading, so they take its weight and their colour.
-    /// Links are resolved against `linkIndex` as they are applied (K-2).
-    private func apply(_ tokens: [MarkdownScanner.Token], in range: NSRange, to storage: NSTextStorage) {
+    /// Resets `range`, a storage range, to the base font and colour, then applies `tokens`,
+    /// whose ranges are file indices into `text` and are mapped back to the storage. A heading
+    /// line's links and tags are applied after the heading, so they take its weight and their
+    /// colour. Links are resolved against `linkIndex` as they are applied (K-2).
+    private func apply(
+        _ tokens: [MarkdownScanner.Token], in range: NSRange, of text: EditorText, to storage: NSTextStorage
+    ) {
         isRestyling = true
         defer { isRestyling = false }
         storage.removeAttribute(Self.tokenAttribute, range: range)
@@ -245,11 +249,11 @@ public final class EditorStyler {
         for token in tokens {
             let style: TokenStyle
             if case .wikilink(let target, _, let isEmbed) = token.kind {
-                style = linkStyle(target: target, isEmbed: isEmbed, in: storage, index: index)
+                style = linkStyle(target: target, isEmbed: isEmbed, in: text, index: index)
             } else {
                 style = TokenStyle(token.kind)
             }
-            storage.addAttributes(attributes(for: style), range: token.range)
+            storage.addAttributes(attributes(for: style), range: text.storageRange(forFileRange: token.range))
         }
     }
 }
