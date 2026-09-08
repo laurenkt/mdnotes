@@ -43,3 +43,19 @@ Answer: Option 1 (2026-09-07). A query word containing `/` also matches the note
   path without `.md`; words without `/` are unchanged. The derived C-1 (path-equal opens,
   exact path beats same-title, newest among title matches) and C-3 (unlistable segments
   rejected) rules are confirmed. Recorded in ADR-0008; S-2, C-1 and C-3 amended.
+
+## Q2: Untracked harness files appeared during the M6.4 commit; whose are they?   (task: M6.4, 2026-09-08)
+Context: M6.4 landed as 55b31fa with a clean tree. Between the pre-commit gate starting and
+the commit finishing (09:03:25 to 09:03:50), five untracked files were written into the
+checkout by another session: `docs/METRICS.md`, `scripts/log-metric.sh`,
+`scripts/next-item.sh`, `scripts/task-brief.sh`, `scripts/verify-item.sh`. They are
+orchestrator tooling, not part of M6.4, and were still being written when the M6.4
+session finished. The Stop hook requires a clean tree, so this entry is committed instead.
+Options:
+  1. The session that wrote them commits them under its own message (recommended: they are
+     its work and it knows whether they are complete).
+  2. A later task session sweeps them into an unrelated commit. Not recommended: it would
+     commit another session's half-written files.
+  3. Delete them. Not acceptable from a task session: they are not its files.
+  Recommendation: option 1. The M6.4 session left them untouched and uncommitted. M6.4
+  itself is complete and needs no answer; this entry only explains the dirty tree.
