@@ -66,6 +66,11 @@ import MDNotesCore
 /// on an embed (I-2) does not open a note: the library finds the file the embed names and it is
 /// opened with its default application through `openFile`.
 ///
+/// The eviction bar (L-10) is fed from here: the library's eviction status names how many
+/// notes are dataless and the boot volume's free space, and the bar shows them under the
+/// search field once the library is ready, never during its scan, and hides when nothing is
+/// dataless. The bar's button opens Storage Settings through `openFile`.
+///
 /// The menu bar's Note and View items (`MainMenu`) reach here through the responder chain:
 /// `focusSearchField(_:)`, `renameNote(_:)`, `deleteNote(_:)` and `toggleBacklinks(_:)` are
 /// their actions, and `validateMenuItem(_:)` enables the rename and delete items only while a
@@ -104,8 +109,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// be opened.
     public var onOpenFile: (@MainActor (LinkTarget, URL?) -> Void)?
 
-    /// Opens a file that is not a note with its default application (I-2). `NSWorkspace.open`;
-    /// tests replace it to see what would have been opened without launching anything.
+    /// Opens a file that is not a note with its default application (I-2), and the Storage
+    /// Settings URL (L-10). `NSWorkspace.open`; tests replace it to see what would have been
+    /// opened without launching anything.
     public var openFile: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
 
     /// Called on the main thread once an image paste or drop (I-1) has settled: with the name
@@ -183,6 +189,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.textView.onInsertImage = { [weak self] source in self?.insertImage(source) ?? false }
         // K-6: a click on a title in the backlinks strip opens that note.
         view.backlinksStrip.onOpen = { [weak self] id in self?.openBacklink(id) }
+        // L-10: the eviction bar's button opens the Storage pane of System Settings.
+        view.evictionBar.onOpenStorageSettings = { [weak self] in self?.openStorageSettings() }
         // W-1: one window, one persisted frame. Cascading would discard the autosave name, and
         // the name must be set after the content view exists so a restored frame lays it out.
         shouldCascadeWindows = false
@@ -202,6 +210,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         self.library = library
         library.onSnapshotChange = { [weak self] snapshot in self?.libraryDidPublish(snapshot) }
         library.onExternalChanges = { [weak self] changes in self?.libraryDidChangeExternally(changes) }
+        library.onEvictionStatusChange = { [weak self] _ in self?.refreshEvictionBar() }
         libraryDidPublish(library.snapshot)
     }
 
@@ -215,9 +224,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         guard let library else { return }
         library.onSnapshotChange = nil
         library.onExternalChanges = nil
+        library.onEvictionStatusChange = nil
         self.library = nil
         pendingRenames = [:]
         hideInlineMessage()
+        refreshEvictionBar()
         listController.cancelEditingTitle()
         editorController.clear()
         listController.show(SearchIndex.empty.query(query))
@@ -361,6 +372,29 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             return
         }
         mainView.backlinksStrip.show(library.snapshot.links.backlinks(to: id))
+    }
+
+    // MARK: - Eviction bar (L-10)
+
+    /// Shows the bar under the search field while the library is ready and its last requester
+    /// pass found notes dataless, with the free space that pass read; hides it during a scan,
+    /// with nothing dataless, and with no library. Called whenever the status or the phase
+    /// changes, since the first pass usually ends before the scan does.
+    private func refreshEvictionBar() {
+        guard let library, library.phase == .ready, library.evictionStatus.datalessCount > 0 else {
+            mainView.evictionBar.hide()
+            return
+        }
+        let status = library.evictionStatus
+        mainView.evictionBar.show(datalessCount: status.datalessCount, freeBytes: status.freeBytes)
+    }
+
+    /// The bar's button (L-10): opens the Storage pane of System Settings through `openFile`.
+    /// Returns what `openFile` returned; false with nothing opened when the URL cannot be made.
+    @discardableResult
+    public func openStorageSettings() -> Bool {
+        guard let url = URL(string: EvictionBar.storageSettingsURLString) else { return false }
+        return openFile(url)
     }
 
     // MARK: - Link opening (K-3)
@@ -701,6 +735,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         editorController.refreshLinkStyling()
         // K-6: the new snapshot may link to the open note differently.
         refreshBacklinks()
+        // L-10: the publish that makes the library ready lets the bar show.
+        refreshEvictionBar()
     }
 
     /// Queries the current snapshot with `query` and hands the results to the list. The

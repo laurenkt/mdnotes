@@ -157,6 +157,79 @@ final class DownloadRequesterTests: XCTestCase {
         XCTAssertEqual(harness.requested, ids("a.md"))
     }
 
+    // MARK: L-10: re-probing the dataless notes
+
+    func testL10_refreshDropsNotesThatBecameReadableAndCountsTheRest() {
+        let harness = Harness()
+        harness.evict("a.md", "b.md", "c.md")
+        XCTAssertEqual(Set(harness.pass(notes("a.md", "b.md", "c.md", "d.md"))), Set(ids("a.md", "b.md", "c.md")))
+
+        harness.restore("a.md", "c.md")
+        harness.state.requested.withLock { $0.removeAll() }
+        let refresh = harness.requester.refreshOutstanding()
+        XCTAssertEqual(Set(refresh.becameReadable), Set(ids("a.md", "c.md")))
+        XCTAssertEqual(refresh.datalessCount, 1)
+        XCTAssertEqual(harness.requester.outstandingCount, 1)
+        XCTAssertEqual(harness.requested, [], "within the window: nothing is requested again")
+
+        // Downloaded, then evicted again: the next full pass asks at once (L-9).
+        harness.evict("a.md")
+        XCTAssertEqual(harness.pass(notes("a.md", "b.md", "c.md", "d.md")), ids("a.md"))
+    }
+
+    func testL10_refreshRequestsAgainOnceSixtySecondsHavePassed() {
+        let harness = Harness()
+        harness.evict("a.md", "b.md")
+        XCTAssertEqual(Set(harness.pass(notes("a.md", "b.md"))), Set(ids("a.md", "b.md")))
+
+        harness.advance(by: 59)
+        harness.state.requested.withLock { $0.removeAll() }
+        var refresh = harness.requester.refreshOutstanding()
+        XCTAssertEqual(refresh, .init(becameReadable: [], datalessCount: 2))
+        XCTAssertEqual(harness.requested, [])
+
+        harness.advance(by: 1)
+        refresh = harness.requester.refreshOutstanding()
+        XCTAssertEqual(refresh, .init(becameReadable: [], datalessCount: 2))
+        XCTAssertEqual(Set(harness.requested), Set(ids("a.md", "b.md")), "still dataless after 60 s: asked again")
+    }
+
+    func testL10_refreshProbesOnlyTheRecordedNotes() {
+        let harness = Harness()
+        harness.evict("a.md")
+        XCTAssertEqual(harness.pass(notes("a.md", "b.md")), ids("a.md"))
+        // b.md is evicted after the pass: a refresh does not look at it, since it is not
+        // recorded; the next full pass, after a scan or a watcher batch, finds it (L-9).
+        harness.evict("b.md")
+        let refresh = harness.requester.refreshOutstanding()
+        XCTAssertEqual(refresh, .init(becameReadable: [], datalessCount: 1))
+        XCTAssertEqual(harness.pass(notes("a.md", "b.md")), ids("b.md"))
+        XCTAssertEqual(harness.requester.outstandingCount, 2)
+    }
+
+    func testL10_refreshWithNothingRecordedIsEmpty() {
+        let harness = Harness()
+        XCTAssertEqual(harness.pass(notes("a.md")), [])
+        XCTAssertEqual(harness.requester.refreshOutstanding(), .init(becameReadable: [], datalessCount: 0))
+    }
+
+    func testL10_enqueueRefreshRunsOffTheCallingThread() {
+        let harness = Harness()
+        harness.evict("a.md")
+        XCTAssertEqual(harness.pass(notes("a.md")), ids("a.md"))
+        harness.restore("a.md")
+        let done = expectation(description: "refresh completed")
+        let onMain = Mutex<Bool?>(nil)
+        harness.requester.enqueueRefresh { refresh in
+            onMain.withLock { $0 = Thread.isMainThread }
+            XCTAssertEqual(refresh, .init(becameReadable: [NoteID(relativePath: "a.md")], datalessCount: 0))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(onMain.withLock { $0 }, false, "the probe must not run on the main thread (PF-6)")
+        XCTAssertEqual(harness.requester.outstandingCount, 0)
+    }
+
     func testL9_defaultRequestAsksTheStoreAndIsHarmlessForOrdinaryFiles() throws {
         // With no injected request, the requester calls `NoteStore.requestDownload`, which is
         // a no-op outside an iCloud container. The probe is forced to "dataless" so the call

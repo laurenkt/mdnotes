@@ -1,8 +1,9 @@
 import AppKit
 
-/// The main window's content (W-2): search field across the top, the note list below it, the
-/// editor below the list, and the backlinks strip below the editor. The list/editor boundary is
-/// a draggable `NSSplitView` divider whose position persists across launches (W-1).
+/// The main window's content (W-2): search field across the top, the eviction bar (L-10) and
+/// the inline message (C-3) under it when shown, the note list below, the editor below the
+/// list, and the backlinks strip below the editor. The list/editor boundary is a draggable
+/// `NSSplitView` divider whose position persists across launches (W-1).
 ///
 /// This is layout only. Data sources, delegates and behaviour are wired by later tasks.
 @MainActor
@@ -18,6 +19,9 @@ public final class MainView: NSView, NSSplitViewDelegate {
     nonisolated private static let unboundedEditorHeight: CGFloat = 10_000_000
 
     public let searchField: NSSearchField
+    /// L-10: the bar directly under the search field. Hidden until the window controller gives
+    /// it a dataless count.
+    public let evictionBar: EvictionBar
     /// The inline message under the search field (C-3). Hidden until `showMessage(_:)`.
     public let messageLabel: NSTextField
     public let splitView: NSSplitView
@@ -60,6 +64,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
     public override init(frame frameRect: NSRect) {
         defaults = .standard
         searchField = Self.makeSearchField()
+        evictionBar = EvictionBar()
         messageLabel = Self.makeMessageLabel()
         (listScrollView, tableView) = Self.makeList()
         (editorScrollView, textView) = Self.makeEditor()
@@ -68,7 +73,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
         editorPane = Self.makeEditorPane(notice: readOnlyNotice, editor: editorScrollView)
         backlinksStrip = BacklinksStrip(defaults: defaults)
         splitView = Self.makeSplitView(top: listScrollView, bottom: editorPane)
-        stack = NSStackView(views: [searchField, messageLabel, splitView, backlinksStrip])
+        stack = NSStackView(views: [searchField, evictionBar, messageLabel, splitView, backlinksStrip])
         super.init(frame: frameRect)
 
         splitView.delegate = self
@@ -88,6 +93,7 @@ public final class MainView: NSView, NSSplitViewDelegate {
         ])
         // The split view takes every point the search field and strip do not need.
         searchField.setContentHuggingPriority(.required, for: .vertical)
+        evictionBar.setContentHuggingPriority(.required, for: .vertical)
         messageLabel.setContentHuggingPriority(.required, for: .vertical)
         backlinksStrip.setContentHuggingPriority(.required, for: .vertical)
         splitView.setContentHuggingPriority(.defaultLow, for: .vertical)

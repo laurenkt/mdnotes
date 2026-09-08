@@ -143,7 +143,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M6.2 Wire `DownloadRequester` into `LibraryController`: after the initial scan, after each
       full rescan, and on every watcher batch. Smoke test with the availability probe: dataless
       notes get requested without any note being opened.
-- [ ] M6.3 Eviction bar (L-10): view under the search field, count text, free-space suffix under
+- [x] M6.3 Eviction bar (L-10): view under the search field, count text, free-space suffix under
       2 GB, `Open Storage Settings` button, not shown during the first scan, hidden within 2 s
       of the last note becoming readable. Free space via `volumeAvailableCapacityForImportantUsage`.
       Smoke tests: shown/hidden transitions, text for 1 and N notes, button present only under

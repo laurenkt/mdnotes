@@ -25,8 +25,49 @@ import Synchronization
 /// `start()` makes, which is also the full rescan a restart makes, and after every watcher
 /// batch, `downloadRequester` runs one pass over every note in the library on its own queue
 /// and requests a download for each that is dataless, rate-limited per note.
+///
+/// Every pass leaves behind how many notes are dataless, and while that is more than none
+/// the requester re-probes just those notes every `evictionRefreshInterval` (L-10), so a
+/// download that lands is noticed within 2 s without a watcher event: the count drops, the
+/// note's body is read into the snapshot as an external modification (L-7), and once nothing
+/// is dataless the polling stops. The count and, while it is more than none, the boot
+/// volume's free space are published together as `evictionStatus` for the window's bar.
 @MainActor
 public final class LibraryController {
+    /// What the eviction bar shows (L-10): how many notes are dataless as of the last requester
+    /// pass, and the boot volume's free space in bytes, read on the same pass, or nil when
+    /// nothing is dataless or the volume did not say.
+    public struct EvictionStatus: Hashable, Sendable {
+        public let datalessCount: Int
+        public let freeBytes: Int64?
+
+        public init(datalessCount: Int, freeBytes: Int64?) {
+            self.datalessCount = datalessCount
+            self.freeBytes = freeBytes
+        }
+
+        /// Nothing dataless: the state before the first pass and after the last download lands.
+        public static let none = EvictionStatus(datalessCount: 0, freeBytes: nil)
+    }
+
+    /// Answers the boot volume's free space in bytes, or nil when it cannot be read.
+    public typealias FreeSpaceProbe = @Sendable () -> Int64?
+
+    /// How often the requester re-probes the dataless notes while there are any (L-10). Half
+    /// the 2 s the bar has to disappear after the last download lands, leaving the other half
+    /// for the probe and the hop to the main thread.
+    nonisolated public static let evictionRefreshInterval: TimeInterval = 1
+
+    /// The default `FreeSpaceProbe`: what the boot volume can spare for the user's own files,
+    /// `volumeAvailableCapacityForImportantUsage` of `/`, which counts purgeable space as free
+    /// the way Storage Settings does. File I/O; the requester's queue calls it (PF-6).
+    nonisolated public static let bootVolumeFreeSpace: FreeSpaceProbe = {
+        autoreleasepool {
+            let values = try? URL(fileURLWithPath: "/", isDirectory: true)
+                .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            return values?.volumeAvailableCapacityForImportantUsage
+        }
+    }
     /// Where the controller is in populating the index.
     public enum Phase: Hashable, Sendable {
         /// `start()` has not been called, or `stop()` has.
@@ -71,10 +112,23 @@ public final class LibraryController {
 
     /// Called on the main thread with each batch of file-system changes that were not this
     /// process's own writes (E-6, X-1), after the snapshot reflecting them has been published.
-    /// Never called for an autosave, a `create` or a `delete` of ours.
+    /// Never called for an autosave, a `create` or a `delete` of ours. Also called with a
+    /// modification for each dataless note the eviction poll finds readable (L-7, L-10).
     public var onExternalChanges: (@MainActor (LibraryChanges) -> Void)?
 
+    /// How many notes are dataless, with the boot volume's free space while any are (L-10).
+    /// Replaced on the main thread after each requester pass whose findings differ; `.none`
+    /// before the first pass of a `start()` and after `stop()`.
+    public private(set) var evictionStatus: EvictionStatus = .none
+
+    /// Called on the main thread after `evictionStatus` has been replaced.
+    public var onEvictionStatusChange: (@MainActor (EvictionStatus) -> Void)?
+
     private let batchSize: Int
+    nonisolated private let freeSpace: FreeSpaceProbe
+    /// True while a re-probe of the dataless notes is due, so passes that overlap, a watcher
+    /// batch during the poll, say, do not each start their own.
+    private var evictionRefreshPending = false
     private let watchesFileSystem: Bool
     private let queue = DispatchQueue(label: "MDNotes.LibraryController", qos: .userInitiated)
     /// Serialises this controller's writes with the watcher's check of them, so an event can
@@ -106,16 +160,20 @@ public final class LibraryController {
     ///     fabricated outside an iCloud container.
     ///   - requestDownload: what `downloadRequester` calls for each dataless note (L-9). The
     ///     default asks iCloud through the store; tests inject one to observe the requests.
+    ///   - freeSpace: answers the boot volume's free space for `evictionStatus` (L-10). The
+    ///     default asks the volume; tests inject one to fill or empty the disk.
     public init(
         root: URL, batchSize: Int = LibraryController.defaultBatchSize, watchesFileSystem: Bool = true,
         log: @escaping @Sendable (String) -> Void = LibraryController.standardErrorLog,
-        availability: NoteStore.AvailabilityProbe? = nil, requestDownload: DownloadRequester.Request? = nil
+        availability: NoteStore.AvailabilityProbe? = nil, requestDownload: DownloadRequester.Request? = nil,
+        freeSpace: @escaping FreeSpaceProbe = LibraryController.bootVolumeFreeSpace
     ) {
         precondition(batchSize > 0)
         self.root = root
         self.batchSize = batchSize
         self.watchesFileSystem = watchesFileSystem
         self.log = log
+        self.freeSpace = freeSpace
         let store = availability.map { NoteStore(root: root, isAvailable: $0) } ?? NoteStore(root: root)
         self.store = store
         downloadRequester = DownloadRequester(store: store, request: requestDownload)
@@ -133,6 +191,7 @@ public final class LibraryController {
         phase = .scanning
         worker.reset(generation: generation)
         stopWatching()
+        resetEvictionStatus()
 
         let root = root
         queue.async { [self] in
@@ -167,6 +226,7 @@ public final class LibraryController {
         snapshot = .empty
         phase = .idle
         stopWatching()
+        resetEvictionStatus()
     }
 
     /// Folds file-system changes into the index (X-1), reading only the notes named, and
@@ -252,8 +312,19 @@ public final class LibraryController {
             requestDownloads(forIndexedNotes: generation)
             return
         }
-        fold(external, generation: generation) {
+        foldExternal(external, generation: generation) {
             self.requestDownloads(forIndexedNotes: generation)
+        }
+    }
+
+    /// Folds changes that were not ours into the snapshot (X-1) and, once that snapshot has
+    /// been published, hands them to `onExternalChanges` on the main thread. `then` runs on
+    /// the queue after the fold, before the hop.
+    nonisolated private func foldExternal(
+        _ external: LibraryChanges, generation: Int, then: (@Sendable () -> Void)? = nil
+    ) {
+        fold(external, generation: generation) {
+            then?()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard generation == self.generation else { return }
@@ -263,12 +334,64 @@ public final class LibraryController {
         }
     }
 
-    // MARK: - Proactive download (L-9)
+    // MARK: - Proactive download (L-9) and the eviction count (L-10)
 
     /// One requester pass over `notes`, on the requester's queue, unless `generation` is stale.
+    /// What the pass leaves dataless becomes the eviction status.
     nonisolated private func requestDownloads(for notes: [ScannedNote], generation: Int) {
         guard worker.isCurrent(generation) else { return }
-        downloadRequester.enqueue(notes)
+        downloadRequester.enqueue(notes) { _ in
+            self.evictionPassDidFinish(becameReadable: [], generation: generation)
+        }
+    }
+
+    /// A requester pass has ended, on its queue: `downloadRequester.outstandingCount` is the
+    /// dataless count it found. The boot volume's free space is read here too, off the main
+    /// thread, while anything is dataless. A note the pass found readable again is read into
+    /// the snapshot as an external modification (L-7), which reloads it in the editor if it
+    /// is open there (X-2). The status then goes to the main thread, where it is published
+    /// if it differs and, while anything is dataless, the next re-probe is scheduled.
+    nonisolated private func evictionPassDidFinish(becameReadable: [NoteID], generation: Int) {
+        guard worker.isCurrent(generation) else { return }
+        let count = downloadRequester.outstandingCount
+        let status = EvictionStatus(datalessCount: count, freeBytes: count > 0 ? freeSpace() : nil)
+        if !becameReadable.isEmpty {
+            foldExternal(LibraryChanges(modified: Set(becameReadable)), generation: generation)
+        }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                guard generation == self.generation else { return }
+                self.publishEvictionStatus(status)
+                if count > 0 { self.scheduleEvictionRefresh(generation: generation) }
+            }
+        }
+    }
+
+    private func publishEvictionStatus(_ status: EvictionStatus) {
+        guard status != evictionStatus else { return }
+        evictionStatus = status
+        onEvictionStatusChange?(status)
+    }
+
+    /// `start()` and `stop()`: nothing is known to be dataless until the next pass says so.
+    private func resetEvictionStatus() {
+        publishEvictionStatus(.none)
+    }
+
+    /// Re-probes the dataless notes `evictionRefreshInterval` from now, unless a re-probe is
+    /// already due. A `start()` or `stop()` in between makes the timer a no-op.
+    private func scheduleEvictionRefresh(generation: Int) {
+        guard !evictionRefreshPending else { return }
+        evictionRefreshPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.evictionRefreshInterval) {
+            MainActor.assumeIsolated {
+                self.evictionRefreshPending = false
+                guard generation == self.generation else { return }
+                self.downloadRequester.enqueueRefresh { refresh in
+                    self.evictionPassDidFinish(becameReadable: refresh.becameReadable, generation: generation)
+                }
+            }
+        }
     }
 
     /// One requester pass over every note the background index lists right now. A watcher
