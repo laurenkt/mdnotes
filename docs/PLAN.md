@@ -151,7 +151,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M6.4 `RelativeDateText` in App (S-9): Today/Yesterday with time, weekday within six days,
       `d MMM` this year, `d MMM yyyy` otherwise, locale-aware, injected `now`. Tests for each
       band and for the year boundary.
-- [ ] M6.5 Row layout gives the date its intrinsic width and truncates the title (S-10).
+- [x] M6.5 Row layout gives the date its intrinsic width and truncates the title (S-10).
       Refresh relative words on day change (`NSCalendarDayChanged`) and on window becoming
       key. Smoke test: a 60-character title and `Yesterday 09:10` in a 300 pt row leaves the
       date untruncated. Snapshot per V-1.

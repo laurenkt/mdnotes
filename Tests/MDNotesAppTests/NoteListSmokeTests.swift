@@ -4,7 +4,9 @@ import MDNotesApp
 import MDNotesCore
 import XCTest
 
-/// Headless smoke tests for the note list (S-6) and for selection driving the editor (S-8).
+/// Headless smoke tests for the note list (S-6), the row's date and title layout (S-9, S-10)
+/// and for selection driving the editor (S-8). Also renders the list with a long title to
+/// `build/snapshots/` (V-1).
 @MainActor
 final class NoteListSmokeTests: XCTestCase {
     private var root: URL = FileManager.default.temporaryDirectory
@@ -144,6 +146,102 @@ final class NoteListSmokeTests: XCTestCase {
         XCTAssertEqual(heights.first ?? 0, NoteListController.rowHeight + table.intercellSpacing.height)
         for row in 0..<table.numberOfRows {
             XCTAssertEqual(try rowView(controller, row).frame.height, NoteListController.rowHeight, accuracy: 0.5)
+        }
+    }
+
+    // MARK: S-10 the date keeps its width, the title truncates
+
+    private static let longTitle = "A sixty character title long enough to overflow a narrow row"
+
+    func testS10_longTitleYieldsToTheDateWhichIsNeverTruncated() throws {
+        XCTAssertEqual(Self.longTitle.count, 60)
+        try write(Self.longTitle + ".md", body: "body", modifiedAt: Self.base)
+        let index = SearchIndex.build(notes: try LibraryScanner.scan(root: root), store: NoteStore(root: root))
+        let entry = try XCTUnwrap(index.entry(for: NoteID(relativePath: Self.longTitle + ".md")))
+
+        let row = NoteRowView(frame: NSRect(x: 0, y: 0, width: 300, height: NoteListController.rowHeight))
+        row.configure(entry: entry, dateText: "Yesterday 09:10")
+        row.layoutSubtreeIfNeeded()
+
+        let dateWidth = row.dateLabel.sizeThatFits(NSSize(width: 1000, height: 100)).width
+        XCTAssertEqual(row.dateLabel.stringValue, "Yesterday 09:10")
+        XCTAssertGreaterThanOrEqual(row.dateLabel.frame.width, dateWidth, "the date is never truncated")
+        XCTAssertGreaterThanOrEqual(row.dateLabel.frame.width, row.dateLabel.intrinsicContentSize.width)
+        XCTAssertEqual(row.dateLabel.frame.maxX, 300 - 8, accuracy: 0.5, "right-aligned at the trailing inset")
+        XCTAssertLessThan(row.titleLabel.frame.width, row.titleLabel.intrinsicContentSize.width, "the title truncates")
+        XCTAssertLessThanOrEqual(row.titleLabel.frame.maxX, row.dateLabel.frame.minX)
+        XCTAssertEqual(row.titleLabel.lineBreakMode, .byTruncatingTail)
+        XCTAssertEqual(row.titleLabel.frame.minY, row.dateLabel.frame.minY, accuracy: 2, "date on the title line")
+    }
+
+    func testS10_dateKeepsItsWidthEvenWhenWiderThanHalfTheRow() throws {
+        let (controller, index) = try makeControllerShowingIndex()
+        let entry = try XCTUnwrap(index.entry(for: alpha))
+        let row = NoteRowView(frame: NSRect(x: 0, y: 0, width: 120, height: NoteListController.rowHeight))
+        row.configure(entry: entry, dateText: "Yesterday 09:10")
+        row.layoutSubtreeIfNeeded()
+        let dateWidth = row.dateLabel.sizeThatFits(NSSize(width: 1000, height: 100)).width
+        XCTAssertGreaterThan(dateWidth, 60, "the fixture date is wider than half of 120 pt")
+        XCTAssertEqual(row.dateLabel.frame.width, ceil(dateWidth), accuracy: 0.5)
+        _ = controller
+    }
+
+    // MARK: S-9 relative words refresh
+
+    func testS9_datesRefreshOnDayChangeAndOnTheWindowBecomingKey() throws {
+        let controller = makeMainWindowController()
+        controller.window?.setContentSize(NSSize(width: 800, height: 600))
+        controller.mainView.layoutSubtreeIfNeeded()
+        let window = try XCTUnwrap(controller.window)
+        let list = controller.listController
+        let calendar = Calendar.autoupdatingCurrent
+        let day = calendar.startOfDay(for: Self.base)
+        // The three notes were written within three minutes of `base`, so from the middle of
+        // that day they are all `Today`.
+        list.now = { day.addingTimeInterval(12 * 3600) }
+        let index = SearchIndex.build(notes: try LibraryScanner.scan(root: root), store: NoteStore(root: root))
+        list.show(index.query(""))
+        let row = try rowView(controller, 0)
+        XCTAssertTrue(row.dateLabel.stringValue.hasPrefix("Today "), row.dateLabel.stringValue)
+
+        // Midnight passes: the rows say Yesterday without a reload.
+        list.now = { day.addingTimeInterval(36 * 3600) }
+        NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+        XCTAssertTrue(row.dateLabel.stringValue.hasPrefix("Yesterday "), row.dateLabel.stringValue)
+        XCTAssertIdentical(try rowView(controller, 0), row, "the rows were refreshed in place, not remade")
+
+        // Another window becoming key changes nothing; ours does.
+        list.now = { day.addingTimeInterval(60 * 3600) }
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: NSWindow())
+        XCTAssertTrue(row.dateLabel.stringValue.hasPrefix("Yesterday "), row.dateLabel.stringValue)
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        let expected = list.dateText(for: try XCTUnwrap(index.entry(for: gamma)).modifiedAt)
+        XCTAssertFalse(expected.hasPrefix("Yesterday "))
+        XCTAssertEqual(row.dateLabel.stringValue, expected)
+    }
+
+    // MARK: V-1 snapshot
+
+    func testV1_rendersTheListWithALongTitle() throws {
+        try write(
+            Self.longTitle + ".md", body: "A body long enough to need truncating in the snippet line of a narrow list.",
+            modifiedAt: Date().addingTimeInterval(-3600))
+        let controller = makeMainWindowController()
+        controller.window?.setContentSize(NSSize(width: 480, height: 400))
+        controller.mainView.layoutSubtreeIfNeeded()
+        let index = SearchIndex.build(notes: try LibraryScanner.scan(root: root), store: NoteStore(root: root))
+        controller.listController.show(index.query(""))
+        controller.listController.select(NoteID(relativePath: Self.longTitle + ".md"))
+        for row in 0..<controller.mainView.tableView.numberOfRows {
+            let view = try rowView(controller, row)
+            view.layoutSubtreeIfNeeded()
+            let fit = view.dateLabel.sizeThatFits(NSSize(width: 1000, height: 100)).width
+            XCTAssertGreaterThanOrEqual(view.dateLabel.frame.width, fit, "row \(row): the date is never truncated")
+        }
+        let written = try writeWindowSnapshots(of: controller, named: "note-list")
+        XCTAssertEqual(written.count, 2)
+        for url in written {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
         }
     }
 

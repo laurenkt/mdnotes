@@ -43,9 +43,9 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/MainView.swift` — content layout per W-2/W-6: search field, eviction bar, message line, list, split, editor, backlinks. `MainView.showMessage`, `focusSearchField`, `applyEditorFont`.
 - `Sources/MDNotesApp/LibraryController.swift` — owns one library: root, `NoteStore`, snapshots, background scan/index queue, watcher, CRUD. `LibraryController.start`, `apply`, `create`, `rename`, `delete`, `storeImage`, `EvictionStatus`, `Phase`.
 - `Sources/MDNotesApp/LibraryRootPreference.swift` — library folder in `UserDefaults`, defaulting to `~/Documents/MDnotes` (L-1). `LibraryRootPreference`.
-- `Sources/MDNotesApp/NoteListController.swift` — table data source/delegate over one `SearchIndex.Results`; inline title editing (S-6). `NoteListController.show`, `select`, `beginEditingTitle`, `dateText`.
+- `Sources/MDNotesApp/NoteListController.swift` — table data source/delegate over one `SearchIndex.Results`; inline title editing; date refresh on `NSCalendarDayChanged` and key window (S-6, S-9). `NoteListController.show`, `select`, `beginEditingTitle`, `dateText`, `refreshDates`, `now`.
 - `Sources/MDNotesApp/NoteTableView.swift` — intercepts arrows/Return/Tab before `NSTableView` handles them (S-7, S-8). `NoteTableView`.
-- `Sources/MDNotesApp/NoteRowView.swift` — one fixed-frame row: title, trailing date, snippet line (S-6, S-10, PF-2). `NoteRowView.configure`, `beginEditingTitle`.
+- `Sources/MDNotesApp/NoteRowView.swift` — one fixed-frame row: title, trailing date, snippet line (S-6, S-10, PF-2). `NoteRowView.configure`, `setDateText`, `beginEditingTitle`.
 - `Sources/MDNotesApp/RelativeDateText.swift` — Notes-style modified dates: `Today 11:53`, `Mon`, `3 Sep` (S-9). `RelativeDateText.string`, `band`, `Band`.
 - `Sources/MDNotesApp/EditorController.swift` — loads bodies off-main and applies them, autosaves, tracks edits, drives completions (S-8, E-4). `EditorController.load`, `flush`, `reloadFromDisk`, `insertEmbed`, `linkTargetAtCaret`.
 - `Sources/MDNotesApp/EditorTextView.swift` — intercepts Cmd-click and Cmd-Return for link opening (K-3). `EditorTextView`, `characterIndex`.
@@ -97,13 +97,14 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 ## Tests/MDNotesAppTests (headless AppKit smoke tests; real NSEvents, no UI clicks)
 
 - `Tests/MDNotesAppTests/MainWindowFixtures.swift` — shared fixture: `makeMainWindowController(autosaveClock:)` plus a main-actor box for teardown.
+- `Tests/MDNotesAppTests/WindowSnapshots.swift` — V-1 rendering helper: `writeWindowSnapshots(of:named:)` writes `build/snapshots/<name>-{light,dark}.png` at 2x.
 - `Tests/MDNotesAppTests/ManualAutosaveClock.swift` — `AutosaveClock` that only advances when a test says so; timers fire in deadline order (E-4).
 - `Tests/MDNotesAppTests/AppSmokeTests.swift` — the smallest headless launch: real controllers without a running app.
 - `Tests/MDNotesAppTests/LayoutSmokeTests.swift` — view stacking order at a given size, frame and split-position persistence (W-1, W-2).
 - `Tests/MDNotesAppTests/MenuSmokeTests.swift` — menu items found by action, sent down the responder chain; close behaviour (W-4).
 - `Tests/MDNotesAppTests/BundleTests.swift` — runs `scripts/info-plist.sh` directly to cover the emitted Info.plist.
 - `Tests/MDNotesAppTests/SearchSmokeTests.swift` — typing in the real field editor drives the list per keystroke (S-1, S-5).
-- `Tests/MDNotesAppTests/NoteListSmokeTests.swift` — list rendering and selection driving the editor (S-6, S-8).
+- `Tests/MDNotesAppTests/NoteListSmokeTests.swift` — list rendering, date width and title truncation, date refresh on day change/key window, selection driving the editor (S-6, S-9, S-10, S-8); list snapshot (V-1).
 - `Tests/MDNotesAppTests/KeyboardFlowSmokeTests.swift` — search/list/editor focus flow via real key events (S-7, S-8).
 - `Tests/MDNotesAppTests/CreateSmokeTests.swift` — Enter in the search field creating notes and its rejections (C-1 to C-4).
 - `Tests/MDNotesAppTests/RenameSmokeTests.swift` — Cmd-R inline rename, Return/Escape, collisions (R-1, R-2, D-2).

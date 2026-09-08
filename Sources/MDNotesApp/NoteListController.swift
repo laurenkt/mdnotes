@@ -50,6 +50,9 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     /// Formats each row's modified date (S-9).
     private let relativeDate = RelativeDateText()
 
+    /// The instant the relative words are seen from. Tests substitute a fixed one.
+    public var now: @MainActor () -> Date = { Date() }
+
     public init(tableView: NSTableView) {
         self.tableView = tableView
         results = SearchIndex.empty.query("")
@@ -61,6 +64,31 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
         // R-1: a double-click on a title edits it.
         tableView.target = self
         tableView.doubleAction = #selector(tableViewWasDoubleClicked(_:))
+        // S-9: `Today` becomes `Yesterday` at midnight, and a window that comes back after
+        // days away shows dates seen from now, not from when its rows were made.
+        let center = NotificationCenter.default
+        center.addObserver(
+            self, selector: #selector(dateRefreshNeeded(_:)), name: .NSCalendarDayChanged, object: nil)
+        center.addObserver(
+            self, selector: #selector(dateRefreshNeeded(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
+    }
+
+    /// The day change is not promised on the main thread, so this hops there when it must.
+    /// Another window becoming key is not the list becoming visible and is ignored.
+    @objc nonisolated private func dateRefreshNeeded(_ notification: Notification) {
+        let name = notification.name
+        let object = (notification.object as AnyObject?).map(ObjectIdentifier.init)
+        let refresh: @MainActor () -> Void = {
+            if name == NSWindow.didBecomeKeyNotification, object != self.tableView.window.map(ObjectIdentifier.init) {
+                return
+            }
+            self.refreshDates()
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(refresh)
+        } else {
+            DispatchQueue.main.async(execute: refresh)
+        }
     }
 
     /// The entry on the selected row, if any.
@@ -70,9 +98,21 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
         return results[row]
     }
 
-    /// The modified date as a row shows it (S-9), seen from now.
+    /// The modified date as a row shows it (S-9), seen from `now`.
     public func dateText(for date: Date) -> String {
-        relativeDate.string(for: date)
+        relativeDate.string(for: date, now: now())
+    }
+
+    /// S-9: rewrites the date on every row the table currently holds, seen from `now`. Rows
+    /// made later format their own dates, so nothing else needs doing. A title being edited is
+    /// untouched: only the date label changes.
+    public func refreshDates() {
+        tableView.enumerateAvailableRowViews { [results] rowView, row in
+            guard row >= 0, row < results.count, let view = rowView.view(atColumn: 0) as? NoteRowView else {
+                return
+            }
+            view.setDateText(dateText(for: results[row].modifiedAt))
+        }
     }
 
     /// Replaces the list's contents. The selected note stays selected if it is still listed,

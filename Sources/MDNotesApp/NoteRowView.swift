@@ -48,8 +48,14 @@ public final class NoteRowView: NSTableCellView {
     /// Fills the row from an index entry. `dateText` is the already formatted modified date.
     public func configure(entry: SearchIndex.Entry, dateText: String) {
         titleLabel.stringValue = entry.id.title
-        dateLabel.stringValue = dateText
         snippetLabel.stringValue = entry.preview
+        setDateText(dateText)
+    }
+
+    /// Replaces the date alone (S-9: relative words refreshed on a day change). The date's
+    /// width may change, so the row lays out again; the title is left as it is, editable or not.
+    public func setDateText(_ dateText: String) {
+        dateLabel.stringValue = dateText
         needsLayout = true
     }
 
@@ -90,11 +96,16 @@ public final class NoteRowView: NSTableCellView {
         applyColors()
     }
 
+    /// S-10: the date takes its intrinsic width unconditionally and sits at the trailing edge;
+    /// the title gets whatever is left and truncates with an ellipsis. The width comes from
+    /// `sizeThatFits`, the cell's own measure of the whole string: `intrinsicContentSize` of a
+    /// truncating label can come back a few points short and the date would lose its end.
     public override func layout() {
         super.layout()
         let width = bounds.width
         let inset = Self.horizontalInset
-        let dateWidth = min(ceil(dateLabel.intrinsicContentSize.width), max(0, width / 2))
+        let dateWidth = ceil(
+            dateLabel.sizeThatFits(NSSize(width: .greatestFiniteMagnitude, height: Self.titleHeight)).width)
         dateLabel.frame = NSRect(
             x: width - inset - dateWidth, y: Self.titleTop + 1, width: dateWidth, height: Self.titleHeight - 1)
         titleLabel.frame = NSRect(
