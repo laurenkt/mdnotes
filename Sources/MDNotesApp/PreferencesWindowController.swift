@@ -1,9 +1,10 @@
 import AppKit
 
-/// The Preferences window (PR-1): the library folder (L-1), the current root's path and a
-/// Choose button that opens a folder chooser; and the global hotkey (W-3), a recorder showing
-/// the combination. Nothing else (PR-1): the editor font has no settings, its size is the View
-/// menu's (E-8, ADR-0010).
+/// The Settings window (PR-1): a fixed-size, single-pane `NSGridView` form with right-aligned
+/// captions and 20 pt margins. `Notes folder` shows the library root (L-1) with its path and a
+/// `Choose…` button that opens a folder chooser; `Global shortcut` shows the hotkey (W-3) in a
+/// recorder. Nothing else (PR-1): the editor font has no settings, its size is the View menu's
+/// (E-8, ADR-0010).
 ///
 /// The window shows the root the app is on, handed to it by `AppDelegate` through
 /// `showLibraryRoot(_:)`. Choosing a folder writes `LibraryRootPreference`, so the folder is
@@ -27,6 +28,15 @@ public final class PreferencesWindowController: NSWindowController {
     public let chooseButton: NSButton
     /// Shows and records the global hotkey (W-3).
     public let hotKeyRecorder: HotKeyRecorder
+    /// The form (PR-1): one row per setting, captions in the first column.
+    public let gridView: NSGridView
+
+    /// The window's fixed content width (PR-1).
+    public static let contentWidth: CGFloat = 480
+    /// The margin between the form and the window's edges (PR-1).
+    public static let margin: CGFloat = 20
+    /// The captions of the form's rows, in order (PR-1).
+    public static let captions = ["Notes folder:", "Global shortcut:"]
 
     /// The library folder the window shows (L-1).
     public private(set) var libraryRoot: URL
@@ -55,14 +65,16 @@ public final class PreferencesWindowController: NSWindowController {
         libraryFolderLabel = NSTextField(labelWithString: "")
         chooseButton = NSButton(title: "Choose…", target: nil, action: nil)
         hotKeyRecorder = HotKeyRecorder(hotKey: hotKey)
+        gridView = NSGridView(numberOfColumns: 2, rows: 0)
         chooseFolder = { _, _ in }
+        // PR-1: fixed size, non-resizable, non-miniaturisable, no toolbar.
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 140),
+            contentRect: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 140),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Preferences"
+        window.title = "Settings"
         window.isReleasedWhenClosed = false
         // W-5: the main window floats; Settings must show above it.
         window.level = MainWindowController.overlayLevel
@@ -74,7 +86,10 @@ public final class PreferencesWindowController: NSWindowController {
         chooseButton.target = self
         chooseButton.action = #selector(chooseButtonWasClicked(_:))
         hotKeyRecorder.onChange = { [weak self] recorded in self?.setHotKey(recorded) }
-        window.contentView = makeContentView()
+        let content = makeContentView()
+        window.contentView = content
+        content.layoutSubtreeIfNeeded()
+        window.setContentSize(NSSize(width: Self.contentWidth, height: content.fittingSize.height))
         showLibraryRoot()
     }
 
@@ -156,39 +171,40 @@ public final class PreferencesWindowController: NSWindowController {
         libraryFolderLabel.toolTip = libraryRoot.path
     }
 
+    /// The form (PR-1): an `NSGridView` with a right-aligned caption column, one row for the
+    /// notes folder (path and `Choose…`) and one for the global shortcut (the recorder), inset
+    /// `margin` from every edge.
     private func makeContentView() -> NSView {
-        let folderCaption = NSTextField(labelWithString: "Library folder:")
-        folderCaption.alignment = .right
+        let captions = Self.captions.map { text -> NSTextField in
+            let caption = NSTextField(labelWithString: text)
+            caption.alignment = .right
+            return caption
+        }
         libraryFolderLabel.lineBreakMode = .byTruncatingMiddle
         libraryFolderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         chooseButton.bezelStyle = .rounded
-        let folderRow = NSStackView(views: [folderCaption, libraryFolderLabel, chooseButton])
-        folderRow.orientation = .horizontal
-        folderRow.alignment = .firstBaseline
-        folderRow.spacing = 8
+        let folderValue = NSStackView(views: [libraryFolderLabel, chooseButton])
+        folderValue.orientation = .horizontal
+        folderValue.alignment = .firstBaseline
+        folderValue.spacing = 8
 
-        let hotKeyCaption = NSTextField(labelWithString: "Global hotkey:")
-        hotKeyCaption.alignment = .right
-        let hotKeyRow = NSStackView(views: [hotKeyCaption, hotKeyRecorder])
-        hotKeyRow.orientation = .horizontal
-        hotKeyRow.alignment = .firstBaseline
-        hotKeyRow.spacing = 8
+        gridView.addRow(with: [captions[0], folderValue])
+        gridView.addRow(with: [captions[1], hotKeyRecorder])
+        gridView.rowAlignment = .firstBaseline
+        gridView.rowSpacing = 12
+        gridView.columnSpacing = 8
+        gridView.column(at: 0).xPlacement = .trailing
+        gridView.column(at: 1).xPlacement = .fill
+        gridView.cell(for: hotKeyRecorder)?.xPlacement = .leading
+        gridView.translatesAutoresizingMaskIntoConstraints = false
 
-        let rows = NSStackView(views: [folderRow, hotKeyRow])
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 12
-        rows.translatesAutoresizingMaskIntoConstraints = false
         let content = NSView()
-        content.addSubview(rows)
+        content.addSubview(gridView)
         NSLayoutConstraint.activate([
-            rows.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
-            rows.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            rows.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
-            rows.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            folderRow.widthAnchor.constraint(equalTo: rows.widthAnchor),
-            folderCaption.widthAnchor.constraint(equalToConstant: 100),
-            hotKeyCaption.widthAnchor.constraint(equalToConstant: 100),
+            gridView.topAnchor.constraint(equalTo: content.topAnchor, constant: Self.margin),
+            gridView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Self.margin),
+            gridView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Self.margin),
+            gridView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Self.margin),
             hotKeyRecorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
         ])
         return content

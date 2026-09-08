@@ -149,9 +149,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Preferences (PR-1)
+    // MARK: - Settings (PR-1)
 
-    /// Cmd-, and the menu item. Shows the Preferences window, building it on first use, with
+    /// Cmd-, and the `Settings…` menu item. Shows the Settings window, building it on first use, with
     /// the library folder and the hotkey in use. A folder chosen there goes through
     /// `openLibrary(at:)`, a hotkey recorded there through `setHotKey(_:)`.
     @objc public func showPreferences(_ sender: Any?) {

@@ -4,10 +4,11 @@ import MDNotesApp
 import MDNotesCore
 import XCTest
 
-/// Headless smoke tests for the Preferences window's library folder (PR-1, L-1): the folder
-/// is remembered in `UserDefaults` and read at launch, and choosing another one through the
-/// window tears down the library controller and rebuilds it on the new root. The folder
-/// chooser is replaced by a closure that answers at once, and driven through the real button.
+/// Headless smoke tests for the Settings window (PR-1, L-1): the window itself, a fixed-size
+/// `NSGridView` form; and its library folder, remembered in `UserDefaults` and read at launch,
+/// where choosing another one through the window tears down the library controller and
+/// rebuilds it on the new root. The folder chooser is replaced by a closure that answers at
+/// once, and driven through the real button.
 @MainActor
 final class PreferencesSmokeTests: XCTestCase {
     private var rootA: URL = FileManager.default.temporaryDirectory
@@ -134,7 +135,7 @@ final class PreferencesSmokeTests: XCTestCase {
         delegate.showPreferences(nil)
         let preferences = try XCTUnwrap(delegate.preferencesWindowController)
         let window = try XCTUnwrap(preferences.window)
-        XCTAssertEqual(window.title, "Preferences")
+        XCTAssertEqual(window.title, "Settings")
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(preferences.libraryRoot, LibraryRootPreference.standardized(rootA))
         XCTAssertEqual(
@@ -146,6 +147,62 @@ final class PreferencesSmokeTests: XCTestCase {
         // Showing it again reuses the window.
         delegate.showPreferences(nil)
         XCTAssertTrue(delegate.preferencesWindowController === preferences)
+    }
+
+    func testPR1_settingsIsAFixedSizeGridFormWithRightAlignedCaptionsAndMargins() async throws {
+        let delegate = try await launch()
+        delegate.showPreferences(nil)
+        let preferences = try XCTUnwrap(delegate.preferencesWindowController)
+        let window = try XCTUnwrap(preferences.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.layoutIfNeeded()
+
+        // Titled `Settings`; fixed size, non-resizable, non-miniaturisable; one pane, no toolbar.
+        XCTAssertEqual(window.title, "Settings")
+        XCTAssertEqual(window.styleMask, [.titled, .closable])
+        XCTAssertFalse(window.styleMask.contains(.resizable))
+        XCTAssertFalse(window.styleMask.contains(.miniaturizable))
+        XCTAssertNil(window.toolbar)
+        XCTAssertEqual(content.bounds.width, PreferencesWindowController.contentWidth)
+        XCTAssertEqual(content.bounds.height, content.fittingSize.height, "sized to its content")
+
+        // An `NSGridView` form: a caption column and a value column, one row per setting.
+        let grid = preferences.gridView
+        XCTAssertTrue(grid.isDescendant(of: content))
+        XCTAssertEqual(grid.numberOfColumns, 2)
+        XCTAssertEqual(grid.numberOfRows, 2)
+        XCTAssertEqual(grid.column(at: 0).xPlacement, .trailing, "captions right-aligned")
+        let captions = (0..<grid.numberOfRows).compactMap {
+            grid.cell(atColumnIndex: 0, rowIndex: $0).contentView as? NSTextField
+        }
+        XCTAssertEqual(captions.map(\.stringValue), ["Notes folder:", "Global shortcut:"])
+        XCTAssertEqual(captions.map(\.alignment), [.right, .right])
+        XCTAssertEqual(Set(captions.map { $0.frame.maxX }).count, 1, "captions share a trailing edge")
+
+        // Row 0: the path and `Choose…`. Row 1: the recorder. Nothing else.
+        let folderValue = try XCTUnwrap(grid.cell(atColumnIndex: 1, rowIndex: 0).contentView)
+        XCTAssertTrue(preferences.libraryFolderLabel.isDescendant(of: folderValue))
+        XCTAssertTrue(preferences.chooseButton.isDescendant(of: folderValue))
+        XCTAssertEqual(preferences.chooseButton.title, "Choose…")
+        XCTAssertIdentical(grid.cell(atColumnIndex: 1, rowIndex: 1).contentView, preferences.hotKeyRecorder)
+        XCTAssertEqual(
+            controls(in: content).filter { !($0 is NSTextField) }.count, 2, "the button and the recorder only")
+
+        // 20 pt margins on every side.
+        let margin = PreferencesWindowController.margin
+        let gridFrame = grid.convert(grid.bounds, to: content)
+        XCTAssertEqual(gridFrame.minX, margin)
+        XCTAssertEqual(gridFrame.maxX, content.bounds.width - margin)
+        XCTAssertEqual(gridFrame.maxY, content.bounds.height - margin, accuracy: 0.5)
+        XCTAssertEqual(gridFrame.minY, margin, accuracy: 0.5)
+
+        // V-1: rendered for inspection.
+        let written = try writeWindowSnapshots(ofWindow: window, named: "settings")
+        XCTAssertEqual(written.count, 2)
+    }
+
+    private func controls(in view: NSView) -> [NSControl] {
+        view.subviews.flatMap { ($0 as? NSControl).map { [$0] } ?? [] } + view.subviews.flatMap { controls(in: $0) }
     }
 
     func testPR1_cmdCommaShowsThePreferencesWindow() async throws {

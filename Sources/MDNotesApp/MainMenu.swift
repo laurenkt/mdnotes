@@ -56,7 +56,7 @@ public enum MainMenu {
         menu.addItem(item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
         menu.addItem(.separator())
         // PR-1: Cmd-, reaches the delegate's `showPreferences(_:)`.
-        menu.addItem(item("Preferences\u{2026}", #selector(AppDelegate.showPreferences(_:)), ","))
+        menu.addItem(item("Settings\u{2026}", #selector(AppDelegate.showPreferences(_:)), ","))
         menu.addItem(.separator())
         menu.addItem(item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"))
         menu.addItem(

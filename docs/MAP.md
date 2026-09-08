@@ -60,7 +60,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/HotKey.swift` — key-code + modifiers value for the global hotkey and its `UserDefaults` storage (W-3). `HotKey`, `HotKeyPreference`.
 - `Sources/MDNotesApp/GlobalHotKey.swift` — Carbon `RegisterEventHotKey` registration, no Accessibility permission (W-3). `GlobalHotKey.register`, `unregister`, `RegistrationError`.
 - `Sources/MDNotesApp/HotKeyRecorder.swift` — button that displays and records a new combination (W-3, PR-1). `HotKeyRecorder.beginRecording`, `showHotKey`.
-- `Sources/MDNotesApp/PreferencesWindowController.swift` — Settings window: library folder, hotkey recorder, nothing else (PR-1). `PreferencesWindowController.setLibraryRoot`, `setHotKey`.
+- `Sources/MDNotesApp/PreferencesWindowController.swift` — the `Settings` window: fixed size, an `NSGridView` form with right-aligned captions and 20 pt margins, Notes folder and Global shortcut rows, nothing else (PR-1). `PreferencesWindowController.gridView`, `captions`, `contentWidth`, `margin`, `setLibraryRoot`, `setHotKey`.
 
 ## Sources/MDNotesTestSupport (shared test helpers)
 
@@ -115,8 +115,8 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/AutosaveSmokeTests.swift` — autosave timing, atomic write, own-write record (E-4, E-5, E-6).
 - `Tests/MDNotesAppTests/UndoSmokeTests.swift` — undo through the real text view and the `undo:` action (E-7).
 - `Tests/MDNotesAppTests/EditorStylingSmokeTests.swift` — styling applied by the storage delegate and its paragraph scope; the mono font on code tokens only (E-2, E-3, E-8).
-- `Tests/MDNotesAppTests/EditorFontSmokeTests.swift` — system font at the stored size, size clamped to 9 to 36, View menu Bigger/Smaller/Actual Size clamping and persisting, stale family key deleted at launch, Settings without font controls; editor and Settings snapshots (E-8, PR-1, V-1).
-- `Tests/MDNotesAppTests/PreferencesSmokeTests.swift` — library folder remembered, read at launch, changed via the chooser (PR-1, L-1).
+- `Tests/MDNotesAppTests/EditorFontSmokeTests.swift` — system font at the stored size, size clamped to 9 to 36, View menu Bigger/Smaller/Actual Size clamping and persisting, stale family key deleted at launch, Settings without font controls; editor snapshot (E-8, PR-1, V-1).
+- `Tests/MDNotesAppTests/PreferencesSmokeTests.swift` — the Settings window's title, style mask, grid rows and margins, plus its snapshot (PR-1, V-1); library folder remembered, read at launch, changed via the chooser (PR-1, L-1).
 - `Tests/MDNotesAppTests/HotKeySmokeTests.swift` — default Ctrl-Cmd-N, Carbon registration, show/hide toggle via `fire()` and recording (W-3, PR-1).
 - `Tests/MDNotesAppTests/LinkCompletionSmokeTests.swift` — the `[[` popover driven by real key events (K-4).
 - `Tests/MDNotesAppTests/TagCompletionSmokeTests.swift` — the `#` popover and click-to-search on a tag (T-3, T-4).

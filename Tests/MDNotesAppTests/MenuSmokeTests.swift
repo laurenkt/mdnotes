@@ -193,7 +193,7 @@ final class MenuSmokeTests: XCTestCase {
         let app = try submenu(titled: MainMenu.appMenuTitle, of: menu)
         XCTAssertEqual(
             app.items.filter { !$0.isSeparatorItem }.map(\.title),
-            ["About MDNotes", "Preferences\u{2026}", "Hide MDNotes", "Hide Others", "Show All", "Quit MDNotes"])
+            ["About MDNotes", "Settings\u{2026}", "Hide MDNotes", "Hide Others", "Show All", "Quit MDNotes"])
         XCTAssertEqual(
             try item(#selector(NSApplication.orderFrontStandardAboutPanel(_:)), in: app).title, "About MDNotes")
         assertShortcut(try item(#selector(NSApplication.hide(_:)), in: app), "h")
@@ -549,7 +549,7 @@ final class MenuSmokeTests: XCTestCase {
 
         await asApplicationDelegate(delegate) { window.performClose(nil) }
         XCTAssertFalse(window.isVisible)
-        XCTAssertTrue(preferences.isVisible, "Preferences stays up")
+        XCTAssertTrue(preferences.isVisible, "Settings stays up")
         XCTAssertFalse(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApp))
     }
 }

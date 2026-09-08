@@ -182,7 +182,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M7.3 Snippets strip markdown (S-6): `BodySnippet` drops heading markers, wikilink
       brackets and labels' pipes, embed syntax entirely, code fences, emphasis markers. Tests
       for each construct and for PF-2 unaffected (snippet work stays in the index build).
-- [ ] M7.4 Settings window per PR-1: title `Settings`, `Settings…` Cmd-comma, fixed size,
+- [x] M7.4 Settings window per PR-1: title `Settings`, `Settings…` Cmd-comma, fixed size,
       `NSGridView` with right-aligned captions, Notes folder row, Global shortcut row, 20 pt
       margins. Smoke test asserts style mask, title, grid rows. Snapshot inspected.
 - [ ] M7.5 Menu audit: View menu holds Bigger/Smaller/Actual Size and Backlinks; Window menu

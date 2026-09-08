@@ -295,9 +295,7 @@ final class EditorFontSmokeTests: XCTestCase {
         XCTAssertEqual(controls(in: content).filter { $0 is NSPopUpButton || $0 is NSStepper }.count, 0)
         XCTAssertEqual(
             controls(in: content).compactMap { ($0 as? NSTextField)?.stringValue }.filter { $0.hasSuffix(":") },
-            ["Library folder:", "Global hotkey:"])
-        let written = try writeWindowSnapshots(ofWindow: try XCTUnwrap(preferences.window), named: "settings")
-        XCTAssertEqual(written.count, 2)
+            ["Notes folder:", "Global shortcut:"])
     }
 
     private func controls(in view: NSView) -> [NSControl] {
