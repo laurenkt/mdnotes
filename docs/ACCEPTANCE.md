@@ -7,6 +7,37 @@ release tag; the setup and the driving scripts it needs are described at the end
 Result key: **pass**, **fail** (task named), **gate** (enforced by `scripts/check.sh full`,
 not checkable by hand), **n/a by hand** (why), **blocked** (question in `QUESTIONS.md`).
 
+## Pass of 2026-09-08 (M7.6, v3)
+
+Build: debug `swift test` at commit 2509653 (code as of 2bd76de, M7.5), macOS 26.2. No app was
+launched: the human's instance was running on the real library, so every window was inspected
+through the V-1 snapshots the smoke tests write (`build/snapshots/{main-window,note-list,
+editor-fonts,eviction-bar,settings}-{light,dark}.png`, opened and compared against W-6, PR-1
+and direction B on the ADR-0013 canvas), the menu bar through `MainMenu` and the M7.5 audit
+test, and the snippet rules by calling `BodySnippet.make` on markdown bodies from a script
+linked against the built `MDNotesCore`. Scope: the eleven IDs M7.1 to M7.5 cite. Every other
+ID stands as recorded in the M6.9, v0.1.0 and M5.6 passes.
+
+Summary: 11 IDs; 8 pass, 0 fail, 2 gate, 1 n/a by hand. No task was added.
+
+| ID   | Result | Notes |
+|------|--------|-------|
+| P-2  | pass | The menu bar is `MainMenu.make()`: app, File, Edit, Note, View and Window menus, every item built in code and targetless; `testP2_launchInstallsTheMenuBarWithTheStandardMenusAndNoSaveItem` checks all 24 titles and shortcuts as one table, and no `.storyboard`, `.xib` or SwiftUI import exists under `Sources/`. |
+| S-6  | pass | `BodySnippet.make`: `# Hub\nSee [[Kubernetes operator\|the operator]] and [[Glossary]].` gives `Hub See the operator and Glossary.`; a leading `![[20260101-120000.png]]` contributes nothing; a `swift` fence gives `let answer = 42 after the fence` with both fence lines gone; `**bold** and _emphasised_ but snake_case, 2 * 3 and * a bullet` keeps the underscore, the product and the bullet; inline code is left as written; a body that is only an embed or only `### ` gives an empty snippet. The `note-list` snapshot shows one line per row in the secondary colour under the title, cut with an ellipsis. |
+| E-8  | pass | The `editor-fonts` snapshot, light and dark: heading, prose, link and tag in the system font at 13 pt, inline and fenced code in the monospaced font at the same size, no family control anywhere. View menu: `Bigger` ⌘+, `Smaller` ⌘-, `Actual Size` ⌘0 above the backlinks item; `EditorFontSmokeTests` drives the clamping and persistence the M6.9 pass checked by hand. |
+| W-2  | pass | Top to bottom in the `main-window` and `editor-fonts` snapshots: search strip, hairline, list, split divider, editor; the `eviction-bar` snapshot puts the bar between the strip and the hairline (L-10). `LayoutSmokeTests` asserts the order at a given size and that the divider drags and persists. |
+| W-4  | pass | File › Close is the only `performClose` item, ⌘W; the five `testW4_*` smoke tests hide on close and the close button, keep the process, reopen from the Dock and the hotkey, and quit with edits written. The M6.9 pass drove the same by hand; M7.5 only moved the item from the Window menu into the new File menu. |
+| W-6  | pass | `main-window` snapshot at 480 × 320 pt: a standard `NSSearchField` with its default bezel on a `windowBackgroundColor` strip, 8 pt above and below, 10 pt each side (the field spans x 10 to 470), a one-pixel `separatorColor` hairline beneath, then the list. Dark is the same layout on the dark window colour. The title bar is outside the content-view render; `testW6_titleBarShowsTheWindowTitle` covers the visible `MDNotes` title, and `tabbingMode` is `.disallowed`. Against direction B: same 28 pt title bar, inset field, hairline, 46 pt rows with a semibold 13 pt title, the date right-aligned on the title line and a secondary-colour snippet beneath. The only `NSColor`s in `Sources/` are `windowBackgroundColor`, `secondaryLabelColor`, `linkColor` and `systemPurple`. |
+| PR-1 | pass | `settings` snapshot, 480 × 100 pt: two `NSGridView` rows, captions `Notes folder:` and `Global shortcut:` right-aligned to one trailing edge, the path (middle-truncated) with a `Choose…` button, the recorder showing ⌃⌘N, 20 pt margins on every side, nothing else. The window is titled `Settings`, style mask `[.titled, .closable]` (no resize, no minimise, no toolbar), and `Settings…` ⌘, sits in the app menu. The M6.9 fail (titled `Preferences`, captions `Library folder`/`Global hotkey`) is gone. |
+| TP-6 | n/a by hand | M7.5 lands only the placeholder: File › `New from Template` opens a submenu holding one disabled `No Templates` row (`testTP6_fileMenuHoldsANewFromTemplatePlaceholderSubmenuAndClose`). Listing templates and creating from one is M9.5's; this pass will check it there. |
+| V-1  | pass | `writeWindowSnapshots` wrote twelve files: `main-window` 960 × 640 px for a 480 × 320 pt content view, `note-list` 960 × 800, `editor-fonts` 1600 × 1200, `settings` 960 × 200, `eviction-bar` and `transparent-content` likewise, each in light and dark, and the light and dark files differ. The content view sits on `windowBackgroundColor` (I-7). `build/` is ignored by git. |
+| PF-2 | gate | `ListPerfTests`, `IndexPerfTests` under `scripts/check.sh full`; `testPF2_snippetIsStrippedWhenTheIndexIsBuiltNotWhenRead` shows the stripping happens in the build, never in a query. |
+| PF-4 | gate | `IndexPerfTests` under `scripts/check.sh full`; `BodySnippet` reads at most 2,048 UTF-16 units of a body, so a 1 MB note costs the same as a short one. |
+
+Observation outside the spec: the `note-list` snapshot's selected row is drawn in the
+inactive (grey) highlight because a headless window is never key; in the running app the
+row takes the accent colour, as the M5.6 pass saw.
+
 ## Pass of 2026-09-08 (M6.9, v2)
 
 Build: `scripts/bundle.sh` at commit 1b017f4 (M6.8), macOS 26.2. Library: a nine-note stand-in

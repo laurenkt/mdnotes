@@ -188,7 +188,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M7.5 Menu audit: View menu holds Bigger/Smaller/Actual Size and Backlinks; Window menu
       standard; File menu gains `New from Template` placeholder submenu (filled in M9). Smoke
       test on menu titles and key equivalents.
-- [ ] M7.6 Manual acceptance pass for M7; discrepancies become tasks above this line.
+- [x] M7.6 Manual acceptance pass for M7; discrepancies become tasks above this line.
 
 ## M8: Thumbnails
 
