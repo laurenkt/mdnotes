@@ -1,87 +1,85 @@
 import AppKit
 
-/// The editor font preference (E-8): a family name and a point size, each read from
-/// `UserDefaults`. Either may be absent. The default is the system monospaced font at 13 pt;
-/// an absent or unusable family keeps the system monospaced family, and an absent or unusable
-/// size keeps 13 pt, so the two preferences fall back independently.
+/// The editor font (E-8, ADR-0010): the system font for prose and the system monospaced font
+/// for code, both at one point size read from `UserDefaults`. There is no family preference;
+/// the v1 `EditorFontFamily` default is deleted at launch through `deleteStaleFamily(in:)`.
 ///
-/// The Preferences window (PR-1) writes the preference through `setFamily(_:in:)` and
-/// `setSize(_:in:)`; `MainView` re-reads it whenever the defaults change, so the editor
-/// follows a change at once.
+/// The size is 13 pt by default and moves in whole points between `minimumSize` and
+/// `maximumSize` through the View menu's Bigger, Smaller and Actual Size (`bigger(in:)`,
+/// `smaller(in:)`, `resetSize(in:)`). A stored size outside that range, from v1's wider
+/// Settings field, is read as the nearest bound. `MainView` re-reads the preference whenever
+/// the defaults change, so the editor follows a change at once.
 public enum EditorFontPreference {
-    /// `UserDefaults` key holding the font family name, e.g. `Menlo`. Absent means the system
-    /// monospaced font.
-    nonisolated public static let familyDefaultsKey = "EditorFontFamily"
     /// `UserDefaults` key holding the point size as a number. Absent means `defaultSize`.
     nonisolated public static let sizeDefaultsKey = "EditorFontSize"
+    /// The v1 family key (E-8, ADR-0010). Never read; removed at launch.
+    nonisolated public static let staleFamilyDefaultsKey = "EditorFontFamily"
     /// The default point size (E-8).
     nonisolated public static let defaultSize: CGFloat = 13
-    /// The smallest size the Preferences window accepts.
-    nonisolated public static let minimumSize: CGFloat = 6
-    /// The largest size the Preferences window accepts.
-    nonisolated public static let maximumSize: CGFloat = 72
+    /// The smallest size Smaller reaches (E-8).
+    nonisolated public static let minimumSize: CGFloat = 9
+    /// The largest size Bigger reaches (E-8).
+    nonisolated public static let maximumSize: CGFloat = 36
+    /// How far one Bigger or Smaller moves the size.
+    nonisolated public static let sizeStep: CGFloat = 1
 
-    /// The font the editor should use, resolved from `defaults`.
+    /// The font prose is set in: the system font at the stored size (E-8).
     @MainActor
     public static func font(from defaults: UserDefaults = .standard) -> NSFont {
-        let size = self.size(from: defaults)
-        guard let family = family(from: defaults), let font = font(family: family, size: size) else {
-            return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-        }
-        return font
+        NSFont.systemFont(ofSize: size(from: defaults))
     }
 
-    /// The stored family name, or nil when absent or blank, which means the system monospaced
-    /// family. The name is not checked against the installed fonts; `font(from:)` does that.
-    nonisolated public static func family(from defaults: UserDefaults = .standard) -> String? {
-        guard let family = defaults.string(forKey: familyDefaultsKey) else { return nil }
-        let trimmed = family.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+    /// The font inline and fenced code are set in: the system monospaced font at `size`, the
+    /// same size as the prose around it (E-8, E-2).
+    @MainActor
+    public static func codeFont(ofSize size: CGFloat) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
-    /// The stored size, or `defaultSize` when absent or not a positive finite number.
+    /// The stored size clamped to `minimumSize`...`maximumSize`, or `defaultSize` when absent
+    /// or not a finite number.
     nonisolated public static func size(from defaults: UserDefaults = .standard) -> CGFloat {
         guard let number = defaults.object(forKey: sizeDefaultsKey) as? NSNumber else { return defaultSize }
         let size = CGFloat(number.doubleValue)
-        return size.isFinite && size > 0 ? size : defaultSize
+        return size.isFinite ? clamped(size) : defaultSize
     }
 
-    /// Stores `family` as the editor font family (E-8, PR-1); nil, or a blank name, removes
-    /// the preference so the system monospaced family is used.
-    nonisolated public static func setFamily(_ family: String?, in defaults: UserDefaults = .standard) {
-        let trimmed = family?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if trimmed.isEmpty {
-            defaults.removeObject(forKey: familyDefaultsKey)
-        } else {
-            defaults.set(trimmed, forKey: familyDefaultsKey)
-        }
-    }
-
-    /// Stores `size` as the editor font size (E-8, PR-1). A size that is not a positive finite
-    /// number is not stored.
+    /// Stores `size`, clamped to the range, as the editor font size (E-8). A size that is not
+    /// a finite number is not stored.
     nonisolated public static func setSize(_ size: CGFloat, in defaults: UserDefaults = .standard) {
-        guard size.isFinite, size > 0 else { return }
-        defaults.set(Double(size), forKey: sizeDefaultsKey)
+        guard size.isFinite else { return }
+        defaults.set(Double(clamped(size)), forKey: sizeDefaultsKey)
     }
 
-    /// Whether the Preferences window accepts `size`: a finite number within `minimumSize`
-    /// to `maximumSize`.
-    nonisolated public static func isAcceptableSize(_ size: CGFloat) -> Bool {
-        size.isFinite && size >= minimumSize && size <= maximumSize
+    /// Bigger: one step up, stopping at `maximumSize`. Returns the size now stored.
+    @discardableResult
+    nonisolated public static func bigger(in defaults: UserDefaults = .standard) -> CGFloat {
+        let next = clamped(size(from: defaults) + sizeStep)
+        setSize(next, in: defaults)
+        return next
     }
 
-    /// The installed font families a user can choose from, sorted by name. Families whose
-    /// names start with `.` are the system's private faces and are left out.
-    @MainActor
-    public static var availableFamilies: [String] {
-        NSFontManager.shared.availableFontFamilies
-            .filter { !$0.hasPrefix(".") }
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    /// Smaller: one step down, stopping at `minimumSize`. Returns the size now stored.
+    @discardableResult
+    nonisolated public static func smaller(in defaults: UserDefaults = .standard) -> CGFloat {
+        let next = clamped(size(from: defaults) - sizeStep)
+        setSize(next, in: defaults)
+        return next
     }
 
-    /// The regular face of `family`, or nil when no such family is installed.
-    @MainActor
-    private static func font(family: String, size: CGFloat) -> NSFont? {
-        NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size)
+    /// Actual Size: back to `defaultSize`, stored.
+    nonisolated public static func resetSize(in defaults: UserDefaults = .standard) {
+        setSize(defaultSize, in: defaults)
+    }
+
+    /// `size` held within `minimumSize`...`maximumSize`.
+    nonisolated public static func clamped(_ size: CGFloat) -> CGFloat {
+        min(max(size, minimumSize), maximumSize)
+    }
+
+    /// Removes the v1 family preference (E-8, ADR-0010). Called at launch; harmless when the
+    /// key is already gone.
+    nonisolated public static func deleteStaleFamily(in defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: staleFamilyDefaultsKey)
     }
 }

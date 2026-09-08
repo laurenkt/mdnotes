@@ -3,10 +3,11 @@ import Foundation
 import MDNotesCore
 
 /// Light syntax styling for the editor (E-2): ATX headings in the bold face of the editor font,
-/// `[[wikilinks]]` in the link colour, `#tags` and inline or fenced code in their own colours.
-/// Only `.font` (same family and size, another weight) and `.foregroundColor` are ever set, so
-/// the text and its layout metrics are untouched beyond weight and colour; nothing here reaches
-/// the file, whose content is the text view's plain string (E-1).
+/// `[[wikilinks]]` in the link colour, `#tags` in theirs, and inline or fenced code in the
+/// system monospaced font (E-8) and their own colour. Only `.font` and `.foregroundColor` are
+/// ever set, and the font keeps the base size everywhere: headings change weight, code tokens
+/// change family (the one exception E-2 allows, ADR-0010), nothing else changes either.
+/// Nothing here reaches the file, whose content is the text view's plain string (E-1).
 ///
 /// A wikilink whose bare title several notes share is styled as ambiguous instead (K-2), in a
 /// warning tint. Which links those are is the library's `LinkIndex`, read through `linkIndex`
@@ -69,6 +70,7 @@ public final class EditorStyler {
         didSet {
             guard baseFont != oldValue else { return }
             headingFont = Self.bold(baseFont)
+            codeFont = EditorFontPreference.codeFont(ofSize: baseFont.pointSize)
             restyleAll()
         }
     }
@@ -88,6 +90,9 @@ public final class EditorStyler {
     /// no bold face.
     public private(set) var headingFont: NSFont
 
+    /// The system monospaced font at `baseFont`'s size, for inline and fenced code (E-8).
+    public private(set) var codeFont: NSFont
+
     /// Guards against re-entering while attributes are being applied.
     private var isRestyling = false
 
@@ -95,12 +100,13 @@ public final class EditorStyler {
         self.textView = textView
         self.baseFont = baseFont
         headingFont = Self.bold(baseFont)
+        codeFont = EditorFontPreference.codeFont(ofSize: baseFont.pointSize)
     }
 
     // MARK: - Styles
 
-    /// The attributes `style` adds on top of the base: a weight for headings, a colour for the
-    /// rest, and the marker.
+    /// The attributes `style` adds on top of the base: a weight for headings, the monospaced
+    /// font and a colour for code (E-8), a colour for the rest, and the marker.
     public func attributes(for style: TokenStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [Self.tokenAttribute: style.rawValue]
         switch style {
@@ -108,7 +114,9 @@ public final class EditorStyler {
         case .wikilink: attributes[.foregroundColor] = NSColor.linkColor
         case .ambiguousLink: attributes[.foregroundColor] = Self.ambiguousLinkColor
         case .tag: attributes[.foregroundColor] = NSColor.systemPurple
-        case .inlineCode, .fencedCode: attributes[.foregroundColor] = NSColor.secondaryLabelColor
+        case .inlineCode, .fencedCode:
+            attributes[.font] = codeFont
+            attributes[.foregroundColor] = NSColor.secondaryLabelColor
         }
         return attributes
     }

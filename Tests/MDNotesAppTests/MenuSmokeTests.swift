@@ -187,7 +187,7 @@ final class MenuSmokeTests: XCTestCase {
             $0.submenu == nil && !$0.isSeparatorItem && $0.action != #selector(NSWindow.makeKeyAndOrderFront(_:))
         }
         XCTAssertEqual(built.filter { $0.target != nil || $0.action == nil }.map(\.title), [])
-        XCTAssertEqual(built.count, 19)
+        XCTAssertEqual(built.count, 22)
 
         let app = try submenu(titled: MainMenu.appMenuTitle, of: menu)
         XCTAssertEqual(
@@ -334,7 +334,12 @@ final class MenuSmokeTests: XCTestCase {
         let window = try window(of: delegate)
         let strip = controller.mainView.backlinksStrip
         let view = try submenu(titled: MainMenu.viewMenuTitle, of: delegate.mainMenu)
-        XCTAssertEqual(view.items.map(\.title), [MainMenu.hideBacklinksItemTitle])
+        XCTAssertEqual(
+            view.items.filter { !$0.isSeparatorItem }.map(\.title),
+            [
+                MainMenu.biggerItemTitle, MainMenu.smallerItemTitle, MainMenu.actualSizeItemTitle,
+                MainMenu.hideBacklinksItemTitle,
+            ])
         let toggle = try item(#selector(MainWindowController.toggleBacklinks(_:)), in: view)
         assertShortcut(toggle, "b", [.command, .shift])
 
@@ -394,7 +399,12 @@ final class MenuSmokeTests: XCTestCase {
         let view = try submenu(titled: MainMenu.viewMenuTitle, of: delegate.mainMenu)
         NSApp.mainMenu?.update()
         view.update()
-        XCTAssertEqual(view.items.map(\.title), [MainMenu.hideBacklinksItemTitle], "only ours")
+        XCTAssertEqual(
+            view.items.filter { !$0.isSeparatorItem }.map(\.title),
+            [
+                MainMenu.biggerItemTitle, MainMenu.smallerItemTitle, MainMenu.actualSizeItemTitle,
+                MainMenu.hideBacklinksItemTitle,
+            ], "only ours")
         let tabActions = [#selector(NSWindow.toggleTabBar(_:)), #selector(NSWindow.toggleTabOverview(_:))]
         XCTAssertEqual(
             items(in: delegate.mainMenu).filter { item in tabActions.contains { $0 == item.action } }.map(\.title),

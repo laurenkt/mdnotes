@@ -56,6 +56,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // E-8, ADR-0010: v1's font family preference is gone for good.
+        EditorFontPreference.deleteStaleFamily(in: .standard)
+
         // The menu bar is up before the window is, so its key equivalents are live with it.
         let menus = MainMenu.make()
         NSApp.mainMenu = menus.mainMenu
@@ -124,14 +127,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Preferences (PR-1)
 
     /// Cmd-, and the menu item. Shows the Preferences window, building it on first use, with
-    /// the library folder, the editor font and the hotkey in use. A folder chosen there goes
-    /// through `openLibrary(at:)`, a hotkey recorded there through `setHotKey(_:)`; a font
-    /// chosen there is written to the defaults, which the main view follows (E-8).
+    /// the library folder and the hotkey in use. A folder chosen there goes through
+    /// `openLibrary(at:)`, a hotkey recorded there through `setHotKey(_:)`.
     @objc public func showPreferences(_ sender: Any?) {
         let preferences = preferencesWindowController ?? makePreferencesWindowController()
         preferencesWindowController = preferences
         preferences.showLibraryRoot(libraryRoot)
-        preferences.showEditorFont()
         preferences.showHotKey(hotKey)
         preferences.showWindow(sender)
         preferences.window?.makeKeyAndOrderFront(sender)

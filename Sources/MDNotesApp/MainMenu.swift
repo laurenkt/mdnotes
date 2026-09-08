@@ -29,6 +29,10 @@ public enum MainMenu {
     /// `showBacklinksItemTitle` while it is collapsed (K-6).
     public static let hideBacklinksItemTitle = "Hide Backlinks"
     public static let showBacklinksItemTitle = "Show Backlinks"
+    /// E-8: the View menu's font size items, Cmd-plus, Cmd-minus and Cmd-0.
+    public static let biggerItemTitle = "Bigger"
+    public static let smallerItemTitle = "Smaller"
+    public static let actualSizeItemTitle = "Actual Size"
 
     /// The Delete key as a menu item spells it (`NSBackspaceCharacter`), shown as ⌫.
     public static let deleteKeyEquivalent = "\u{8}"
@@ -89,6 +93,12 @@ public enum MainMenu {
 
     private static func makeViewMenu() -> NSMenu {
         let menu = NSMenu(title: viewMenuTitle)
+        // E-8: the editor's font size. AppKit lets Cmd-= stand in for Cmd-plus, as it does
+        // for every app that shows ⌘+.
+        menu.addItem(item(biggerItemTitle, #selector(MainWindowController.makeTextBigger(_:)), "+"))
+        menu.addItem(item(smallerItemTitle, #selector(MainWindowController.makeTextSmaller(_:)), "-"))
+        menu.addItem(item(actualSizeItemTitle, #selector(MainWindowController.makeTextActualSize(_:)), "0"))
+        menu.addItem(.separator())
         // K-6: Cmd-Shift-B collapses or expands the backlinks strip.
         menu.addItem(
             item(

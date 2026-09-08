@@ -38,8 +38,8 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 
 - `Sources/MDNotesApp/App.swift` — entry point called by `main.swift`; everything else stays library-side for tests. `App.run()`.
 - `Sources/MDNotesApp/AppDelegate.swift` — launch: opens library root, builds window, menu, hotkey, Settings; termination handling. `AppDelegate.openLibrary`, `setHotKey`, `activateFromHotKey`.
-- `Sources/MDNotesApp/MainMenu.swift` — code-built menu bar (P-2); targetless items resolved through the responder chain. `MainMenu` (App/Edit/Note/View/Window menus).
-- `Sources/MDNotesApp/MainWindowController.swift` — the single main window (W-1): search field, list, editor wiring; commit/rename/delete/open-link/insert-image actions. `MainWindowController.attach`, `commitQuery`, `commitTitle`, `openLink`, `search`.
+- `Sources/MDNotesApp/MainMenu.swift` — code-built menu bar (P-2); targetless items resolved through the responder chain. `MainMenu` (App/Edit/Note/View/Window menus; View holds Bigger/Smaller/Actual Size (E-8) and the backlinks toggle).
+- `Sources/MDNotesApp/MainWindowController.swift` — the single main window (W-1): search field, list, editor wiring; commit/rename/delete/open-link/insert-image actions; View menu font size actions (E-8). `MainWindowController.attach`, `commitQuery`, `commitTitle`, `openLink`, `search`, `makeTextBigger/Smaller/ActualSize`, `validateMenuItem`.
 - `Sources/MDNotesApp/MainView.swift` — content layout per W-2/W-6: search field, eviction bar, message line, list, split, editor, backlinks. `MainView.showMessage`, `focusSearchField`, `applyEditorFont`.
 - `Sources/MDNotesApp/LibraryController.swift` — owns one library: root, `NoteStore`, snapshots, background scan/index queue, watcher, CRUD. `LibraryController.start`, `apply`, `create`, `rename`, `delete`, `storeImage`, `EvictionStatus`, `Phase`.
 - `Sources/MDNotesApp/LibraryRootPreference.swift` — library folder in `UserDefaults`, defaulting to `~/Documents/MDnotes` (L-1). `LibraryRootPreference`.
@@ -49,8 +49,8 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/RelativeDateText.swift` — Notes-style modified dates: `Today 11:53`, `Mon`, `3 Sep` (S-9). `RelativeDateText.string`, `band`, `Band`.
 - `Sources/MDNotesApp/EditorController.swift` — loads bodies off-main and applies them, autosaves, tracks edits, drives completions (S-8, E-4). `EditorController.load`, `flush`, `reloadFromDisk`, `insertEmbed`, `linkTargetAtCaret`.
 - `Sources/MDNotesApp/EditorTextView.swift` — intercepts Cmd-click and Cmd-Return for link opening (K-3). `EditorTextView`, `characterIndex`.
-- `Sources/MDNotesApp/EditorStyler.swift` — syntax styling of headings, links, tags, code; paragraph-scoped restyle (E-2, E-3). `EditorStyler.restyleAll`, `restyleAfterEdit`, `restyleLinks`, `TokenStyle`.
-- `Sources/MDNotesApp/EditorFontPreference.swift` — editor font from `UserDefaults` (E-8; v2 removes the family, keeps size). `EditorFontPreference`.
+- `Sources/MDNotesApp/EditorStyler.swift` — syntax styling of headings, links, tags, code (code in the monospaced font, E-8); paragraph-scoped restyle (E-2, E-3). `EditorStyler.restyleAll`, `restyleAfterEdit`, `restyleLinks`, `TokenStyle`, `baseFont`, `codeFont`.
+- `Sources/MDNotesApp/EditorFontPreference.swift` — system font at the size in `UserDefaults`, 9 to 36 pt, and the code font at that size; zoom steps; deletes the v1 family key (E-8, ADR-0010). `EditorFontPreference.font`, `codeFont`, `size`, `bigger`, `smaller`, `resetSize`, `deleteStaleFamily`.
 - `Sources/MDNotesApp/AutosaveClock.swift` — the clock the autosave delay runs on; tests substitute a manual one (E-4). `AutosaveClock`, `AutosaveTimer`, `SystemAutosaveClock`.
 - `Sources/MDNotesApp/CompletionController.swift` — the shared completion popover plus per-trigger rule types (K-4, T-3). `CompletionController`, `CompletionRules`, `LinkCompletionRules`, `TagCompletionRules`.
 - `Sources/MDNotesApp/BacklinksStrip.swift` — collapsible bar under the editor listing notes linking here (K-6). `BacklinksStrip.show`, `setCollapsed`, `toggleCollapsed`.
@@ -60,7 +60,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/HotKey.swift` — key-code + modifiers value for the global hotkey and its `UserDefaults` storage (W-3). `HotKey`, `HotKeyPreference`.
 - `Sources/MDNotesApp/GlobalHotKey.swift` — Carbon `RegisterEventHotKey` registration, no Accessibility permission (W-3). `GlobalHotKey.register`, `unregister`, `RegistrationError`.
 - `Sources/MDNotesApp/HotKeyRecorder.swift` — button that displays and records a new combination (W-3, PR-1). `HotKeyRecorder.beginRecording`, `showHotKey`.
-- `Sources/MDNotesApp/PreferencesWindowController.swift` — Settings window: library folder, hotkey recorder (PR-1; v2 removes the font controls). `PreferencesWindowController.setLibraryRoot`, `setHotKey`.
+- `Sources/MDNotesApp/PreferencesWindowController.swift` — Settings window: library folder, hotkey recorder, nothing else (PR-1). `PreferencesWindowController.setLibraryRoot`, `setHotKey`.
 
 ## Sources/MDNotesTestSupport (shared test helpers)
 
@@ -97,7 +97,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 ## Tests/MDNotesAppTests (headless AppKit smoke tests; real NSEvents, no UI clicks)
 
 - `Tests/MDNotesAppTests/MainWindowFixtures.swift` — shared fixture: `makeMainWindowController(autosaveClock:)` plus a main-actor box for teardown.
-- `Tests/MDNotesAppTests/WindowSnapshots.swift` — V-1 rendering helper: `writeWindowSnapshots(of:named:)` writes `build/snapshots/<name>-{light,dark}.png` at 2x.
+- `Tests/MDNotesAppTests/WindowSnapshots.swift` — V-1 rendering helper: `writeWindowSnapshots(of:named:)` for a `MainWindowController`, `writeWindowSnapshots(ofWindow:named:)` for any window; writes `build/snapshots/<name>-{light,dark}.png` at 2x.
 - `Tests/MDNotesAppTests/ManualAutosaveClock.swift` — `AutosaveClock` that only advances when a test says so; timers fire in deadline order (E-4).
 - `Tests/MDNotesAppTests/AppSmokeTests.swift` — the smallest headless launch: real controllers without a running app.
 - `Tests/MDNotesAppTests/LayoutSmokeTests.swift` — view stacking order at a given size, frame and split-position persistence (W-1, W-2).
@@ -111,9 +111,8 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/DeleteSmokeTests.swift` — Cmd-Delete moving the real file to the Trash (D-1, D-2).
 - `Tests/MDNotesAppTests/AutosaveSmokeTests.swift` — autosave timing, atomic write, own-write record (E-4, E-5, E-6).
 - `Tests/MDNotesAppTests/UndoSmokeTests.swift` — undo through the real text view and the `undo:` action (E-7).
-- `Tests/MDNotesAppTests/EditorStylingSmokeTests.swift` — styling applied by the storage delegate and its paragraph scope (E-2, E-3).
-- `Tests/MDNotesAppTests/EditorFontSmokeTests.swift` — editor font read at window build and reapplied on defaults change (E-8).
-- `Tests/MDNotesAppTests/FontPreferencesSmokeTests.swift` — the Settings font controls (PR-1, E-8; removed in v2 M6.6).
+- `Tests/MDNotesAppTests/EditorStylingSmokeTests.swift` — styling applied by the storage delegate and its paragraph scope; the mono font on code tokens only (E-2, E-3, E-8).
+- `Tests/MDNotesAppTests/EditorFontSmokeTests.swift` — system font at the stored size, size clamped to 9 to 36, View menu Bigger/Smaller/Actual Size clamping and persisting, stale family key deleted at launch, Settings without font controls; editor and Settings snapshots (E-8, PR-1, V-1).
 - `Tests/MDNotesAppTests/PreferencesSmokeTests.swift` — library folder remembered, read at launch, changed via the chooser (PR-1, L-1).
 - `Tests/MDNotesAppTests/HotKeySmokeTests.swift` — default Ctrl-Cmd-N, Carbon registration, activation and recording (W-3, PR-1).
 - `Tests/MDNotesAppTests/LinkCompletionSmokeTests.swift` — the `[[` popover driven by real key events (K-4).

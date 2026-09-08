@@ -9,9 +9,7 @@ import XCTest
 /// keystroke does, and edits go through `insertText`, the path a keystroke takes.
 @MainActor
 final class EditorStylingSmokeTests: XCTestCase {
-    private let keys = [
-        EditorFontPreference.familyDefaultsKey, EditorFontPreference.sizeDefaultsKey, MainView.listHeightDefaultsKey,
-    ]
+    private let keys = [EditorFontPreference.sizeDefaultsKey, MainView.listHeightDefaultsKey]
     private var root: URL = FileManager.default.temporaryDirectory
 
     override func setUp() async throws {
@@ -87,7 +85,10 @@ final class EditorStylingSmokeTests: XCTestCase {
         font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
     }
 
-    private var base: NSFont { NSFont.monospacedSystemFont(ofSize: 13, weight: .regular) }
+    /// The prose font: the system font at 13 pt (E-8).
+    private var base: NSFont { NSFont.systemFont(ofSize: 13) }
+    /// The code font: the system monospaced font at the same size (E-8).
+    private var mono: NSFont { NSFont.monospacedSystemFont(ofSize: 13, weight: .regular) }
 
     // MARK: - E-2: what is styled and how
 
@@ -132,15 +133,70 @@ final class EditorStylingSmokeTests: XCTestCase {
         let code = range(of: "`code #no`", in: text)
         XCTAssertEqual(Set(fixture.styles(in: code).map { $0?.rawValue }), ["inlineCode"])
         XCTAssertEqual(fixture.color(at: code.location), NSColor.secondaryLabelColor)
+        XCTAssertEqual(fixture.font(at: code.location), mono, "inline code is monospaced (E-8)")
 
         let fence = range(of: "```\nfenced [[no]] #no\n```\n", in: text)
         XCTAssertEqual(Set(fixture.styles(in: fence).map { $0?.rawValue }), ["fencedCode"])
         XCTAssertEqual(fixture.color(at: fence.location + 5), NSColor.secondaryLabelColor)
+        XCTAssertEqual(fixture.font(at: fence.location + 5), mono, "and so is fenced code")
 
         let after = range(of: "after", in: text)
         XCTAssertNil(fixture.style(at: after.location))
         XCTAssertEqual(fixture.color(at: after.location), fixture.styler.baseColor)
+        XCTAssertEqual(fixture.font(at: after.location), base)
         XCTAssertNil(fixture.style(at: range(of: "see", in: text).location))
+    }
+
+    /// E-8, E-2: the monospaced font goes on inline and fenced code and on nothing else; every
+    /// other character, styled or not, keeps the system font's family at the base size.
+    func testE8_stylerAssignsTheMonoFontToInlineAndFencedCodeOnly() throws {
+        let fixture = makeFixture()
+        let text = "# Head `in heading`\nprose `inline` [[link]] #tag and ![[embed.png]]\n```\nfenced #no\n```\nafter\n"
+        fixture.show(text)
+        XCTAssertEqual(fixture.styler.baseFont, base)
+        XCTAssertEqual(fixture.styler.codeFont, mono)
+        XCTAssertNotEqual(base.familyName, mono.familyName)
+
+        let codeRanges = [
+            range(of: "`in heading`", in: text), range(of: "`inline`", in: text),
+            range(of: "```\nfenced #no\n```\n", in: text),
+        ]
+        let length = (text as NSString).length
+        for location in 0..<length {
+            let font = try XCTUnwrap(fixture.font(at: location), "every character has a font")
+            let inCode = codeRanges.contains { NSLocationInRange(location, $0) }
+            let character = (text as NSString).substring(with: NSRange(location: location, length: 1))
+            if inCode {
+                XCTAssertEqual(font.familyName, mono.familyName, "\(character) at \(location) is code")
+                XCTAssertEqual(fixture.color(at: location), NSColor.secondaryLabelColor)
+            } else {
+                XCTAssertEqual(font.familyName, base.familyName, "\(character) at \(location) is not code")
+            }
+            XCTAssertEqual(font.pointSize, base.pointSize, "the size never changes (E-2)")
+        }
+        XCTAssertEqual(fixture.style(at: range(of: "`in heading`", in: text).location), .inlineCode)
+        XCTAssertEqual(fixture.style(at: range(of: "fenced", in: text).location), .fencedCode)
+        XCTAssertEqual(fixture.style(at: range(of: "[[link]]", in: text).location), .wikilink)
+        XCTAssertEqual(fixture.style(at: range(of: "#tag", in: text).location), .tag)
+        XCTAssertTrue(isBold(fixture.font(at: 0)), "the heading keeps its weight")
+
+        // The styler's own attributes say the same: only the two code styles carry the font.
+        for style in EditorStyler.TokenStyle.allCases {
+            let font = fixture.styler.attributes(for: style)[.font] as? NSFont
+            switch style {
+            case .inlineCode, .fencedCode: XCTAssertEqual(font, mono, "\(style)")
+            case .heading: XCTAssertEqual(font, fixture.styler.headingFont)
+            case .wikilink, .ambiguousLink, .tag: XCTAssertNil(font, "\(style) keeps the base font")
+            }
+        }
+
+        // Typing code, or unfencing it, moves the family with the token.
+        let end = length
+        fixture.type("`x`", at: end)
+        XCTAssertEqual(fixture.font(at: end)?.familyName, mono.familyName)
+        fixture.type("", at: end, replacing: 1)
+        XCTAssertEqual(fixture.textView.string.hasSuffix("after\nx`"), true)
+        XCTAssertEqual(fixture.font(at: end)?.familyName, base.familyName, "no longer code, no longer mono")
     }
 
     func testE2_linksAndTagsOnAHeadingLineKeepItsWeight() throws {
@@ -161,10 +217,12 @@ final class EditorStylingSmokeTests: XCTestCase {
         fixture.show(text)
         XCTAssertEqual(fixture.textView.string, text, "the text is exactly what went in")
 
-        // Only the font weight and colour vary, run by run; family and size are the base's.
+        // Only the font weight and colour vary, run by run; the size is the base's everywhere
+        // and the family too, except on code, which is monospaced (E-8).
         let allowed: Set<NSAttributedString.Key> = [
             .font, .foregroundColor, .paragraphStyle, EditorStyler.tokenAttribute,
         ]
+        let codeStyles = [EditorStyler.TokenStyle.inlineCode.rawValue, EditorStyler.TokenStyle.fencedCode.rawValue]
         var runs = 0
         fixture.storage.enumerateAttributes(in: NSRange(location: 0, length: fixture.storage.length), options: []) {
             attributes, range, _ in
@@ -173,7 +231,9 @@ final class EditorStylingSmokeTests: XCTestCase {
                 Set(attributes.keys).isSubset(of: allowed), "unexpected attributes \(attributes.keys) in \(range)")
             if let font = attributes[.font] as? NSFont {
                 XCTAssertEqual(font.pointSize, base.pointSize, "size unchanged in \(range)")
-                XCTAssertEqual(font.familyName, base.familyName, "family unchanged in \(range)")
+                let isCode = codeStyles.contains(attributes[EditorStyler.tokenAttribute] as? String ?? "")
+                XCTAssertEqual(
+                    font.familyName, isCode ? mono.familyName : base.familyName, "family in \(range)")
             } else {
                 XCTFail("every run has a font: \(range)")
             }
@@ -197,25 +257,26 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.textView.string, "plain\n#t [[x]]")
     }
 
-    func testE2_fontPreferenceChangeKeepsHeadingsBoldInTheNewFont() throws {
+    func testE8_sizeChangeKeepsHeadingsBoldAndCodeMonospacedAtTheNewSize() throws {
         let fixture = makeFixture()
-        let text = "# Title\nbody [[link]]\n"
+        let text = "# Title\nbody [[link]] `code`\n"
         fixture.show(text)
         XCTAssertTrue(isBold(fixture.font(at: 0)))
 
-        UserDefaults.standard.set("Menlo", forKey: EditorFontPreference.familyDefaultsKey)
         UserDefaults.standard.set(15, forKey: EditorFontPreference.sizeDefaultsKey)
 
         let heading = try XCTUnwrap(fixture.font(at: 0))
-        XCTAssertEqual(heading.familyName, "Menlo")
+        XCTAssertEqual(heading.familyName, base.familyName)
         XCTAssertEqual(heading.pointSize, 15)
-        XCTAssertTrue(isBold(heading), "the heading is bold in the new font: \(heading)")
+        XCTAssertTrue(isBold(heading), "the heading is bold at the new size: \(heading)")
         let body = try XCTUnwrap(fixture.font(at: range(of: "body", in: text).location))
-        XCTAssertEqual(body.familyName, "Menlo")
-        XCTAssertEqual(body.pointSize, 15)
+        XCTAssertEqual(body, NSFont.systemFont(ofSize: 15))
         XCTAssertFalse(isBold(body))
+        let code = try XCTUnwrap(fixture.font(at: range(of: "`code`", in: text).location))
+        XCTAssertEqual(code, NSFont.monospacedSystemFont(ofSize: 15, weight: .regular), "code follows the size")
         XCTAssertEqual(fixture.color(at: range(of: "[[link]]", in: text).location), NSColor.linkColor)
-        XCTAssertEqual(fixture.styler.baseFont.familyName, "Menlo")
+        XCTAssertEqual(fixture.styler.baseFont, NSFont.systemFont(ofSize: 15))
+        XCTAssertEqual(fixture.styler.codeFont, NSFont.monospacedSystemFont(ofSize: 15, weight: .regular))
 
         // A defaults write that leaves the font alone (the split position, say) changes nothing.
         UserDefaults.standard.set(240.0, forKey: MainView.listHeightDefaultsKey)

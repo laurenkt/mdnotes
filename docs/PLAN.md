@@ -155,7 +155,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       Refresh relative words on day change (`NSCalendarDayChanged`) and on window becoming
       key. Smoke test: a 60-character title and `Yesterday 09:10` in a 300 pt row leaves the
       date untruncated. Snapshot per V-1.
-- [ ] M6.6 Fonts (E-8, E-2): remove `EditorFontFamily` and delete the stored key on launch;
+- [x] M6.6 Fonts (E-8, E-2): remove `EditorFontFamily` and delete the stored key on launch;
       prose `systemFont`, code tokens `monospacedSystemFont`; View menu Bigger/Smaller/Actual
       Size with Cmd-plus/minus/0, 9 to 36 pt, persisted in `EditorFontSize`. Remove the font
       controls from Settings. Tests: styler assigns the mono font to inline and fenced code

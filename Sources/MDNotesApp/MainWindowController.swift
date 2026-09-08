@@ -72,9 +72,11 @@ import MDNotesCore
 /// dataless. The bar's button opens Storage Settings through `openFile`.
 ///
 /// The menu bar's Note and View items (`MainMenu`) reach here through the responder chain:
-/// `focusSearchField(_:)`, `renameNote(_:)`, `deleteNote(_:)` and `toggleBacklinks(_:)` are
-/// their actions, and `validateMenuItem(_:)` enables the rename and delete items only while a
-/// row is selected and titles the backlinks item for the strip's current state.
+/// `focusSearchField(_:)`, `renameNote(_:)`, `deleteNote(_:)`, `toggleBacklinks(_:)`,
+/// `makeTextBigger(_:)`, `makeTextSmaller(_:)` and `makeTextActualSize(_:)` are their actions,
+/// and `validateMenuItem(_:)` enables the rename and delete items only while a row is selected,
+/// titles the backlinks item for the strip's current state, and enables the size items while
+/// the size can still move their way (E-8).
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate, NSMenuItemValidation {
     /// Autosave name under which `NSWindow` persists the frame.
@@ -602,8 +604,25 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         mainView.backlinksStrip.toggleCollapsed()
     }
 
+    /// The Bigger menu item and Cmd-plus (E-8): one point up, to 36 at most. The size is
+    /// stored in the defaults, which `MainView` follows, so the editor changes at once.
+    @objc public func makeTextBigger(_ sender: Any?) {
+        EditorFontPreference.bigger()
+    }
+
+    /// The Smaller menu item and Cmd-minus (E-8): one point down, to 9 at least.
+    @objc public func makeTextSmaller(_ sender: Any?) {
+        EditorFontPreference.smaller()
+    }
+
+    /// The Actual Size menu item and Cmd-0 (E-8): back to 13 pt.
+    @objc public func makeTextActualSize(_ sender: Any?) {
+        EditorFontPreference.resetSize()
+    }
+
     /// Rename Note and Delete Note need a selected row (R-1, D-1); the backlinks item is titled
-    /// for what it will do next (K-6). Every other item of ours is always available.
+    /// for what it will do next (K-6); Bigger, Smaller and Actual Size are available while
+    /// they would change the size (E-8). Every other item of ours is always available.
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(renameNote(_:)), #selector(deleteNote(_:)):
@@ -612,6 +631,12 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             menuItem.title =
                 mainView.backlinksStrip.isCollapsed ? MainMenu.showBacklinksItemTitle : MainMenu.hideBacklinksItemTitle
             return true
+        case #selector(makeTextBigger(_:)):
+            return EditorFontPreference.size() < EditorFontPreference.maximumSize
+        case #selector(makeTextSmaller(_:)):
+            return EditorFontPreference.size() > EditorFontPreference.minimumSize
+        case #selector(makeTextActualSize(_:)):
+            return EditorFontPreference.size() != EditorFontPreference.defaultSize
         default:
             return true
         }

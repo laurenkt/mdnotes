@@ -3,15 +3,20 @@ import MDNotesApp
 import XCTest
 
 extension XCTestCase {
-    /// Renders the window's content view at 2x in light and dark appearance to
+    /// Renders the main window's content view at 2x in light and dark appearance to
     /// `build/snapshots/<name>-<appearance>.png` (V-1) and returns the files written. The
     /// implementing agent opens these and compares them with the spec and the design canvas
     /// (ADR-0013, ADR-0015); they are build products and never committed.
     @MainActor
     func writeWindowSnapshots(of controller: MainWindowController, named name: String) throws -> [URL] {
-        guard let window = controller.window, let view = window.contentView else {
-            throw CocoaError(.fileNoSuchFile)
-        }
+        guard let window = controller.window else { throw CocoaError(.fileNoSuchFile) }
+        return try writeWindowSnapshots(ofWindow: window, named: name)
+    }
+
+    /// The same for any window, such as Settings (PR-1).
+    @MainActor
+    func writeWindowSnapshots(ofWindow window: NSWindow, named name: String) throws -> [URL] {
+        guard let view = window.contentView else { throw CocoaError(.fileNoSuchFile) }
         let directory = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("build", isDirectory: true)
