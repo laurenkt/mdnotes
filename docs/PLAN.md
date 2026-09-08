@@ -192,7 +192,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 
 ## M8: Thumbnails
 
-- [ ] M8.1 `ThumbnailCache` in App (PF-8): background queue, two concurrent jobs,
+- [x] M8.1 `ThumbnailCache` in App (PF-8): background queue, two concurrent jobs,
       `CGImageSource` downsampling to a requested pixel size, LRU bounded at 50 MB, keyed by
       path and mtime, completion on main. Tests: hit, miss, eviction on size, invalidation on
       mtime change, never blocks the calling thread.

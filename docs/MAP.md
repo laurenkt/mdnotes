@@ -57,6 +57,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/EvictionBar.swift` — line under the search field counting dataless notes, free space, Storage Settings button (L-10). `EvictionBar.show`, `hide`.
 - `Sources/MDNotesApp/ReadOnlyNoticeBar.swift` — line above the editor explaining why the note cannot be edited (L-7, L-8). `ReadOnlyNoticeBar.show`, `hide`.
 - `Sources/MDNotesApp/ImagePasteboard.swift` — an image on the pasteboard, decoded off-main into bytes (I-1). `ImageSource`, `ImagePasteboard`, `encoded()`, `Failure`.
+- `Sources/MDNotesApp/ThumbnailCache.swift` — downsampled thumbnails of image files, made on a background queue with at most two jobs, LRU-bounded at 50 MB, keyed by path and modification date, completions on main (PF-8). `ThumbnailCache.request`, `cachedImage(for:pixelSize:)`, `cost(of:)`, `bytes`, `count`, `willGenerate` observer.
 - `Sources/MDNotesApp/HotKey.swift` — key-code + modifiers value for the global hotkey and its `UserDefaults` storage (W-3). `HotKey`, `HotKeyPreference`.
 - `Sources/MDNotesApp/GlobalHotKey.swift` — Carbon `RegisterEventHotKey` registration, no Accessibility permission (W-3). `GlobalHotKey.register`, `unregister`, `RegistrationError`.
 - `Sources/MDNotesApp/HotKeyRecorder.swift` — button that displays and records a new combination (W-3, PR-1). `HotKeyRecorder.beginRecording`, `showHotKey`.
@@ -124,6 +125,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/BacklinksSmokeTests.swift` — backlinks strip contents, click-to-open, hide/collapse, the title-button cap (K-6, PF-6).
 - `Tests/MDNotesAppTests/LinkRewriteSmokeTests.swift` — a committed rename rewriting links on disk atomically (R-3).
 - `Tests/MDNotesAppTests/ImageInsertSmokeTests.swift` — paste/drop writing under `i/` and embedding at the caret (I-1, I-2).
+- `Tests/MDNotesAppTests/ThumbnailCacheTests.swift` — miss, hit, in-flight joining, LRU eviction on size, invalidation on modification date, request never blocks and at most two jobs run, completions on main (PF-8).
 - `Tests/MDNotesAppTests/ExternalEditSmokeTests.swift` — disk changes behind the app's back arriving via the real watcher (X-2, X-3, X-4).
 - `Tests/MDNotesAppTests/LibraryControllerSmokeTests.swift` — progressive list population and main-thread snapshot delivery (PF-6, PF-7).
 - `Tests/MDNotesAppTests/DownloadRequestSmokeTests.swift` — download requests after scan and after every watcher batch (L-9).
@@ -147,6 +149,6 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - Global hotkey: `Sources/MDNotesApp/GlobalHotKey.swift` (Carbon), value in `HotKey.swift`, recorded by `HotKeyRecorder.swift`, wired in `AppDelegate.setHotKey`.
 - Settings window: `Sources/MDNotesApp/PreferencesWindowController.swift`; backing defaults in `LibraryRootPreference.swift`, `EditorFontPreference.swift`, `HotKey.swift`.
 - Menus: `Sources/MDNotesApp/MainMenu.swift`; item enablement via `MainWindowController.validateMenuItem`; app-level items in `AppDelegate.swift`.
-- Images and embeds: `Sources/MDNotesApp/ImagePasteboard.swift` (decode off-main), `LibraryController.storeImage`, `Core/ImageStore.swift`; resolution via `LibraryController.locateEmbed`. Thumbnails: none yet (M8).
+- Images and embeds: `Sources/MDNotesApp/ImagePasteboard.swift` (decode off-main), `LibraryController.storeImage`, `Core/ImageStore.swift`; resolution via `LibraryController.locateEmbed`. Thumbnails: `ThumbnailCache.swift` (M8.1); rows and editor attachments not yet wired (M8.3, M8.5).
 - iCloud download status: `Core/NoteStore.isDownloaded`/`isAvailable`, `Core/DownloadRequester.swift`, `LibraryController.EvictionStatus`, `EvictionBar.swift` / `ReadOnlyNoticeBar.swift`.
 - Perf tests and budgets: budgets in `Sources/MDNotesTestSupport/PerfGate.swift`; fixtures in `SyntheticLibrary.swift`; gates in `Tests/MDNotesCoreTests/IndexPerfTests.swift`, `IndexMemoryPerfTests.swift`, `Tests/MDNotesAppTests/LaunchPerfTests.swift`, `ListPerfTests.swift`, `EditorPerfTests.swift`, `BacklinksPerfTests.swift`.
