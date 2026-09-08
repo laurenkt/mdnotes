@@ -97,7 +97,8 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 ## Tests/MDNotesAppTests (headless AppKit smoke tests; real NSEvents, no UI clicks)
 
 - `Tests/MDNotesAppTests/MainWindowFixtures.swift` — shared fixture: `makeMainWindowController(autosaveClock:)` plus a main-actor box for teardown.
-- `Tests/MDNotesAppTests/WindowSnapshots.swift` — V-1 rendering helper: `writeWindowSnapshots(of:named:)` for a `MainWindowController`, `writeWindowSnapshots(ofWindow:named:)` for any window; writes `build/snapshots/<name>-{light,dark}.png` at 2x.
+- `Tests/MDNotesAppTests/WindowSnapshots.swift` — V-1 rendering helper: `writeWindowSnapshots(of:named:)` for a `MainWindowController`, `writeWindowSnapshots(ofWindow:named:)` for any window; writes `build/snapshots/<name>-{light,dark}.png` at 2x via `bitmapImageRepForCachingDisplay` (a hand-built 2x rep when the headless window is 1x).
+- `Tests/MDNotesAppTests/WindowSnapshotTests.swift` — the helper itself: the main window writes `main-window-{light,dark}.png` at 2x pixel size, light and dark differ, window appearance restored (V-1).
 - `Tests/MDNotesAppTests/ManualAutosaveClock.swift` — `AutosaveClock` that only advances when a test says so; timers fire in deadline order (E-4).
 - `Tests/MDNotesAppTests/AppSmokeTests.swift` — the smallest headless launch: real controllers without a running app.
 - `Tests/MDNotesAppTests/LayoutSmokeTests.swift` — view stacking order at a given size, frame and split-position persistence (W-1, W-2).

@@ -28,15 +28,7 @@ extension XCTestCase {
             view.layoutSubtreeIfNeeded()
             view.displayIfNeeded()
             let bounds = view.bounds
-            let scale = 2
-            guard
-                let rep = NSBitmapImageRep(
-                    bitmapDataPlanes: nil, pixelsWide: Int(bounds.width) * scale,
-                    pixelsHigh: Int(bounds.height) * scale,
-                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
-            else { throw CocoaError(.fileWriteUnknown) }
-            rep.size = bounds.size
+            let rep = try Self.cachingRep(for: view, in: bounds, scale: 2)
             view.cacheDisplay(in: bounds, to: rep)
             guard let png = rep.representation(using: .png, properties: [:]) else {
                 throw CocoaError(.fileWriteUnknown)
@@ -47,5 +39,24 @@ extension XCTestCase {
         }
         window.appearance = nil
         return written
+    }
+
+    /// `bitmapImageRepForCachingDisplay` sized by the window's backing scale, which is what V-1
+    /// names; a headless window may report 1x, so a rep at `scale` is built by hand then.
+    @MainActor
+    private static func cachingRep(for view: NSView, in bounds: NSRect, scale: Int) throws -> NSBitmapImageRep {
+        let wide = Int(bounds.width) * scale
+        let high = Int(bounds.height) * scale
+        if let rep = view.bitmapImageRepForCachingDisplay(in: bounds), rep.pixelsWide == wide, rep.pixelsHigh == high {
+            return rep
+        }
+        guard
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: wide, pixelsHigh: high,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { throw CocoaError(.fileWriteUnknown) }
+        rep.size = bounds.size
+        return rep
     }
 }
