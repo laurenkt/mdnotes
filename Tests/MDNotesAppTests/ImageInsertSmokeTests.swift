@@ -69,7 +69,7 @@ final class ImageInsertSmokeTests: XCTestCase {
         await waitUntil("editor shows Alpha") {
             controller.editorController.noteID == self.alpha && controller.editorController.body != nil
         }
-        XCTAssertEqual(controller.mainView.textView.string, Self.alphaBody)
+        XCTAssertEqual(controller.editorController.text, Self.alphaBody)
         XCTAssertTrue(window.makeFirstResponder(controller.mainView.textView))
         controller.mainView.textView.setSelectedRange(NSRange(location: Self.caret, length: 0))
         return Fixture(controller: controller, library: library, clock: clock, window: window)
@@ -292,7 +292,7 @@ final class ImageInsertSmokeTests: XCTestCase {
         XCTAssertEqual(try storedImage(name), png, "PNG data is stored byte for byte")
 
         let expected = "before ![[\(name)]] after ![[pic.png]] ![[assets/other.png]] ![[missing.png]]\n"
-        XCTAssertEqual(fixture.textView.string, expected, "the embed is at the caret")
+        XCTAssertEqual(fixture.editor.text, expected, "the embed is at the caret")
         let caretAfter = Self.caret + ("![[\(name)]]" as NSString).length
         XCTAssertEqual(fixture.textView.selectedRange(), NSRange(location: caretAfter, length: 0), "caret after the ]]")
         XCTAssertIdentical(fixture.window.firstResponder, fixture.textView, "focus stays in the editor")
@@ -414,7 +414,7 @@ final class ImageInsertSmokeTests: XCTestCase {
         guard case .failure = try XCTUnwrap(reported()) else { return XCTFail("the write failed") }
         XCTAssertNotNil(fixture.controller.inlineMessage)
         XCTAssertFalse(fixture.controller.mainView.messageLabel.isHidden)
-        XCTAssertEqual(fixture.textView.string, Self.alphaBody, "nothing was inserted")
+        XCTAssertEqual(fixture.editor.text, Self.alphaBody, "nothing was inserted")
         XCTAssertFalse(fixture.editor.hasUnsavedEdits)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("i"), encoding: .utf8), "in the way")
     }

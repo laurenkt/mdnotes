@@ -54,7 +54,9 @@ import MDNotesCore
 /// in the file and are not edits: `text` is the one accessor for the file's text and leaves
 /// them out, the save writes `text`, the undo bookkeeping compares `text`, and the link and tag
 /// lookups map the storage index they are given through `EditorText` before scanning. Adding
-/// or removing one neither starts the autosave delay nor registers with undo.
+/// or removing one neither starts the autosave delay nor registers with undo. Which embeds get
+/// one, and when it goes, is `thumbnails`' business: it hears of every character edit from the
+/// storage delegate and reconciles the paragraphs around it once the edit is over.
 @MainActor
 public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
     /// How long after the last edit the note is written (E-4).
@@ -64,6 +66,9 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     /// E-2, E-3: styles the text view's storage, paragraph by paragraph as it is edited.
     public let styler: EditorStyler
+
+    /// E-9: keeps a thumbnail below every image embed that resolves, and only those.
+    public let thumbnails: EditorThumbnails
 
     /// K-4: the `[[` completion popover over this editor's text.
     public let linkCompletion: CompletionController
@@ -109,8 +114,9 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     private let clock: any AutosaveClock
     private var pendingSave: (any AutosaveTimer)?
-    /// The library `noteID` belongs to; the target of its writes.
-    private var library: LibraryController?
+    /// The library `noteID` belongs to; the target of its writes, and where `thumbnails` has
+    /// embed targets looked up (I-2).
+    private(set) var library: LibraryController?
 
     private let queue = DispatchQueue(label: "MDNotes.EditorController", qos: .userInitiated)
     /// Bumped by every `load` and `clear`; a read or write result tagged with an older value
@@ -138,14 +144,21 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// storage's edit notification is neither styled nor taken for a user edit.
     private var isEditingAttachments = false
 
-    public init(textView: NSTextView, clock: any AutosaveClock = SystemAutosaveClock()) {
+    /// `thumbnails` is the cache the inline thumbnails come from (E-9, PF-8); the window
+    /// controller passes the one its list rows use.
+    public init(
+        textView: NSTextView, clock: any AutosaveClock = SystemAutosaveClock(),
+        thumbnails cache: ThumbnailCache = ThumbnailCache()
+    ) {
         self.textView = textView
         self.clock = clock
         styler = EditorStyler(textView: textView, baseFont: textView.font ?? EditorFontPreference.font())
+        thumbnails = EditorThumbnails(cache: cache)
         linkCompletion = CompletionController(textView: textView, rules: LinkCompletionRules())
         tagCompletion = CompletionController(textView: textView, rules: TagCompletionRules())
         scratchUndoManager = UndoManager()
         super.init()
+        thumbnails.editor = self
         textView.isEditable = false
         textView.allowsUndo = true
         textView.delegate = self
@@ -209,21 +222,48 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         }
     }
 
-    /// Removes the display-only attachment runs that `range`, a storage range, overlaps (E-9):
-    /// every run when `range` is nil, and for an empty range the run containing its location.
-    /// Not an edit and not undoable, as `addAttachment` is not.
+    /// Removes the display-only attachments that `range`, a storage range, overlaps (E-9): every
+    /// one when `range` is nil, and for an empty range the one containing its location. An
+    /// attachment is the line break and attachment character `addAttachment` put in together,
+    /// so one of several stacked below a line can go on its own. Not an edit and not undoable,
+    /// as `addAttachment` is not.
     public func removeAttachments(in range: NSRange? = nil) {
         guard let storage = textView.textStorage else { return }
-        let runs = editorText.displayOnlyRanges.filter { run in
+        let backing = storage.mutableString
+        let pieces = editorText.displayOnlyRanges.flatMap { Self.pieces(of: $0, in: backing) }.filter { piece in
             guard let range else { return true }
             return range.length == 0
-                ? NSLocationInRange(range.location, run) : NSIntersectionRange(run, range).length > 0
+                ? NSLocationInRange(range.location, piece) : NSIntersectionRange(piece, range).length > 0
         }
-        guard !runs.isEmpty else { return }
+        guard !pieces.isEmpty else { return }
         editAttachments {
-            for run in runs.reversed() { storage.deleteCharacters(in: run) }
+            for piece in pieces.reversed() { storage.deleteCharacters(in: piece) }
         }
     }
+
+    /// `run`, a display-only run, cut into the attachments it holds: each a line break followed
+    /// by an attachment character, as `addAttachment` made them. A character of the run that
+    /// is not part of such a pair is a piece of its own.
+    private static func pieces(of run: NSRange, in backing: NSMutableString) -> [NSRange] {
+        var pieces: [NSRange] = []
+        var index = run.location
+        let end = NSMaxRange(run)
+        while index < end {
+            if index + 1 < end, backing.character(at: index) == Self.lineBreak,
+                backing.character(at: index + 1) == EditorText.attachmentCharacter
+            {
+                pieces.append(NSRange(location: index, length: 2))
+                index += 2
+            } else {
+                pieces.append(NSRange(location: index, length: 1))
+                index += 1
+            }
+        }
+        return pieces
+    }
+
+    /// U+000A, the line break an attachment run begins with.
+    nonisolated private static let lineBreak: UInt16 = 0x0A
 
     /// Runs `edit` on the storage as one editing pass with the delegate's edit handling off.
     private func editAttachments(_ edit: () -> Void) {
@@ -320,11 +360,12 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// E-3); it does so here rather than before processing because attribute changes made
     /// while the character edit is being processed widen its range, and the text view then
     /// moves the insertion point to the end of the widened range instead of past the typed
-    /// character. Then, unless the replacement is programmatic, as `load`'s is, the autosave
-    /// delay restarts (E-4). A display-only attachment run being added or removed (E-9) is
-    /// neither: the text it belongs to is unchanged. The protocol is not main-actor isolated
-    /// in the SDK, but the storage belongs to a view that is only ever edited on the main
-    /// thread.
+    /// character. The thumbnails hear of the edit too, and reconcile the paragraphs around it
+    /// once the storage is done (E-9). Then, unless the replacement is programmatic, as
+    /// `load`'s is, the autosave delay restarts (E-4). A display-only attachment run being
+    /// added or removed (E-9) is none of these: the text it belongs to is unchanged. The
+    /// protocol is not main-actor isolated in the SDK, but the storage belongs to a view that
+    /// is only ever edited on the main thread.
     nonisolated public func textStorage(
         _ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
         range editedRange: NSRange,
@@ -334,6 +375,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         MainActor.assumeIsolated {
             guard !isEditingAttachments else { return }
             styler.restyleAfterEdit(in: editedRange)
+            thumbnails.textDidChange(in: editedRange, changeInLength: delta)
             textDidEdit()
         }
     }
@@ -483,6 +525,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         noteID = nil
         body = nil
         library = nil
+        thumbnails.reset()
         replaceText(with: "")
         textView.isEditable = false
         setReadOnlyNotice(nil)
@@ -521,6 +564,9 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         cancelPendingSave()
         hasUnsavedEdits = false
         let text = body?.displayText ?? ""
+        // E-9: thumbnails still being looked up were for the text going away; the new text's
+        // embeds are looked up as the replacement is reconciled.
+        thumbnails.reset()
         replaceText(with: text)
         textView.isEditable = body?.isWritable ?? false
         setReadOnlyNotice(Self.readOnlyNotice(for: body))

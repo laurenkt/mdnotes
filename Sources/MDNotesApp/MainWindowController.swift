@@ -53,7 +53,9 @@ import MDNotesCore
 /// A plain click on a tag in the editor (T-4) is intercepted by `EditorTextView` and handed
 /// here: the search field is set to the tag, `#` included, and the list reloads for it as it
 /// would for typing (S-4, S-5). The click is consumed, so the caret stays where it was and
-/// focus stays in the editor; the note shown stays selected if the new query lists it.
+/// focus stays in the editor; the note shown stays selected if the new query lists it. A plain
+/// click on an inline thumbnail (E-9) arrives the same way and opens the image with its
+/// default application, as a Cmd-click on the embed above it would (I-2).
 ///
 /// The backlinks strip (K-6) is fed from here: whenever the editor's note changes or a snapshot
 /// arrives, the snapshot's link index names the notes linking to the open note and the strip
@@ -146,8 +148,10 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     private var pendingRenames: [NoteID: NoteID] = [:]
 
     /// `autosaveClock` times the editor's autosave delay (E-4); tests pass one they advance
-    /// by hand.
-    public init(autosaveClock: any AutosaveClock = SystemAutosaveClock()) {
+    /// by hand. `thumbnails` is the one cache the list's rows (S-11) and the editor's inline
+    /// thumbnails (E-9) share (PF-8); tests pass one they can observe.
+    public init(autosaveClock: any AutosaveClock = SystemAutosaveClock(), thumbnails: ThumbnailCache = ThumbnailCache())
+    {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -169,8 +173,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         window.contentView = view
         window.initialFirstResponder = view.searchField
         mainView = view
-        listController = NoteListController(tableView: view.tableView)
-        editorController = EditorController(textView: view.textView, clock: autosaveClock)
+        listController = NoteListController(tableView: view.tableView, thumbnails: thumbnails)
+        editorController = EditorController(textView: view.textView, clock: autosaveClock, thumbnails: thumbnails)
         super.init(window: window)
         // E-4: unsaved edits are written the moment the window stops being key.
         NotificationCenter.default.addObserver(
@@ -200,8 +204,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         // K-3: Cmd-click on a link in the editor, or Cmd-Enter with the caret in one.
         view.textView.onCommandClick = { [weak self] index in self?.openLink(at: index) ?? false }
         view.textView.onCommandReturn = { [weak self] in self?.openLinkAtCaret() ?? false }
-        // T-4: a plain click on a tag in the editor searches for it.
-        view.textView.onClick = { [weak self] index in self?.searchTag(at: index) ?? false }
+        // E-9, T-4: a plain click on a thumbnail opens its image; on a tag it searches for it.
+        view.textView.onClick = { [weak self] index in self?.clickInEditor(at: index) ?? false }
         // I-1: an image pasted into or dropped on the editor is stored and embedded.
         view.textView.onInsertImage = { [weak self] source in self?.insertImage(source) ?? false }
         // K-6: a click on a title in the backlinks strip opens that note.
@@ -552,6 +556,37 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     public func searchTag(at index: Int) -> Bool {
         guard let tag = editorController.tag(at: index) else { return false }
         search(for: tag)
+        return true
+    }
+
+    /// A plain click on the character at storage index `index` of the editor's text: on a
+    /// thumbnail it opens the image (E-9), on a tag it searches for the tag (T-4). Returns
+    /// false, doing nothing, for any other character, which leaves the click to the text view.
+    @discardableResult
+    public func clickInEditor(at index: Int) -> Bool {
+        openThumbnail(at: index) || searchTag(at: index)
+    }
+
+    // MARK: - Thumbnails (E-9)
+
+    /// A click on the thumbnail whose attachment character is at storage index `index` (E-9):
+    /// opens the image it shows with its default application, as a Cmd-click on the embed
+    /// above it does (I-2). A file the system will not open shows the reason under the search
+    /// field. Returns false, doing nothing, when the character is not a thumbnail; `onOpenFile`
+    /// reports the outcome otherwise.
+    @discardableResult
+    public func openThumbnail(at index: Int) -> Bool {
+        guard let thumbnail = editorController.thumbnails.attachment(atCharacter: index) else { return false }
+        let target = LinkTarget(text: thumbnail.target, isEmbed: true)
+        hideInlineMessage()
+        if openFile(thumbnail.url) {
+            onOpenFile?(target, thumbnail.url)
+        } else {
+            FileHandle.standardError.write(
+                Data("MDNotes: could not open \(thumbnail.url.path) for ![[\(thumbnail.target)]]\n".utf8))
+            showInlineMessage("\u{201C}\(thumbnail.target)\u{201D} could not be opened.")
+            onOpenFile?(target, nil)
+        }
         return true
     }
 

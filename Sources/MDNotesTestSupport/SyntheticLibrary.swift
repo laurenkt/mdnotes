@@ -14,6 +14,9 @@ public enum SyntheticLibrary {
         /// Share of notes whose body embeds a generated PNG of its own under `i/` (PF-8: the
         /// list and editor gates run with 10 % of notes embedding an image).
         public var imageFraction: Double
+        /// How many generated PNGs of its own each large note embeds besides, one per paragraph
+        /// spread evenly through its body (E-9: the editor gate runs on a 1 MB note with 50).
+        public var largeNoteEmbeds: Int
 
         public init(
             noteCount: Int,
@@ -21,7 +24,8 @@ public enum SyntheticLibrary {
             nestedFraction: Double = 0.2,
             largeNoteCount: Int = 5,
             largeNoteBytes: Int = 1_000_000,
-            imageFraction: Double = 0.1
+            imageFraction: Double = 0.1,
+            largeNoteEmbeds: Int = 0
         ) {
             self.noteCount = noteCount
             self.seed = seed
@@ -29,6 +33,7 @@ public enum SyntheticLibrary {
             self.largeNoteCount = largeNoteCount
             self.largeNoteBytes = largeNoteBytes
             self.imageFraction = imageFraction
+            self.largeNoteEmbeds = largeNoteEmbeds
         }
     }
 
@@ -73,8 +78,18 @@ public enum SyntheticLibrary {
                     .write(to: root.appendingPathComponent("i/\(name)"))
                 image = name
             }
+            var embeds: [String] = []
+            if isLarge {
+                for k in 0..<options.largeNoteEmbeds {
+                    let name = imageName(forNoteAt: i, embed: k)
+                    try pngData(seed: i * 1_000 + k + 1, width: imageWidth, height: imageHeight)
+                        .write(to: root.appendingPathComponent("i/\(name)"))
+                    embeds.append(name)
+                }
+            }
             let body = makeBody(
-                index: i, paths: paths, rng: &rng, targetBytes: isLarge ? options.largeNoteBytes : 400, image: image)
+                index: i, paths: paths, rng: &rng, targetBytes: isLarge ? options.largeNoteBytes : 400, image: image,
+                embeds: embeds)
             try body.write(to: url, atomically: true, encoding: .utf8)
         }
         // A non-note file and an ignored-folder file, to make sure filters are exercised.
@@ -88,14 +103,29 @@ public enum SyntheticLibrary {
         "img-\(index).png"
     }
 
+    /// The `embed`th file under `i/` the large note at `index` embeds through `largeNoteEmbeds`.
+    public static func imageName(forNoteAt index: Int, embed: Int) -> String {
+        "img-\(index)-\(embed).png"
+    }
+
+    /// The body: a heading, the note's own image if it has one, then words, tags, wikilinks
+    /// and paragraph breaks until `targetBytes` is reached. `embeds` are spread through the
+    /// body at even intervals, each `![[name]]` a paragraph of its own.
     private static func makeBody(
-        index: Int, paths: [String], rng: inout SplitMix64, targetBytes: Int, image: String?
+        index: Int, paths: [String], rng: inout SplitMix64, targetBytes: Int, image: String?, embeds: [String]
     ) -> String {
         var out = ""
         out.reserveCapacity(targetBytes + 64)
         out += "# Heading \(index)\n\n"
         if let image { out += "![[\(image)]]\n\n" }
+        var nextEmbed = 0
+        let spacing = embeds.isEmpty ? Int.max : max(1, targetBytes / (embeds.count + 1))
         while out.utf8.count < targetBytes {
+            if nextEmbed < embeds.count, out.utf8.count >= spacing * (nextEmbed + 1) {
+                out += "\n\n![[\(embeds[nextEmbed])]]\n\n"
+                nextEmbed += 1
+                continue
+            }
             let w = words[Int(rng.next() % UInt64(words.count))]
             switch rng.next() % 20 {
             case 0:
@@ -109,6 +139,8 @@ public enum SyntheticLibrary {
                 out += w + " "
             }
         }
+        // A body that filled up before every embed had its turn gets the rest at the end.
+        for name in embeds[nextEmbed...] { out += "\n\n![[\(name)]]\n\n" }
         return out
     }
 }

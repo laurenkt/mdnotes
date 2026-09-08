@@ -205,7 +205,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M8.4 Editor attachment plumbing (E-9, ADR-0012): one accessor that returns the view's
       text without attachment characters, used by save, copy, search, link and tag parsing and
       styler ranges. Tests: round trip with attachments present leaves the file byte-identical.
-- [ ] M8.5 Inline thumbnails (E-9): attachment on the line below a resolving embed, 240 by 160
+- [x] M8.5 Inline thumbnails (E-9): attachment on the line below a resolving embed, 240 by 160
       max, click opens in default app, removed when the embed stops resolving, loaded via
       `ThumbnailCache`. `EditorPerfTests` re-run on a 1 MB note containing 50 embeds. Snapshot
       inspected.

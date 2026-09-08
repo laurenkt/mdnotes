@@ -16,8 +16,10 @@ extension XCTestCase {
     /// when the window is deallocated. The app has exactly one window (W-1), but a test process
     /// creates many, so every test must build its controller through this helper.
     @MainActor
-    func makeMainWindowController(autosaveClock: any AutosaveClock = SystemAutosaveClock()) -> MainWindowController {
-        let box = ControllerBox(MainWindowController(autosaveClock: autosaveClock))
+    func makeMainWindowController(
+        autosaveClock: any AutosaveClock = SystemAutosaveClock(), thumbnails: ThumbnailCache = ThumbnailCache()
+    ) -> MainWindowController {
+        let box = ControllerBox(MainWindowController(autosaveClock: autosaveClock, thumbnails: thumbnails))
         addTeardownBlock {
             await MainActor.run { _ = box.controller.window?.setFrameAutosaveName("") }
         }

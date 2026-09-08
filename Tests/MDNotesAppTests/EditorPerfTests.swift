@@ -6,18 +6,25 @@ import MDNotesTestSupport
 import XCTest
 
 /// PF-3 around the real editor path: a keystroke in the text view showing a 1 MB synthetic
-/// note, the storage edit with the paragraph-scoped re-style inside it (E-3), the layout it
-/// invalidates, and the window redrawing, all on the main thread. Runs only in
-/// `scripts/check.sh full` (release); `MDNOTES_SKIP_PERF=1` skips it (ADR-0007).
+/// note, the storage edit with the paragraph-scoped re-style inside it (E-3), the thumbnail
+/// reconciliation of the paragraphs around it (E-9), the layout it invalidates, and the window
+/// redrawing, all on the main thread. The note embeds 50 images whose thumbnails are on show
+/// (PF-8: the gate runs with thumbnails enabled). Runs only in `scripts/check.sh full`
+/// (release); `MDNOTES_SKIP_PERF=1` skips it (ADR-0007).
 @MainActor
 final class EditorPerfTests: XCTestCase {
+    /// How many images the 1 MB note embeds, each on a paragraph of its own (M8.5).
+    nonisolated private static let embedCount = 50
+
     /// A library whose first notes are the 1 MB ones, generated on first use and shared by
     /// every test in the class. The note count does not bear on a keystroke in the editor, so
-    /// it stays small; the large notes are the synthetic library's own.
+    /// it stays small; the large notes are the synthetic library's own, each embedding
+    /// `embedCount` generated PNGs.
     nonisolated private static let library: Result<(root: URL, paths: [String]), any Error> = Result {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mdnotes-editorperf-\(UUID().uuidString)", isDirectory: true)
-        let paths = try SyntheticLibrary.generate(at: root, options: .init(noteCount: 200, largeNoteCount: 5))
+        let paths = try SyntheticLibrary.generate(
+            at: root, options: .init(noteCount: 200, largeNoteCount: 5, largeNoteEmbeds: embedCount))
         return (root, paths)
     }
 
@@ -65,6 +72,12 @@ final class EditorPerfTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(controller.editorController.noteID, id)
+        // E-9: every embed's thumbnail is on show before a keystroke is measured.
+        while controller.editorController.attachmentRanges.count < Self.embedCount {
+            if Date() > deadline { throw XCTSkip("thumbnails did not all appear in 60 s") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(controller.editorController.attachmentRanges.count, Self.embedCount)
         window.makeKeyAndOrderFront(nil)
         XCTAssertTrue(window.makeFirstResponder(controller.mainView.textView))
         window.layoutIfNeeded()
@@ -74,12 +87,28 @@ final class EditorPerfTests: XCTestCase {
 
     /// Everything between the key press and the editor being redrawn: the text view inserts
     /// the character, the storage processes the edit and the styler re-styles the paragraphs
-    /// around it in the same pass, the layout manager invalidates them; then the window lays
-    /// out and draws what the user sees.
-    private func keystroke(_ text: String, in textView: NSTextView, window: NSWindow) {
+    /// around it in the same pass, the thumbnails reconcile the paragraphs around it (E-9,
+    /// which the app does on the next run loop turn and the gate does here so that it counts),
+    /// the layout manager invalidates them; then the window lays out and draws what the user
+    /// sees.
+    private func keystroke(_ text: String, in controller: MainWindowController, window: NSWindow) {
+        let textView = controller.mainView.textView
         textView.insertText(text, replacementRange: textView.selectedRange())
+        controller.editorController.thumbnails.reconcileNow()
         window.layoutIfNeeded()
         window.displayIfNeeded()
+    }
+
+    /// The start of the line at `location` in the shown text, or of the next line when that
+    /// one is a thumbnail's (E-9): typing is measured in the file's text, where a user types.
+    private func lineStart(near location: Int, in text: NSString) -> Int {
+        var line = text.lineRange(for: NSRange(location: location, length: 0))
+        while text.range(of: "\u{FFFC}", options: [], range: line).location != NSNotFound,
+            NSMaxRange(line) < text.length
+        {
+            line = text.lineRange(for: NSRange(location: NSMaxRange(line), length: 0))
+        }
+        return line.location
     }
 
     // MARK: PF-3
@@ -104,13 +133,11 @@ final class EditorPerfTests: XCTestCase {
         // What is typed makes a tag, a wikilink, a heading and plain words, so each keystroke
         // changes what the paragraph's tokens are.
         let text = storage.string as NSString
-        let middleLine = text.lineRange(for: NSRange(location: length / 2, length: 0))
-        let deepLine = text.lineRange(for: NSRange(location: length * 3 / 4, length: 0))
         let headingEnd = text.lineRange(for: NSRange(location: 0, length: 0))
         let cases: [(name: String, location: Int, typed: String)] = [
             ("end", length, "\n\n#swift [[kupka 3]] more"),
-            ("middle", middleLine.location, "# heading `code` "),
-            ("deep", deepLine.location, "words #tag "),
+            ("middle", lineStart(near: length / 2, in: text), "# heading `code` "),
+            ("deep", lineStart(near: length * 3 / 4, in: text), "words #tag "),
             ("heading", max(headingEnd.length - 1, 0), " [[link]]"),
         ]
         let warmUp = 2
@@ -122,7 +149,7 @@ final class EditorPerfTests: XCTestCase {
         for _ in 0..<warmUp {
             for c in cases {
                 textView.setSelectedRange(NSRange(location: c.location, length: 0))
-                for character in c.typed { keystroke(String(character), in: textView, window: window) }
+                for character in c.typed { keystroke(String(character), in: controller, window: window) }
                 try undo(textView, count: c.typed.count, expecting: length)
             }
         }
@@ -135,7 +162,7 @@ final class EditorPerfTests: XCTestCase {
                 var carets: [Int] = []
                 for (i, character) in c.typed.enumerated() {
                     let start = DispatchTime.now().uptimeNanoseconds
-                    keystroke(String(character), in: textView, window: window)
+                    keystroke(String(character), in: controller, window: window)
                     let end = DispatchTime.now().uptimeNanoseconds
                     samples[i].append(Double(end - start) / 1_000_000)
                     carets.append(textView.selectedRange().location)
