@@ -23,3 +23,4 @@ whether the brief (`scripts/task-brief.sh`) is keeping orientation cheap.
 | 2026-09-08 16:30 | M7.5 | 108828 | 18 | 2bd76de |
 | 2026-09-08 18:35 | M7.6 | 199818 | 12 | f591a8d |
 | 2026-09-08 18:50 | M8.1 | 124255 | 13 | 1e77d32 |
+| 2026-09-08 19:09 | M8.2 | 123503 | 16 | 96b6b5a |
