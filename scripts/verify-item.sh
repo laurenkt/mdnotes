@@ -23,10 +23,10 @@ fi
 
 case "$id" in
     I-*)
-        state=$(grep -oE "^- \[.\] $id " docs/ISSUES.md | head -1 | cut -c4)
+        state=$(grep -oE "^- \[.\] $id " docs/ISSUES.md | head -1 | cut -c4 || true)
         ;;
     *)
-        state=$(grep -oE "^- \[.\] $id " docs/PLAN.md | head -1 | cut -c4)
+        state=$(grep -oE "^- \[.\] $id " docs/PLAN.md | head -1 | cut -c4 || true)
         ;;
 esac
 echo "ITEM: $id [${state:-?}]"

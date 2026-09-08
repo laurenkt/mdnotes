@@ -26,11 +26,11 @@ fi
 
 if $pick_issue; then
     lines=$(item_lines docs/ISSUES.md '- [ ] I-')
-    id=$(printf '%s\n' "$lines" | head -1 | grep -oE 'I-[0-9]+')
+    id=$(printf '%s\n' "$lines" | head -1 | grep -oE 'I-[0-9]+' || true)
     echo "KIND: issue"
 elif [ "$open_tasks" -gt 0 ]; then
     lines=$(item_lines docs/PLAN.md '- [ ] M')
-    id=$(printf '%s\n' "$lines" | head -1 | grep -oE 'M[0-9]+\.[0-9]+[a-z]?')
+    id=$(printf '%s\n' "$lines" | head -1 | grep -oE 'M[0-9]+\.[0-9]+[a-z]?' || true)
     echo "KIND: task"
 else
     echo "KIND: none"

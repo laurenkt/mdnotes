@@ -26,7 +26,7 @@ echo "# Item $id"
 printf '%s\n' "$lines"
 echo
 
-ids=$(printf '%s\n' "$lines" | grep -oE '\b(P|L|S|C|E|X|R|D|K|T|I|W|PR|PF|TP|V)-[0-9]+\b' | sort -u -t- -k1,1 -k2,2n)
+ids=$(printf '%s\n' "$lines" | grep -oE '\b(P|L|S|C|E|X|R|D|K|T|I|W|PR|PF|TP|V)-[0-9]+\b' | sort -u -t- -k1,1 -k2,2n || true)
 if [ -n "$ids" ]; then
     echo "# Spec bullets cited by the item (docs/SPEC.md)"
     for sid in $ids; do
@@ -39,7 +39,7 @@ if [ -n "$ids" ]; then
     echo
 fi
 
-adrs=$(printf '%s\n' "$lines" | grep -oE 'ADR-[0-9]{4}' | sort -u)
+adrs=$(printf '%s\n' "$lines" | grep -oE 'ADR-[0-9]{4}' | sort -u || true)
 if [ -n "$adrs" ]; then
     echo "# ADRs cited"
     for a in $adrs; do
