@@ -7,6 +7,50 @@ release tag; the setup and the driving scripts it needs are described at the end
 Result key: **pass**, **fail** (task named), **gate** (enforced by `scripts/check.sh full`,
 not checkable by hand), **n/a by hand** (why), **blocked** (question in `QUESTIONS.md`).
 
+## Pass of 2026-09-08 (M8.6, v4)
+
+Build: debug `swift test` at commit 5482186 (code as of 152a506, M8.5), macOS 26.2. No app was
+launched: the human's instance was running on the real library, so every window was inspected
+through the V-1 snapshots the smoke tests write (`build/snapshots/{note-list-thumbnails,
+editor-thumbnails}-{light,dark}.png`, opened and compared against W-6 and direction B on the
+ADR-0013 canvas), the cache, the resolver and the attachment plumbing through their tests
+(`ThumbnailCacheTests`, `FirstImageTests`, `EditorAttachmentSmokeTests`,
+`EditorThumbnailSmokeTests`, `RowThumbnailSmokeTests`, 55 tests, all green) and by reading the
+code paths each ID names. Scope: the fifteen IDs M8.1 to M8.5 cite, plus I-3 (v2), which those
+tasks realise. Every other ID stands as recorded in the M7.6, M6.9, v0.1.0 and M5.6 passes.
+
+Summary: 16 IDs; 14 pass, 0 fail, 2 gate. No task was added; one edge outside the tests is
+recorded as I-8 (see the notes on S-11 and E-9).
+
+| ID   | Result | Notes |
+|------|--------|-------|
+| S-11 | pass | `note-list-thumbnails` snapshot, light and dark: the rows `A sixty character title…` and `Photo` end in a 34 pt square (68 px at 2x, x 858 to 926) vertically centred on the 46 pt row, filled with the image cropped to its centre square, the long title truncated with an ellipsis before it while the date keeps its place on the title line; `Missing` (embed names no file) and `Plain` (no embed) keep the date at the trailing edge with no square. The square is reserved by `NoteRowView.configure` from `Entry.firstImagePath`, filled only by `showThumbnail(_:for:)` when the cache has the image, and `testS11_clickOnTheThumbnailIsKeptByTheTableWhichSelectsTheRow` shows a click on it selects the row. Resolution is the first embed that names an existing file with an image extension (`ImageStore.firstImage`, `FirstImageTests`: none, one, first of several, unresolvable, first skipped for the next that resolves, embed in code ignored). Edge recorded as I-8: the watcher reports only `.md` files, so an image that arrives, changes or goes under `i/` on its own leaves the row as it was until the note itself changes. |
+| K-1  | pass | `![[target]]` is an embed and resolves to a non-note file: `ImageStore.relativePath(forEmbed:)` looks under the root and `i/`, never at notes; `testK1_embedInsideCodeIsNotAnEmbed` shows a spelling inside a code span produces no image, and the `editor-thumbnails` snapshot's `Pics` row shows the body's code-span embed left as text in the snippet with the row's thumbnail coming from the real embed. |
+| I-2  | pass | A plain click on an inline thumbnail opens the file it shows with the default application through the same `openFile` a Cmd-click on the embed uses (`MainWindowController.openThumbnail`); `testE9_aClickOnAThumbnailOpensTheImageWithTheDefaultApplication` delivers a real mouse-down and mouse-up at the attachment character's centre, sees `i/one.png` opened, the caret left where it was, and, when the system refuses, `“one.png” could not be opened.` under the search field. |
+| E-9  | pass | `editor-thumbnails` snapshot, light and dark, 800 × 640 pt: `![[one.png]]` stays as blue link text with a 240 × 160 pt thumbnail (480 × 320 px) on the line directly below it, flush with the text's left edge; `![[missing.png]]` has nothing below it; `![[tall.png]] and ![[tiny.png]]` on one line get two thumbnails stacked below, `tiny.png` at its natural 19 pt (never enlarged), `tall.png` 40 pt wide at the 160 pt height cap, proportions kept; the code-span embed gets none. `EditorThumbnailSmokeTests`: editing the embed so it stops resolving removes the thumbnail and undo brings it back, deleting the embed leaves none behind, typing a new one adds it once the image is known, fencing it into code removes it, the saved file never holds one, a foreign attachment is left alone. Copy across an attachment writes the file's text (`EditorTextView.writeSelection`), adding and removing is neither an edit nor undoable, and search reads the file's text (the index folds bodies from disk and from `EditorController.text`), so the attachment is outside copy, undo and search. Nothing is reserved until the image arrives: `EditorThumbnails.request` adds the run in the cache's completion. The I-8 edge applies here too: an image that changes on disk keeps its old thumbnail until an edit touches the paragraph. |
+| I-3  | pass | The only inline rendering is `ThumbnailAttachment` below an embed (E-9) and the row square (S-11); `EditorThumbnails` is the one maker of display-only runs, `testE9_anAttachmentThatIsNotAThumbnailIsLeftAlone` shows it touches no other attachment, and no other code path calls `addAttachment`. |
+| E-2  | pass | The embed text stays visible and editable above its thumbnail in both snapshots; `testE9_stylingLandsOnTheShiftedStorageRangesAndNotOnTheRuns` shows the styler's ranges land on the text past an attachment and never on the run, and `testE9_roundTripWithAttachmentsPresentLeavesTheFileByteIdentical` (also for a file holding its own U+FFFC) shows the file is exactly the text. |
+| E-3  | pass | `testE9_restyleAfterAnEditBelowAnAttachmentUsesTheFilesParagraphs`: the restyle after an edit is scoped to the paragraphs in the file's text, mapped back to the storage; `EditorThumbnails.reconcile` likewise takes `MarkdownScanner.paragraphRange` around the edit and, for a paragraph holding no `![[`, attachment or fence, returns on the string alone (`mayAffectThumbnails`). |
+| E-4  | pass | `testE9_saveWithAttachmentsWritesOnlyTheFilesText` and `testE9_theSavedFileNeverHoldsAThumbnail`: the autosave writes `EditorController.text`; `testE9_addingAndRemovingAttachmentsIsNeitherAnEditNorUndoable` shows a thumbnail arriving does not start the 300 ms delay. |
+| E-5  | pass | The round trip with attachments present is byte-identical, written through the same `AtomicWriter` as before; nothing in M8 touches the write path beyond what text it is given. |
+| K-3  | pass | `testE9_linkAndTagLookupsTakeStorageIndicesPastAttachments`: `linkTarget(at:)` maps the caret's storage index to the file's before parsing, so Cmd-Return and Cmd-click on a link below a thumbnail open the right target. |
+| T-4  | pass | Same test for `tag(at:)`; `MainWindowController.clickInEditor` tries the thumbnail first and the tag second, so a plain click on `#tag` below a thumbnail (the `after #tag` line in the snapshot) still searches the tag, and `testE9_aClickOnAThumbnailOpensTheImageWithTheDefaultApplication` shows a click on text is left to the text view. |
+| PF-8 | pass | `ThumbnailCache`: a concurrent queue with at most `concurrentJobs` = 2 in flight and the rest waiting in order (`testPF8_requestReturnsAtOnceAndAtMostTwoJobsRun`), `CGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceThumbnailMaxPixelSize` (never a full decode), entries keyed by path and modification date (a changed date invalidates, a missing or undecodable file caches nothing), LRU eviction to 50 MB with an over-bound image delivered but not kept, completions on main for hits and misses. The main thread draws only `cachedImage(for:pixelSize:)` (a lock, no file) and `NoteListController.showThumbnail` requests when that is nil; `testPF8_thumbnailsAreDecodedOffTheMainThreadOnceAndSharedWithTheList` shows one `ThumbnailCache` behind list and editor, no decode on main, and a reload or note switch served from the cache. PF-2 and PF-3 run with thumbnails on (`ListPerfTests` over 20k notes with 10 % embedding a PNG, `EditorPerfTests` on a 1 MB note with 50 embeds' thumbnails shown). |
+| PF-6 | pass | `ImageStore.firstImage` runs where bodies are folded, on the library queue; `LibraryController.locateEmbed` looks the file up on that queue and completes on main; every cache job runs on `MDNotes.ThumbnailCache`; the main thread only takes the cache's lock and draws. |
+| PF-2 | gate | `ListPerfTests` under `scripts/check.sh full`, now with row thumbnail lookups and requests inside the measured keystroke and asserting thumbnails were generated within the 50 MB bound. |
+| PF-3 | gate | `EditorPerfTests` under `scripts/check.sh full`, now with 50 thumbnails on show and `reconcileNow` inside the measured keystroke. |
+| V-1  | pass | `writeWindowSnapshots` wrote `note-list-thumbnails` at 960 × 800 px for a 480 × 400 pt content view and `editor-thumbnails` at 1600 × 1280 px for 800 × 640 pt, light and dark, the pairs differing; both sit on `windowBackgroundColor` (I-7). Against W-6 and direction B: the search field, hairline, 46 pt rows, semibold title, right-aligned date and secondary snippet are as the v3 pass saw them; the square sits inside the row's trailing inset over the selection highlight as well; only semantic colours, no custom drawing. |
+
+Observations outside the spec: a row whose first embed names a file with an image extension
+that ImageIO cannot decode (`Broken` in the `note-list-thumbnails` snapshot) reserves the
+square and leaves it empty, with the date moved in beside it; the spec decides resolution by
+"an existing image file" and says nothing about undecodable bytes, so it is not counted a
+discrepancy. Two embeds on one line get their thumbnails in the order the images arrive
+(`tiny.png` above `tall.png` in the snapshot), not the order of the embeds; the spec does not
+order them. The list and the editor ask the cache for the same image at two pixel sizes
+(136 px and 480 px at 2x) and it is downsampled once per size; the spec keys the cache by
+path and date and says nothing against a size in the key.
+
 ## Pass of 2026-09-08 (M7.6, v3)
 
 Build: debug `swift test` at commit 2509653 (code as of 2bd76de, M7.5), macOS 26.2. No app was

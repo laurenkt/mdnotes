@@ -209,7 +209,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       max, click opens in default app, removed when the embed stops resolving, loaded via
       `ThumbnailCache`. `EditorPerfTests` re-run on a 1 MB note containing 50 embeds. Snapshot
       inspected.
-- [ ] M8.6 Manual acceptance pass for M8; discrepancies become tasks above this line.
+- [x] M8.6 Manual acceptance pass for M8; discrepancies become tasks above this line.
 
 ## M9: Templates
 
