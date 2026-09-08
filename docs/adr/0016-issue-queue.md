@@ -26,3 +26,8 @@ resolving conflicts in hot files like `PLAN.md`.
 A flake no longer blocks a commit, so a slowly regressing budget could pass on retries for a
 while; the queue entry is the alarm, and a flaky entry may only be fixed by reducing
 variance, never by raising the budget. History gains `I-<n>:` commits interleaved with tasks.
+
+The retry rule alone could not tell a loaded machine from a regression (I-6): since then
+`scripts/perf-gate.sh` runs each gate under a machine-wide lock, and an attempt that fails
+while the 1-minute load average is above half the core count is not counted; it waits for
+the load to drop and runs again, at most twice, before failures count whatever the load.

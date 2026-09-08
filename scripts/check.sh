@@ -9,7 +9,9 @@
 # process because the gates are absolute measurements of that class's subject: PF-5 is
 # the resident size after a full index, and a class that has shown a 1 MB note in a
 # window before it in the same process leaves tens of megabytes behind that TextKit and
-# AppKit never hand back, which would count against the index.
+# AppKit never hand back, which would count against the index. scripts/perf-gate.sh runs
+# each class: a failed gate is retried once and a pass on retry is recorded as a flake
+# (ADR-0016), and an attempt that fails while the machine is loaded is not counted (I-6).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MODE="${1:-full}"
@@ -30,26 +32,7 @@ if [ "$MODE" = "full" ]; then
     swift build -c release --build-tests
     for class in $(grep -rhoE 'class [A-Za-z0-9_]+PerfTests' Tests | awk '{print $2}' | sort -u); do
         step "perf gate: $class"
-        log="$(mktemp)"
-        if swift test -c release --skip-build --filter "$class" 2>&1 | tee "$log"; then
-            rm -f "$log"
-            continue
-        fi
-        # One retry. A gate that fails then passes is a flake: let the commit through but
-        # record it in docs/ISSUES.md so the flake gets its own task (ADR-0016). A gate that
-        # fails twice is a real regression and fails the check.
-        step "perf gate: $class failed, retrying once"
-        log2="$(mktemp)"
-        if swift test -c release --skip-build --filter "$class" 2>&1 | tee "$log2"; then
-            failed="$(grep -oE "\-\[[A-Za-z0-9_.]+ [A-Za-z0-9_]+\]' failed" "$log" | head -1 | sed -E "s/'.*//; s/^-\[//; s/\]$//")"
-            detail="$(grep -E 'XCTAssert|median|budget' "$log" | head -3 | tr '\n' ' ' | cut -c1-300)"
-            scripts/record-issue.sh flaky "$class" "${failed:-unknown test} failed once and passed on retry. First run: ${detail:-no detail captured}"
-            rm -f "$log" "$log2"
-            continue
-        fi
-        rm -f "$log" "$log2"
-        echo "perf gate $class failed twice" >&2
-        exit 1
+        scripts/perf-gate.sh "$class"
     done
 fi
 

@@ -105,6 +105,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/MenuSmokeTests.swift` — menu items found by action, sent down the responder chain; Cmd-W and close button hide, Dock reopen, quit writes edits (W-4).
 - `Tests/MDNotesAppTests/WindowLevelSmokeTests.swift` — main window `.floating` and `moveToActiveSpace`; completion panel and Settings at `overlayLevel` above it (W-5).
 - `Tests/MDNotesAppTests/BundleTests.swift` — runs `scripts/info-plist.sh` directly to cover the emitted Info.plist.
+- `Tests/MDNotesAppTests/PerfGateScriptTests.swift` — runs `scripts/perf-gate.sh` with a fake runner, load reading and recorder: the retry-once rule, flake recording, and failures under load not counting (I-6).
 - `Tests/MDNotesAppTests/SearchSmokeTests.swift` — typing in the real field editor drives the list per keystroke (S-1, S-5).
 - `Tests/MDNotesAppTests/NoteListSmokeTests.swift` — list rendering, date width and title truncation, date refresh on day change/key window, selection driving the editor (S-6, S-9, S-10, S-8); list snapshot (V-1).
 - `Tests/MDNotesAppTests/KeyboardFlowSmokeTests.swift` — search/list/editor focus flow via real key events (S-7, S-8).
