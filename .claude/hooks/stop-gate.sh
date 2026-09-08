@@ -7,9 +7,13 @@ input="$(cat)"
 if [ "$(printf '%s' "$input" | jq -r '.stop_hook_active // false')" = "true" ]; then
     exit 0
 fi
-# Only implementing subagents are held to the clean-tree rule. Read-only helpers (Explore,
-# Plan, claude-code-guide) never commit and may run while another agent's work is in flight.
-if [ "$(printf '%s' "$input" | jq -r '.hook_event_name // empty')" = "SubagentStop" ]; then
+# Only implementing subagents are held to the clean-tree rule. The main session is either
+# the orchestrator (writes nothing; verify-item.sh checks the tree) or a conversation session
+# sharing the checkout with a subagent that is usually mid-task, so a dirty tree there is
+# expected (ADR-0017). Read-only helpers (Explore, Plan, claude-code-guide) never commit.
+event="$(printf '%s' "$input" | jq -r '.hook_event_name // empty')"
+[ "$event" = "Stop" ] && exit 0
+if [ "$event" = "SubagentStop" ]; then
     case "$(printf '%s' "$input" | jq -r '.agent_type // empty')" in
         general-purpose|"") ;;
         *) exit 0 ;;
