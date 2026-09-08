@@ -67,21 +67,24 @@ final class FSEventsWatcherTests: XCTestCase {
 
     private func id(_ relativePath: String) -> NoteID { NoteID(relativePath: relativePath) }
 
-    private var wroteFixtures = false
-
     /// Writes `body` at `relativePath`, creating folders as needed.
     private func write(_ relativePath: String, _ body: String = "body") throws {
         try FileManager.default.createDirectory(
             at: url(relativePath).deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(body.utf8).write(to: url(relativePath))
-        if watcher == nil { wroteFixtures = true }
     }
 
-    /// Starts a watcher on the root with the recorder as handler. Fixtures written before this
-    /// are given a moment to settle: FSEvents can replay a change made just before the stream
-    /// starts as its first event, which would show up here as a spurious modification.
+    /// Starts a watcher on the root with the recorder as handler, after letting the disk settle.
+    ///
+    /// FSEvents replays a change made just before the stream starts as its first event. For a
+    /// fixture note that would be a spurious modification. For the root itself, created in
+    /// `setUp` moments earlier and replayed in nearly every run without this pause (56 of 60
+    /// measured; none with a 50 ms pause), it makes the watcher scan the root, and on a loaded
+    /// machine that scan can run after the test has written its first note: the scan reports
+    /// the note as added, and the note's own event, delivered next, finds it known and reports
+    /// it as modified (I-4). Every test starts from a fresh root, so every start pauses.
     private func startWatching(knownNotes: Set<NoteID>? = nil, latency: TimeInterval = 0.05) throws {
-        if wroteFixtures { Thread.sleep(forTimeInterval: 0.2) }
+        Thread.sleep(forTimeInterval: 0.2)
         let recorder = recorder
         let watcher = FSEventsWatcher(root: root, knownNotes: knownNotes, latency: latency) { recorder.record($0) }
         try watcher.start()
@@ -105,8 +108,8 @@ final class FSEventsWatcherTests: XCTestCase {
         try write("fresh.md")
         waitFor("added fresh.md") { $0.added.contains(self.id("fresh.md")) }
         let union = recorder.union
-        XCTAssertEqual(union.modified, [])
-        XCTAssertEqual(union.removed, [])
+        XCTAssertEqual(union.modified, [], "\(recorder.all)")
+        XCTAssertEqual(union.removed, [], "\(recorder.all)")
         XCTAssertTrue(try XCTUnwrap(watcher).knownNotes.contains(id("fresh.md")))
     }
 
@@ -268,9 +271,9 @@ final class FSEventsWatcherTests: XCTestCase {
         // Give any stray event for the other files time to arrive.
         recorder.wait(timeout: 0.5) { _ in false }
         let union = recorder.union
-        XCTAssertEqual(union.added, [id("sentinel.md")])
-        XCTAssertEqual(union.modified, [])
-        XCTAssertEqual(union.removed, [])
+        XCTAssertEqual(union.added, [id("sentinel.md")], "\(recorder.all)")
+        XCTAssertEqual(union.modified, [], "\(recorder.all)")
+        XCTAssertEqual(union.removed, [], "\(recorder.all)")
     }
 
     func testX1_idsAreRootRelativeWithSlashesAndExtension() throws {
