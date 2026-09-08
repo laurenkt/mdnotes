@@ -1,105 +1,88 @@
 ---
-description: Orchestrate one plan task in a fresh subagent, verify it landed, tag milestones. Run as `/loop /next-task`.
-allowed-tools: Bash(git *), Bash(grep *), Bash(cat *), Read, Edit, Agent, PushNotification
+description: Orchestrate one plan task or issue in a fresh subagent, verify it landed, tag milestones. Run as `/loop /next-task`.
+allowed-tools: Bash(scripts/next-item.sh:*), Bash(scripts/verify-item.sh:*), Bash(scripts/log-metric.sh:*), Bash(git add:*), Bash(git commit:*), Edit, Agent, PushNotification
 ---
 
-You are the orchestrator. You never implement tasks yourself; every task runs in a fresh
-subagent so it starts with clean context. Keep your own output to a few lines.
+You are the orchestrator. You never implement anything; every item runs in a fresh subagent.
+Keep your context small: do not read PLAN.md, ISSUES.md, SPEC.md or source files. The
+scripts below print exactly what you need. Keep your own output to two lines.
 
-## 1. Find the next task
+## 1. Next item
 
-First read `docs/ISSUES.md`. Open entries are lines matching `- [ ] I-<n>`. Take the first
-open issue if any, except: when more than three are open, alternate one issue then one plan
-task (check the last commit message: if it starts with `I-`, take a plan task this tick).
+Run `scripts/next-item.sh`. It prints `KIND`, `ID`, the item's lines, `OPEN` counts and `HEAD`.
 
-Otherwise read `docs/PLAN.md`. The next task is the first line matching `- [ ] M<n>.<k>`.
+- `KIND: none` with blocked tasks in `OPEN`: report that the plan is blocked on
+  `docs/QUESTIONS.md`, notify (step 4), and stop the loop.
+- `KIND: none` with nothing blocked: report "plan complete", notify, stop the loop.
 
-- If there is none: report "plan complete" and, if running under `/loop`, stop the loop.
-- If every remaining `[ ]` task depends on a `[?]` task (same milestone, later number, or an
-  obvious dependency in its text): report which questions in `docs/QUESTIONS.md` are blocking
-  and stop the loop.
+## 2. Spawn a subagent
 
-Record `HEAD` before spawning: `git rev-parse HEAD`.
-
-## 2. Spawn a subagent for exactly that task
-
-Use the Agent tool, `subagent_type: general-purpose`, `run_in_background: false`, with this
-prompt, substituting the full task line (including continuation lines):
+Agent tool, `subagent_type: general-purpose`, `run_in_background: false`. For a task:
 
 ```
-You are working in /Users/laurenkt/Projects/mdnotes. Read CLAUDE.md, then docs/SPEC.md, then
-the task below. Do exactly this one task from docs/PLAN.md and nothing else:
+You are working in /Users/laurenkt/Projects/mdnotes. Run `scripts/task-brief.sh <ID>` and read
+its output: it holds the task, the spec bullets it cites, and the codebase map. Then read
+CLAUDE.md. Do not read docs/SPEC.md in full and do not explore the codebase beyond what the
+map and the task need. Do exactly this one task and nothing else:
 
-<TASK LINES>
+<ITEM LINES>
 
-Follow the loop protocol in CLAUDE.md steps 3 to 7: read the spec IDs it cites, write the
-tests it names, iterate with scripts/check.sh quick, and if the task changes how a window
-looks, render the snapshots (SPEC V-1), open the PNGs with the Read tool and compare them
-against the spec and the design canvas in ADR-0013 before committing. Mark the task [x] in
-docs/PLAN.md and commit with a message of the form "M1.1: <summary> (<spec IDs>)". The pre-commit hook runs the
-full gate; if it fails, fix the code and commit again. Do not touch other tasks. If the spec
-does not decide something you need, append a question to docs/QUESTIONS.md, mark the task
-[?], and commit that instead. Problems you notice outside the task follow the Issues rule in
-CLAUDE.md: fix in place only if small, in code you already change, and covered by this
-commit's tests; otherwise record with scripts/record-issue.sh. Finish with a clean working
-tree. Reply with one line: the commit hash and what landed, or the question number if blocked.
+Follow the loop protocol in CLAUDE.md steps 3 to 7: write the tests the task names, iterate
+with scripts/check.sh quick, and if the task changes how a window looks, render the snapshots
+(SPEC V-1), open the PNGs with the Read tool and compare them against the spec and the design
+canvas in ADR-0013 before committing. Mark the task [x] in docs/PLAN.md, update docs/MAP.md
+if you added, removed or moved a file, and commit as "<ID>: <summary> (<spec IDs>)". The
+pre-commit hook runs the full gate; if it fails, fix and commit again. If the spec does not
+decide something you need, append a question to docs/QUESTIONS.md, mark the task [?], and
+commit that instead. Problems outside the task follow the Issues rule in CLAUDE.md. Finish
+with a clean working tree. Reply with one line: commit hash and what landed, or the question
+number if blocked.
 ```
 
-For an issue entry, use this prompt instead, substituting the entry line:
+For an issue:
 
 ```
-You are working in /Users/laurenkt/Projects/mdnotes. Read CLAUDE.md, then docs/ISSUES.md, then
-the entry below. Fix exactly this one issue and nothing else:
+You are working in /Users/laurenkt/Projects/mdnotes. Run `scripts/task-brief.sh <ID>` and read
+its output, then read CLAUDE.md. Do not read docs/SPEC.md in full. Fix exactly this one issue:
 
-<ISSUE LINE>
+<ITEM LINES>
 
-Reproduce it first with a test that fails, then fix it, then mark the entry [x] in
-docs/ISSUES.md and commit with a message of the form "I-3: <summary>". A flaky entry is fixed
+Reproduce it first with a test that fails, then fix it, mark the entry [x] in docs/ISSUES.md,
+update docs/MAP.md if files changed, and commit as "<ID>: <summary>". A flaky entry is fixed
 by reducing variance, never by raising a budget. If the fix is larger than one commit, add a
-task at the top of the current milestone in docs/PLAN.md describing it, mark the entry
-[x] -> M<n>.<k>, and commit that instead. Other problems you notice follow the Issues rule
-in CLAUDE.md: a few-line fix in code you already touch and cover with tests may go in this
-commit, named in the message; anything else is recorded with scripts/record-issue.sh, not
-fixed. Finish with a clean working tree. Reply with one line: the commit hash and what landed.
+task at the top of the current milestone in docs/PLAN.md, mark the entry [x] -> M<n>.<k>, and
+commit that instead. Other problems follow the Issues rule in CLAUDE.md. Finish with a clean
+working tree. Reply with one line: commit hash and what landed.
 ```
 
-## 3. Verify
+## 3. Verify and log
 
-After the subagent returns, check all of these with git and the plan file:
+Run `scripts/verify-item.sh <HEAD from step 1> <ID>`. It prints `COMMIT`, `ITEM`, optional
+`DIRTY`, `ISSUES_ADDED` and `MILESTONE` lines (it creates the milestone tag itself), and
+`STATUS`.
 
-- `git status --porcelain` is empty. If not, that is a hook failure: report it and stop the loop.
-- `HEAD` differs from the recorded value. If not, the subagent made no commit. Count it as a
-  stall. Two consecutive stalls on the same task: stop the loop and report the subagent's reply.
-- The task line is now `[x]` or `[?]`. If `[?]`, report the question and continue to the next
-  tick (the next task will be picked up automatically). For an issue, the entry is `[x]`.
-- If `docs/ISSUES.md` gained entries in the commit (`git diff HEAD~1 --stat`), mention the
-  count in the report.
+- `STATUS: dirty`: a hook failed. Report and stop the loop.
+- `STATUS: stall`: no commit or item still open. Second consecutive stall on the same ID:
+  report the subagent's reply and stop the loop. Otherwise continue.
+- `STATUS: ok`: run `scripts/log-metric.sh <ID> <subagent tokens> <duration ms>` with the
+  numbers from the Agent result's usage line. It appends the row and commits it itself (the
+  pre-commit gate skips a commit that touches only `docs/METRICS.md`).
 
-## 4. Milestone tag
+## 4. Notify the phone
 
-If the task's milestone (`## M<n>` section) now has no `[ ]` or `[?]` lines, run
-`git tag m<n>` if that tag does not already exist, and mention it in the report.
+`PushNotification` (status `proactive`, one line, under 200 characters) only for: an item
+blocked into `docs/QUESTIONS.md` (`MDNotes blocked on Q3 (M2.6): <few words>. Reply here.`),
+a `MILESTONE` line (`MDNotes: m6 tagged, 9 open, starting M7.`), or the loop stopping.
+Never for an ordinary item landing.
 
-## 5. Notify the human's phone
+## 5. Replies from the human
 
-Use `PushNotification` (status `proactive`, one line, under 200 characters) only for:
+If the human answers an open question (possibly from the phone): write the answer into that
+entry's `Answer:` line in `docs/QUESTIONS.md`; if it changes behaviour, add a short ADR and
+amend `docs/SPEC.md`; flip the task from `[?]` to `[ ]`; commit as `Qn answered: <summary>`.
+The next tick picks it up. Do not implement it yourself.
 
-- A task blocked into `docs/QUESTIONS.md`: `MDNotes blocked on Q3 (M2.6): <question in a few words>. Reply here to answer.`
-- A milestone tag: `MDNotes: m2 tagged, 9 tasks done, starting M3.`
-- The loop stopping for any reason: plan complete, two stalls, or everything blocked.
+## 6. Report
 
-Never notify for an ordinary task landing.
-
-## 6. Handling a reply from the human
-
-If the human's message answers an open question (they may reply from the phone): write the
-answer into that entry's `Answer:` line in `docs/QUESTIONS.md`; if it changes product
-behaviour, add a short ADR in `docs/adr/` and amend `docs/SPEC.md` accordingly; flip the task
-from `[?]` back to `[ ]`; commit all of that yourself with message `Qn answered: <summary>`.
-The next tick will pick the task up. Do not implement the task in the orchestrator.
-
-## 7. Report
-
-One or two lines: task or issue ID, commit hash, milestone tag if any, how many `[ ]` tasks
-remain and how many issues are open.
-Then let the loop schedule the next tick.
+Two lines at most: `<ID> <short hash> <what landed>` and `<OPEN line>` plus any tag. Then let
+the loop schedule the next tick.

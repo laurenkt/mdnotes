@@ -7,6 +7,14 @@ input="$(cat)"
 if [ "$(printf '%s' "$input" | jq -r '.stop_hook_active // false')" = "true" ]; then
     exit 0
 fi
+# Only implementing subagents are held to the clean-tree rule. Read-only helpers (Explore,
+# Plan, claude-code-guide) never commit and may run while another agent's work is in flight.
+if [ "$(printf '%s' "$input" | jq -r '.hook_event_name // empty')" = "SubagentStop" ]; then
+    case "$(printf '%s' "$input" | jq -r '.agent_type // empty')" in
+        general-purpose|"") ;;
+        *) exit 0 ;;
+    esac
+fi
 cd "$(dirname "$0")/../.."
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 0

@@ -59,3 +59,6 @@ Options:
   3. Delete them. Not acceptable from a task session: they are not its files.
   Recommendation: option 1. The M6.4 session left them untouched and uncommitted. M6.4
   itself is complete and needs no answer; this entry only explains the dirty tree.
+Answer: Option 1 (2026-09-08). They were the harness session's orchestrator scripts, written
+  while the loop was running; that session committed them itself. Leaving them alone and
+  recording this was the right call. No task is affected.

@@ -7,10 +7,12 @@ instant. Read `docs/SPEC.md` before writing code. The plan is `docs/PLAN.md`.
 ## Orchestration
 
 The human runs `/loop /next-task` in one session. That session is the orchestrator: each tick
-it spawns a fresh subagent for exactly one plan task, verifies the commit landed, tags
-milestones, and never implements anything itself (`.claude/commands/next-task.md`). Fresh
-context per task is deliberate: the spec, the plan and git history are the memory, not the
-conversation. The loop ends when the plan is complete or every remaining task is blocked on
+it runs `scripts/next-item.sh`, spawns a fresh subagent for exactly that item, verifies with
+`scripts/verify-item.sh` (which tags milestones), logs cost to `docs/METRICS.md`, and never
+implements anything itself (`.claude/commands/next-task.md`). Fresh context per item is
+deliberate: the spec, the plan and git history are the memory, not the conversation. The
+orchestrator holds no state, so it can be compacted or restarted at any time with nothing
+lost. The loop ends when the plan is complete or every remaining task is blocked on
 `docs/QUESTIONS.md`.
 
 ## Loop protocol (what a task session does)
@@ -20,16 +22,21 @@ You are working unattended through `docs/PLAN.md`:
 1. Run `scripts/setup.sh` if `git config core.hooksPath` is not `.githooks` (first run only).
 2. Take the task you were given, or if none, the first `[ ]` task in `docs/PLAN.md`. Do not
    skip ahead for a more interesting task. Do not bundle tasks.
-3. Read the spec IDs the task cites. If the spec does not decide something you need, append an
-   entry to `docs/QUESTIONS.md`, mark the task `[?]`, commit that, and take the next task that
-   does not depend on it. Never guess at product behaviour.
+3. Orient with `scripts/task-brief.sh <ID>`: the task, the spec bullets it cites, and the
+   codebase map (`docs/MAP.md`). That is your reading list. Do not read `docs/SPEC.md` in
+   full and do not survey the codebase; open the files the map points at. If the spec does
+   not decide something you need, append an entry to `docs/QUESTIONS.md`, mark the task
+   `[?]`, commit that, and take the next task that does not depend on it. Never guess at
+   product behaviour.
 4. Implement. Write the tests the task names, named after the spec IDs they cover
    (`testS3_titleMatchesSortFirst`). Iterate with `scripts/check.sh quick`.
 5. If the task changes what a window looks like, render it per SPEC V-1 (the snapshot helper
    writes `build/snapshots/*.png`), open the PNGs with the Read tool, and compare them with
    W-6, PR-1 and the design canvas linked in ADR-0013. Fix what looks wrong before committing
    and say in the commit message what you checked.
-6. Mark the task `[x]` in `docs/PLAN.md` in the same commit.
+6. Mark the task `[x]` in `docs/PLAN.md` in the same commit. If you added, removed or moved
+   a source or test file, update its line in `docs/MAP.md` in the same commit; the map is
+   how the next agent avoids re-exploring the codebase.
 7. Commit: `git commit -m "M2.4: search field drives list reload (S-1, S-5, PF-2)"`. The
    pre-commit hook runs `scripts/check.sh full`; a red gate means the task is not done.
    Fix forward. Never bypass the hook.
@@ -99,8 +106,9 @@ Sources/MDNotes/main.swift   the executable entry point. Nothing else goes here.
 Sources/MDNotesTestSupport/  SyntheticLibrary, PerfGate.
 Tests/MDNotesCoreTests/      unit tests and *PerfTests for the core.
 Tests/MDNotesAppTests/       headless smoke tests and *PerfTests for the app layer.
-scripts/                     check.sh, bundle.sh, setup.sh, record-issue.sh
+scripts/                     check.sh, bundle.sh, setup.sh, record-issue.sh,
+                             next-item.sh, verify-item.sh, task-brief.sh, log-metric.sh
 .githooks/pre-commit         runs scripts/check.sh full
 .claude/                     settings.json (permissions + hooks), hooks/, commands/next-task.md
-docs/                        SPEC.md, PLAN.md, ISSUES.md, QUESTIONS.md, adr/
+docs/                        SPEC.md, PLAN.md, ISSUES.md, QUESTIONS.md, MAP.md, METRICS.md, adr/
 ```

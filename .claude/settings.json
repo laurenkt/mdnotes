@@ -11,6 +11,10 @@
       "Bash(scripts/setup.sh:*)",
       "Bash(scripts/info-plist.sh:*)",
       "Bash(scripts/record-issue.sh:*)",
+      "Bash(scripts/next-item.sh:*)",
+      "Bash(scripts/verify-item.sh:*)",
+      "Bash(scripts/task-brief.sh:*)",
+      "Bash(scripts/log-metric.sh:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -41,6 +45,14 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          { "type": "command", "command": "echo 'Context was compacted. If this session is running /loop /next-task, you are the orchestrator: nothing is lost, all state is in git. Continue the cycle: scripts/next-item.sh, one subagent per item, scripts/verify-item.sh. Do not implement tasks yourself and do not read PLAN.md, ISSUES.md or SPEC.md.'" }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
