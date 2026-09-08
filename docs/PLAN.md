@@ -148,7 +148,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       of the last note becoming readable. Free space via `volumeAvailableCapacityForImportantUsage`.
       Smoke tests: shown/hidden transitions, text for 1 and N notes, button present only under
       2 GB. Snapshot per V-1.
-- [ ] M6.4 `RelativeDateText` in App (S-9): Today/Yesterday with time, weekday within six days,
+- [x] M6.4 `RelativeDateText` in App (S-9): Today/Yesterday with time, weekday within six days,
       `d MMM` this year, `d MMM yyyy` otherwise, locale-aware, injected `now`. Tests for each
       band and for the year boundary.
 - [ ] M6.5 Row layout gives the date its intrinsic width and truncates the title (S-10).

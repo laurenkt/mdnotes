@@ -47,15 +47,12 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     /// end-of-editing notification is not taken for the user leaving the field.
     private var isEndingTitleEdit = false
 
-    private let dateFormatter: DateFormatter
+    /// Formats each row's modified date (S-9).
+    private let relativeDate = RelativeDateText()
 
     public init(tableView: NSTableView) {
         self.tableView = tableView
         results = SearchIndex.empty.query("")
-        dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .short
-        dateFormatter.timeStyle = .short
-        dateFormatter.doesRelativeDateFormatting = true
         super.init()
         tableView.rowHeight = Self.rowHeight
         tableView.usesAutomaticRowHeights = false
@@ -73,9 +70,9 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
         return results[row]
     }
 
-    /// The modified date as a row shows it.
+    /// The modified date as a row shows it (S-9), seen from now.
     public func dateText(for date: Date) -> String {
-        dateFormatter.string(from: date)
+        relativeDate.string(for: date)
     }
 
     /// Replaces the list's contents. The selected note stays selected if it is still listed,
