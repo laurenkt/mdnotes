@@ -160,7 +160,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       Size with Cmd-plus/minus/0, 9 to 36 pt, persisted in `EditorFontSize`. Remove the font
       controls from Settings. Tests: styler assigns the mono font to inline and fenced code
       only; zoom actions clamp and persist; stale family key is gone after launch.
-- [ ] M6.7 Window level and behaviour (W-5): `.floating`, `moveToActiveSpace`; completion popup
+- [x] M6.7 Window level and behaviour (W-5): `.floating`, `moveToActiveSpace`; completion popup
       and Settings above it. Smoke tests assert level and collection behaviour; completion
       popup window level is greater than the main window's.
 - [ ] M6.8 Hotkey toggle and close-hides (W-3, W-4): visible-and-active hides, otherwise shows

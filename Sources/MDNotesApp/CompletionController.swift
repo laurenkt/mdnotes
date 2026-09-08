@@ -117,6 +117,10 @@ public final class CompletionController: NSObject, NSTableViewDataSource, NSTabl
     public private(set) var isPanelAttached = false
     private var isPanelUpdateScheduled = false
 
+    /// The panel's window level: above the floating main window (W-5), before and after it is
+    /// attached as a child window.
+    public var panelLevel: NSWindow.Level { panel.level }
+
     /// The candidate Enter would insert, or nil while nothing is showing.
     public var selectedItem: String? {
         let row = tableView.selectedRow
@@ -268,6 +272,8 @@ public final class CompletionController: NSObject, NSTableViewDataSource, NSTabl
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.animationBehavior = .none
+        // W-5: the main window floats; the panel must clear it.
+        panel.level = MainWindowController.overlayLevel
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("title"))
         column.resizingMask = .autoresizingMask
@@ -345,6 +351,8 @@ public final class CompletionController: NSObject, NSTableViewDataSource, NSTabl
             detachPanel()
             isPanelAttached = true
             window.addChildWindow(panel, ordered: .above)
+            // Attaching a child window puts it at its parent's level; the panel stays above (W-5).
+            panel.level = MainWindowController.overlayLevel
         }
     }
 

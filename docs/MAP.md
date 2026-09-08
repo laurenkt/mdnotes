@@ -39,7 +39,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesApp/App.swift` — entry point called by `main.swift`; everything else stays library-side for tests. `App.run()`.
 - `Sources/MDNotesApp/AppDelegate.swift` — launch: opens library root, builds window, menu, hotkey, Settings; termination handling. `AppDelegate.openLibrary`, `setHotKey`, `activateFromHotKey`.
 - `Sources/MDNotesApp/MainMenu.swift` — code-built menu bar (P-2); targetless items resolved through the responder chain. `MainMenu` (App/Edit/Note/View/Window menus; View holds Bigger/Smaller/Actual Size (E-8) and the backlinks toggle).
-- `Sources/MDNotesApp/MainWindowController.swift` — the single main window (W-1): search field, list, editor wiring; commit/rename/delete/open-link/insert-image actions; View menu font size actions (E-8). `MainWindowController.attach`, `commitQuery`, `commitTitle`, `openLink`, `search`, `makeTextBigger/Smaller/ActualSize`, `validateMenuItem`.
+- `Sources/MDNotesApp/MainWindowController.swift` — the single main window (W-1), floating and following the active Space (W-5): search field, list, editor wiring; commit/rename/delete/open-link/insert-image actions; View menu font size actions (E-8). `MainWindowController.attach`, `commitQuery`, `commitTitle`, `openLink`, `search`, `makeTextBigger/Smaller/ActualSize`, `validateMenuItem`, `windowLevel`, `overlayLevel`.
 - `Sources/MDNotesApp/MainView.swift` — content layout per W-2/W-6: search field, eviction bar, message line, list, split, editor, backlinks. `MainView.showMessage`, `focusSearchField`, `applyEditorFont`.
 - `Sources/MDNotesApp/LibraryController.swift` — owns one library: root, `NoteStore`, snapshots, background scan/index queue, watcher, CRUD. `LibraryController.start`, `apply`, `create`, `rename`, `delete`, `storeImage`, `EvictionStatus`, `Phase`.
 - `Sources/MDNotesApp/LibraryRootPreference.swift` — library folder in `UserDefaults`, defaulting to `~/Documents/MDnotes` (L-1). `LibraryRootPreference`.
@@ -102,6 +102,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/AppSmokeTests.swift` — the smallest headless launch: real controllers without a running app.
 - `Tests/MDNotesAppTests/LayoutSmokeTests.swift` — view stacking order at a given size, frame and split-position persistence (W-1, W-2).
 - `Tests/MDNotesAppTests/MenuSmokeTests.swift` — menu items found by action, sent down the responder chain; close behaviour (W-4).
+- `Tests/MDNotesAppTests/WindowLevelSmokeTests.swift` — main window `.floating` and `moveToActiveSpace`; completion panel and Settings at `overlayLevel` above it (W-5).
 - `Tests/MDNotesAppTests/BundleTests.swift` — runs `scripts/info-plist.sh` directly to cover the emitted Info.plist.
 - `Tests/MDNotesAppTests/SearchSmokeTests.swift` — typing in the real field editor drives the list per keystroke (S-1, S-5).
 - `Tests/MDNotesAppTests/NoteListSmokeTests.swift` — list rendering, date width and title truncation, date refresh on day change/key window, selection driving the editor (S-6, S-9, S-10, S-8); list snapshot (V-1).

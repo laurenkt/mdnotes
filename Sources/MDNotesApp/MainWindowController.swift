@@ -77,10 +77,22 @@ import MDNotesCore
 /// and `validateMenuItem(_:)` enables the rename and delete items only while a row is selected,
 /// titles the backlinks item for the strip's current state, and enables the size items while
 /// the size can still move their way (E-8).
+///
+/// The window floats (W-5, ADR-0011): its level is `.floating`, so it stays above other apps'
+/// windows whenever it is visible, and its collection behaviour is `moveToActiveSpace`, so it
+/// follows the user between Spaces. Anything that must appear above it (the completion panel,
+/// the Settings window) is at `overlayLevel`; sheets are above their window on their own.
 @MainActor
 public final class MainWindowController: NSWindowController, NSSearchFieldDelegate, NSMenuItemValidation {
     /// Autosave name under which `NSWindow` persists the frame.
     nonisolated public static let frameAutosaveName = "MainWindow"
+
+    /// The main window's level (W-5): always floating.
+    nonisolated public static let windowLevel: NSWindow.Level = .floating
+
+    /// The level for windows that must show above the main window (W-5): the completion
+    /// panel and Settings. One above `windowLevel`, so they clear it and nothing else.
+    nonisolated public static let overlayLevel = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
 
     public let mainView: MainView
     public let listController: NoteListController
@@ -149,6 +161,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         window.tabbingMode = .disallowed
         // W-4: closing quits, so nothing ever needs the window released on close.
         window.isReleasedWhenClosed = false
+        // W-5: floats above other apps' windows and follows the user between Spaces.
+        window.level = Self.windowLevel
+        window.collectionBehavior = [.moveToActiveSpace]
         window.center()
         let view = MainView(frame: window.contentLayoutRect)
         window.contentView = view

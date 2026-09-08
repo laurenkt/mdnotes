@@ -189,6 +189,8 @@ final class LinkCompletionSmokeTests: XCTestCase {
         await waitUntil("panel attached") { completion.isPanelAttached }
         XCTAssertTrue(window.childWindows?.contains { $0 is NSPanel } ?? false)
         XCTAssertIdentical(window.firstResponder, textView, "the panel did not take focus")
+        // W-5: attached, the panel is still above the floating window.
+        XCTAssertGreaterThan(completion.panelLevel.rawValue, window.level.rawValue)
     }
 
     func testK4_theTextTypedSinceTheBracketsFiltersTitlesWithTheS2Rules() async throws {

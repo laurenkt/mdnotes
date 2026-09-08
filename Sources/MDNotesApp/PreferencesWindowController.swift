@@ -64,6 +64,8 @@ public final class PreferencesWindowController: NSWindowController {
         )
         window.title = "Preferences"
         window.isReleasedWhenClosed = false
+        // W-5: the main window floats; Settings must show above it.
+        window.level = MainWindowController.overlayLevel
         window.center()
         super.init(window: window)
         chooseFolder = { [weak self] root, completion in
