@@ -41,4 +41,5 @@ fi
 [ -n "$id" ] && echo "ID: $id"
 [ -n "$lines" ] && printf '%s\n' "$lines"
 echo "OPEN: $open_tasks tasks, $blocked_tasks blocked, $open_issues issues"
+scripts/inbox-status.sh
 echo "HEAD: $(git rev-parse HEAD)"

@@ -1,15 +1,43 @@
 ---
 description: Orchestrate one plan task or issue in a fresh subagent, verify it landed, tag milestones. Run as `/loop /next-task`.
-allowed-tools: Bash(scripts/next-item.sh:*), Bash(scripts/verify-item.sh:*), Bash(scripts/log-metric.sh:*), Bash(git add:*), Bash(git commit:*), Edit, Agent, PushNotification
+allowed-tools: Bash(scripts/next-item.sh:*), Bash(scripts/verify-item.sh:*), Bash(scripts/log-metric.sh:*), Bash(scripts/absorb.sh:*), Bash(scripts/record-seed.sh:*), Bash(git add:*), Bash(git commit:*), Edit, Agent, PushNotification
 ---
 
 You are the orchestrator. You never implement anything; every item runs in a fresh subagent.
 Keep your context small: do not read PLAN.md, ISSUES.md, SPEC.md or source files. The
 scripts below print exactly what you need. Keep your own output to two lines.
 
+## 0. Absorb and apply the inbox
+
+Run `scripts/absorb.sh` (merges docs-only branches from discussion sessions; prints
+`ABSORBED: n`). Then run `scripts/next-item.sh`. If its `INBOX` line shows one or more
+`ready` items and no `DIRTY` state is expected (the previous tick ended clean), spawn an
+apply subagent before anything else, `subagent_type: general-purpose`,
+`run_in_background: false`:
+
+```
+You are working in /Users/laurenkt/Projects/mdnotes. Read docs/inbox/README.md, then every
+file in docs/inbox/ whose kind is feedback or milestone (not seeds). Apply each one to the
+plan and spec, exactly as written:
+- schedule end-of-current: append its tasks after the last task line of the milestone that
+  holds the first open `- [ ]` task in docs/PLAN.md, numbered on from that milestone's last
+  number (M7.13, M7.14 ...). A task whose first line says `before M7.4` goes directly before
+  that task instead, numbered M7.3a, M7.3b ....
+- schedule after-last: append a new `## M<n>: <title>` section after the last section in
+  docs/PLAN.md, numbering its tasks M<n>.1 onward, where n is one more than the last.
+- Spec amendments: apply verbatim to docs/SPEC.md (replace the named bullet, or add after
+  the named bullet or section). Check the named ADR file exists.
+- git mv the inbox file to docs/inbox/applied/.
+Commit everything as "inbox: <titles> -> <task ids>". The gate is skipped for docs-only
+commits. Do not implement anything. Reply with one line naming the task ids created.
+```
+
+Then continue with the item below (re-run `scripts/next-item.sh` after an apply).
+
 ## 1. Next item
 
-Run `scripts/next-item.sh`. It prints `KIND`, `ID`, the item's lines, `OPEN` counts and `HEAD`.
+The `scripts/next-item.sh` output prints `KIND`, `ID`, the item's lines, `OPEN` counts,
+`INBOX`, `BRANCHES` and `HEAD`.
 
 - `KIND: none` with blocked tasks in `OPEN`: report that the plan is blocked on
   `docs/QUESTIONS.md`, notify (step 4), and stop the loop.
@@ -75,12 +103,17 @@ blocked into `docs/QUESTIONS.md` (`MDNotes blocked on Q3 (M2.6): <few words>. Re
 a `MILESTONE` line (`MDNotes: m6 tagged, 9 open, starting M7.`), or the loop stopping.
 Never for an ordinary item landing.
 
-## 5. Replies from the human
+## 5. Messages from the human
 
 If the human answers an open question (possibly from the phone): write the answer into that
 entry's `Answer:` line in `docs/QUESTIONS.md`; if it changes behaviour, add a short ADR and
 amend `docs/SPEC.md`; flip the task from `[?]` to `[ ]`; commit as `Qn answered: <summary>`.
 The next tick picks it up. Do not implement it yourself.
+
+Any other message from the human that is feedback, an idea, or a request (not an instruction
+about the loop itself): run `scripts/record-seed.sh "<their text verbatim>"` and reply with
+one line, `captured as <file>; run /feedback to work through it`. Do not discuss it, do not
+act on it, do not change the plan.
 
 ## 6. Report
 

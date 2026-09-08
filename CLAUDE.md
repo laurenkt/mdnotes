@@ -15,6 +15,18 @@ orchestrator holds no state, so it can be compacted or restarted at any time wit
 lost. The loop ends when the plan is complete or every remaining task is blocked on
 `docs/QUESTIONS.md`.
 
+## Conversations (how the plan and spec change)
+
+The human evolves the product by talking, in any session, any time, while the loop runs:
+`/feedback [topic]` grills a niggle and queues its tasks for the end of the current
+milestone; `/milestone <name>` grills a feature and queues it as a new milestone after the
+last planned one. Both write only new files (`docs/inbox/`, `docs/adr/`, `docs/proposals/`)
+and commit them by path at once; they never edit `docs/PLAN.md` or `docs/SPEC.md`. The
+orchestrator absorbs docs-only branches and applies inbox items at the start of a tick, so it
+is the only writer of the plan and the spec (ADR-0017). Messages sent to the orchestrator
+become seeds in the inbox for `/feedback` to pick up. Discussion sessions may run in
+worktrees; implementation never does.
+
 ## Loop protocol (what a task session does)
 
 You are working unattended through `docs/PLAN.md`:
@@ -87,7 +99,9 @@ xcrun swift-format format --in-place <file>    (a PostToolUse hook does this on 
 - The real library at `~/Documents/MDnotes` is read-only to you (hooks enforce it). Tests use
   `SyntheticLibrary` in a temp directory or a copy.
 - History is append-only: no amend, rebase, reset, or hook bypass. Fix with a new commit.
-- One linear `main`. No branches, merges, or worktrees; decline worktree isolation if offered.
+- Implementation is one linear `main`: no branches, merges, or worktrees for task sessions;
+  decline worktree isolation when implementing. Discussion sessions may use them; their
+  docs-only branches are merged by `scripts/absorb.sh`, the only sanctioned merge.
 - Never end a turn with a dirty working tree (a Stop hook enforces it). Commit or record a
   question and commit that.
 - Product behaviour lives in `docs/SPEC.md` and changes only through an ADR in `docs/adr/`.
@@ -106,9 +120,12 @@ Sources/MDNotes/main.swift   the executable entry point. Nothing else goes here.
 Sources/MDNotesTestSupport/  SyntheticLibrary, PerfGate.
 Tests/MDNotesCoreTests/      unit tests and *PerfTests for the core.
 Tests/MDNotesAppTests/       headless smoke tests and *PerfTests for the app layer.
-scripts/                     check.sh, bundle.sh, setup.sh, record-issue.sh,
-                             next-item.sh, verify-item.sh, task-brief.sh, log-metric.sh
+scripts/                     check.sh, bundle.sh, setup.sh, record-issue.sh, next-item.sh,
+                             verify-item.sh, task-brief.sh, log-metric.sh, absorb.sh,
+                             inbox-status.sh, record-seed.sh
 .githooks/pre-commit         runs scripts/check.sh full
-.claude/                     settings.json (permissions + hooks), hooks/, commands/next-task.md
-docs/                        SPEC.md, PLAN.md, ISSUES.md, QUESTIONS.md, MAP.md, METRICS.md, adr/
+.claude/                     settings.json (permissions + hooks), hooks/, commands/ (next-task,
+                             feedback, milestone)
+docs/                        SPEC.md, PLAN.md, ISSUES.md, QUESTIONS.md, MAP.md, METRICS.md, adr/,
+                             inbox/ (+applied/), proposals/ (+accepted/)
 ```
