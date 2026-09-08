@@ -4,11 +4,12 @@ import MDNotesApp
 import MDNotesCore
 import XCTest
 
-/// Headless smoke tests for the menu bar (`MainMenu`) and quit-on-close (W-4). The menu is
+/// Headless smoke tests for the menu bar (`MainMenu`) and hide-on-close (W-4). The menu is
 /// installed by the real launch path; its items are found by action and sent down the
 /// responder chain from the window's first responder, which is what the menu does for the key
-/// window (a headless test process has none). Quitting is observed through the delegate's
-/// `terminate` hook, with the delegate standing in as the application's for the duration.
+/// window (a headless test process has none). Closing is driven through `performClose`, with
+/// the delegate standing in as the application's for the duration, and reopening through the
+/// delegate's `applicationShouldHandleReopen`, as a Dock click does.
 @MainActor
 final class MenuSmokeTests: XCTestCase {
     private var root: URL = FileManager.default.temporaryDirectory
@@ -430,43 +431,83 @@ final class MenuSmokeTests: XCTestCase {
         XCTAssertEqual(shown.libraryRoot, LibraryRootPreference.standardized(root))
     }
 
-    // MARK: - W-4: closing the window quits the app
+    // MARK: - W-4: closing the window hides it; the app keeps running
 
-    func testW4_closingTheWindowQuitsTheApp() async throws {
+    func testW4_closingTheWindowHidesItAndDoesNotQuit() async throws {
         let delegate = try await launch()
+        let controller = try controller(of: delegate)
         let window = try window(of: delegate)
-        var terminated = 0
-        delegate.terminate = { app in
-            XCTAssertTrue(app === NSApp)
-            terminated += 1
-        }
         let close = try item(#selector(NSWindow.performClose(_:)), in: delegate.mainMenu)
         let quit = try item(#selector(NSApplication.terminate(_:)), in: delegate.mainMenu)
         assertShortcut(close, "w")
         assertShortcut(quit, "q")
-        XCTAssertTrue(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApp))
+        XCTAssertFalse(
+            delegate.applicationShouldTerminateAfterLastWindowClosed(NSApp),
+            "the one window going away does not quit the app")
+
+        // Some state to survive the hide: a query, a selection, the note in the editor.
+        controller.search(for: "alpha")
+        try await select(alpha, in: delegate)
+        XCTAssertEqual(controller.mainView.textView.string, "alpha body")
 
         await asApplicationDelegate(delegate) {
             XCTAssertTrue(window.isVisible)
             window.performClose(nil)
         }
-        XCTAssertEqual(terminated, 1, "closing the window asked the app to quit")
+        XCTAssertFalse(window.isVisible, "closed: hidden")
+        XCTAssertFalse(delegate.isMainWindowVisible)
+        XCTAssertNotNil(delegate.mainWindowController?.window, "the window is kept, not released")
+        XCTAssertTrue(delegate.libraryController?.phase == .ready, "the library is still open")
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "alpha", "nothing in it is disturbed")
+        XCTAssertEqual(controller.listController.selectedID, alpha)
+        XCTAssertEqual(controller.editorController.noteID, alpha)
+
+        // The close button does the same as Cmd-W: both go through `performClose`.
+        delegate.showMainWindow()
+        XCTAssertTrue(window.isVisible)
+        let button = try XCTUnwrap(window.standardWindowButton(.closeButton))
+        await asApplicationDelegate(delegate) { button.performClick(nil) }
         XCTAssertFalse(window.isVisible)
+        XCTAssertEqual(controller.editorController.noteID, alpha)
     }
 
-    func testW4_closingTheWindowQuitsEvenWhilePreferencesIsOpen() async throws {
+    func testW4_aDockClickShowsTheHiddenWindowAgain() async throws {
         let delegate = try await launch()
+        let controller = try controller(of: delegate)
         let window = try window(of: delegate)
-        var terminated = 0
-        delegate.terminate = { _ in terminated += 1 }
-        delegate.showPreferences(nil)
-        XCTAssertEqual(delegate.preferencesWindowController?.window?.isVisible, true)
-
+        try await select(alpha, in: delegate)
+        XCTAssertTrue(window.makeFirstResponder(controller.mainView.textView))
         await asApplicationDelegate(delegate) { window.performClose(nil) }
-        XCTAssertEqual(terminated, 1, "the Preferences window does not keep the app running")
+        XCTAssertFalse(window.isVisible)
+
+        // A click on the Dock icon reaches the delegate as a reopen, which it handles itself.
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        XCTAssertTrue(window.isVisible, "shown again")
+        XCTAssertEqual(controller.editorController.noteID, alpha, "on the note it was showing")
+
+        // With the window already up a reopen leaves it as it is.
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true))
+        XCTAssertTrue(window.isVisible)
     }
 
-    func testW4_quittingOnCloseWritesUnsavedEditsFirst() async throws {
+    func testW4_theHotKeyShowsTheClosedWindowAgain() async throws {
+        let delegate = try await launch()
+        let controller = try controller(of: delegate)
+        let window = try window(of: delegate)
+        delegate.activateApp = {}
+        delegate.isAppActive = { true }
+        controller.search(for: "alpha")
+        await asApplicationDelegate(delegate) { window.performClose(nil) }
+        XCTAssertFalse(window.isVisible)
+
+        try XCTUnwrap(delegate.globalHotKey).fire()
+        XCTAssertTrue(window.isVisible, "shown again by the hotkey (W-3)")
+        let editor = try XCTUnwrap(controller.mainView.searchField.currentEditor())
+        XCTAssertIdentical(window.firstResponder, editor, "with the search field focused")
+        XCTAssertEqual(editor.selectedRange, NSRange(location: 0, length: 5))
+    }
+
+    func testW4_closingKeepsUnsavedEditsForTheAutosaveAndQuitWritesThemFirst() async throws {
         let delegate = try await launch()
         let controller = try controller(of: delegate)
         let window = try window(of: delegate)
@@ -477,17 +518,21 @@ final class MenuSmokeTests: XCTestCase {
             " edited", replacementRange: NSRange(location: (textView.string as NSString).length, length: 0))
         XCTAssertTrue(controller.editorController.hasUnsavedEdits)
 
-        // The hook stands in for `NSApplication.terminate`, which asks the delegate as here.
+        // Closing hides; the edit is still pending, as it would be with the window up (E-4).
+        await asApplicationDelegate(delegate) { window.performClose(nil) }
+        XCTAssertFalse(window.isVisible)
+        XCTAssertTrue(controller.editorController.hasUnsavedEdits, "nothing is written by the hide alone")
+        XCTAssertEqual(
+            try String(contentsOf: root.appendingPathComponent(alpha.relativePath), encoding: .utf8), "alpha body")
+
+        // Cmd-Q asks the delegate, which writes the edit before the app goes (E-4).
         var replies: [Bool] = []
         let replied = expectation(description: "termination resumed")
         delegate.replyToTerminate = { _, shouldTerminate in
             replies.append(shouldTerminate)
             replied.fulfill()
         }
-        var terminateReplies: [NSApplication.TerminateReply] = []
-        delegate.terminate = { app in terminateReplies.append(delegate.applicationShouldTerminate(app)) }
-        await asApplicationDelegate(delegate) { window.performClose(nil) }
-        XCTAssertEqual(terminateReplies, [.terminateLater], "the quit waits for the write (E-4)")
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApp), .terminateLater, "the quit waits for the write")
         await fulfillment(of: [replied], timeout: 10)
         XCTAssertEqual(replies, [true])
         XCTAssertEqual(
@@ -495,14 +540,16 @@ final class MenuSmokeTests: XCTestCase {
             "alpha body edited")
     }
 
-    func testW4_aDelegateThatIsNotTheApplicationsDoesNotQuitWhenItsWindowCloses() async throws {
+    func testW4_closingTheWindowWhilePreferencesIsOpenHidesOnlyTheMainWindow() async throws {
         let delegate = try await launch()
         let window = try window(of: delegate)
-        var terminated = 0
-        delegate.terminate = { _ in terminated += 1 }
-        XCTAssertFalse((NSApp.delegate as AnyObject?) === delegate)
-        window.performClose(nil)
+        delegate.showPreferences(nil)
+        let preferences = try XCTUnwrap(delegate.preferencesWindowController?.window)
+        XCTAssertTrue(preferences.isVisible)
+
+        await asApplicationDelegate(delegate) { window.performClose(nil) }
         XCTAssertFalse(window.isVisible)
-        XCTAssertEqual(terminated, 0, "a test's delegate is nobody's: its window closes and nothing quits")
+        XCTAssertTrue(preferences.isVisible, "Preferences stays up")
+        XCTAssertFalse(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApp))
     }
 }

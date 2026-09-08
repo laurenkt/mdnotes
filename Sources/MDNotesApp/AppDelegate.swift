@@ -17,14 +17,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         $0.reply(toApplicationShouldTerminate: $1)
     }
 
-    /// How closing the window quits the app (W-4). `NSApplication.terminate`, which asks
-    /// `applicationShouldTerminate` and so writes unsaved edits first (E-4); tests replace it
-    /// to observe the call.
-    public var terminate: @MainActor (NSApplication) -> Void = { $0.terminate(nil) }
-
     /// How the hotkey makes this the active application (W-3). Tests, whose process is never
     /// the active application, replace it to observe the call.
     public var activateApp: @MainActor () -> Void = { NSApplication.shared.activate() }
+
+    /// Whether this is the active application, which decides what the hotkey does (W-3).
+    /// Tests, whose process is never the active application, replace it to say so.
+    public var isAppActive: @MainActor () -> Bool = { NSApplication.shared.isActive }
 
     /// Where one-line reports go, such as a hotkey Carbon declined. Defaults to stderr.
     public var log: @Sendable (String) -> Void = LibraryController.standardErrorLog
@@ -71,12 +70,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowController = controller
         // PR-1: Cmd-, and the menu item.
         controller.mainView.onShowPreferences = { [weak self] in self?.showPreferences(nil) }
-        // W-4: closing the window quits.
-        if let window = controller.window {
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(mainWindowWillClose(_:)), name: NSWindow.willCloseNotification,
-                object: window)
-        }
+        // W-4: closing the window (Cmd-W, the close button) only hides it. The window is not
+        // released when closed (`MainWindowController`), so it is ordered out and stays whole,
+        // ready for the hotkey or a Dock click to bring it back.
 
         let library = LibraryController(root: libraryRoot)
         controller.attach(library)
@@ -85,25 +81,54 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // W-3: the hotkey is live from the first moment the window is.
         let hotKey = GlobalHotKey()
-        hotKey.onPress = { [weak self] in self?.activateFromHotKey() }
+        hotKey.onPress = { [weak self] in self?.toggleFromHotKey() }
         globalHotKey = hotKey
         register(self.hotKey)
     }
 
     // MARK: - Global hotkey (W-3)
 
-    /// What the global hotkey does: makes this the active application, brings the window
-    /// forward, and focuses the search field with its contents selected, so typing replaces
-    /// the query (S-7 does the last part for Cmd-L).
-    public func activateFromHotKey() {
+    /// What the global hotkey does (W-3): with the window visible and this the active
+    /// application, hides the window (ordered out, the app keeps running); otherwise makes this
+    /// the active application, brings the window forward, and focuses the search field with
+    /// its contents selected, so typing replaces the query (S-7 does the last part for Cmd-L).
+    public func toggleFromHotKey() {
+        if isMainWindowVisible && isAppActive() {
+            hideMainWindow()
+            return
+        }
         activateApp()
+        showMainWindow()
+        mainWindowController?.focusSearchField(nil)
+    }
+
+    /// Whether the main window is on screen: ordered in and not miniaturized.
+    public var isMainWindowVisible: Bool {
+        mainWindowController?.window?.isVisible ?? false
+    }
+
+    /// Brings the main window forward on the current Space (W-5 has it follow the active
+    /// Space), deminiaturizing it if need be, and makes it key. Focus inside it is untouched.
+    public func showMainWindow() {
         guard let controller = mainWindowController else { return }
         controller.showWindow(nil)
-        if let window = controller.window {
-            if window.isMiniaturized { window.deminiaturize(nil) }
-            window.makeKeyAndOrderFront(nil)
-        }
-        controller.focusSearchField(nil)
+        guard let window = controller.window else { return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Orders the main window out without closing it (W-3, W-4): the note in the editor, the
+    /// query and the selection are all kept for the next show.
+    public func hideMainWindow() {
+        mainWindowController?.window?.orderOut(nil)
+    }
+
+    /// W-4: a click on the Dock icon with the window hidden shows it again. AppKit's own
+    /// reopen handling is declined, since a hidden window is ordered out, not closed, and
+    /// would otherwise be left as it is.
+    public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        showMainWindow()
+        return false
     }
 
     /// Moves the global hotkey to `hotKey` (W-3, PR-1): the old combination is released and
@@ -168,17 +193,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Quit (W-4, E-4)
 
-    /// W-4: the main window is closing, by its close button or Cmd-W, so the app quits. The
-    /// call is made before the window has gone, and `terminate` does not return until the app
-    /// has quit or a deferred quit has been answered (E-4), so AppKit's own last-window check
-    /// cannot ask a second time while a write is still in flight. Only the application's own
-    /// delegate quits it: a delegate built by a test is nobody's, and its window closes without
-    /// consequence.
-    @objc private func mainWindowWillClose(_ notification: Notification) {
-        guard let delegate = NSApp.delegate, delegate === self else { return }
-        terminate(NSApp)
-    }
-
     /// E-4: unsaved edits are written before the app quits. The write runs off the main thread
     /// (PF-6), so termination is deferred until it lands, then resumed through
     /// `replyToTerminate`. With nothing to write the app quits at once.
@@ -191,9 +205,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    /// W-4 as AppKit asks it: with the one window gone there is nothing to keep running for.
-    /// `mainWindowWillClose` has normally quit before this is asked.
+    /// W-4 as AppKit asks it: closing the one window hides it, and the app stays running for
+    /// the hotkey and the Dock icon to bring it back. Only Cmd-Q quits.
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
     }
 }

@@ -163,7 +163,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M6.7 Window level and behaviour (W-5): `.floating`, `moveToActiveSpace`; completion popup
       and Settings above it. Smoke tests assert level and collection behaviour; completion
       popup window level is greater than the main window's.
-- [ ] M6.8 Hotkey toggle and close-hides (W-3, W-4): visible-and-active hides, otherwise shows
+- [x] M6.8 Hotkey toggle and close-hides (W-3, W-4): visible-and-active hides, otherwise shows
       and focuses search; Cmd-W and the close button hide; Dock click reopens
       (`applicationShouldHandleReopen`); `applicationShouldTerminateAfterLastWindowClosed`
       false. Smoke tests drive `fire()` twice and assert visibility, then reopen.

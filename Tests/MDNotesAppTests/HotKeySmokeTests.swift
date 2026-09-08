@@ -7,15 +7,16 @@ import XCTest
 
 /// Headless smoke tests for the global hotkey (W-3, PR-1): the default Ctrl-Cmd-N, registered
 /// with Carbon at launch and remembered in `UserDefaults`; a press activates the app, brings
-/// the window forward and selects the query; the recorder in Preferences changes, stores and
-/// re-registers it.
+/// the window forward and selects the query, or hides the window when it is up and the app is
+/// active; the recorder in Preferences changes, stores and re-registers it.
 ///
 /// A press cannot be synthesised without posting events system-wide, so the press path is
 /// driven through `GlobalHotKey.fire()`, which is what the Carbon handler calls. That the
 /// registration is real is checked against Carbon itself: a second registration of the same
 /// combination in this process is declined with `eventHotKeyExistsErr` until the first is
-/// released. Activation is observed through `AppDelegate.activateApp`, since a test process is
-/// never the active application.
+/// released. Activation is observed through `AppDelegate.activateApp`, and whether the app is
+/// active is told through `AppDelegate.isAppActive`, since a test process is never the active
+/// application.
 @MainActor
 final class HotKeySmokeTests: XCTestCase {
     private var root: URL = FileManager.default.temporaryDirectory
@@ -280,6 +281,7 @@ final class HotKeySmokeTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         var activations = 0
         delegate.activateApp = { activations += 1 }
+        delegate.isAppActive = { false }
 
         // A query is typed, focus has moved to the list, and the window is away.
         controller.mainView.searchField.stringValue = "alpha"
@@ -300,27 +302,69 @@ final class HotKeySmokeTests: XCTestCase {
         XCTAssertEqual(editor.selectedRange, NSRange(location: 0, length: 5), "and selected, ready to replace")
         XCTAssertEqual(controller.listController.selectedID, alpha, "the selection is untouched")
 
-        // Pressed again with the window already up: the same, once more.
+        // Pressed again with the window up but another application active: the same, once
+        // more, since the press is a summons, not a dismissal (W-3).
         window.makeFirstResponder(controller.mainView.textView)
-        delegate.activateFromHotKey()
+        delegate.toggleFromHotKey()
         XCTAssertEqual(activations, 2)
+        XCTAssertTrue(window.isVisible)
         XCTAssertIdentical(window.firstResponder, controller.mainView.searchField.currentEditor())
         XCTAssertEqual(controller.mainView.searchField.currentEditor()?.selectedRange, NSRange(location: 0, length: 5))
     }
 
-    func testW3_pressWithAnEmptyQueryFocusesTheEmptySearchField() async throws {
+    // MARK: - W-3: pressed with the window up and the app active, the press hides the window
+
+    func testW3_pressTogglesTheWindowHiddenAndShownAgain() async throws {
         let delegate = try await launch()
         let controller = try XCTUnwrap(delegate.mainWindowController)
         let window = try XCTUnwrap(controller.window)
-        delegate.activateApp = {}
-        window.makeFirstResponder(controller.mainView.tableView)
+        let hotKey = try XCTUnwrap(delegate.globalHotKey)
+        var activations = 0
+        delegate.activateApp = { activations += 1 }
+        delegate.isAppActive = { false }
 
-        try XCTUnwrap(delegate.globalHotKey).fire()
+        // Some state to survive the round trip: a query, a selection, focus in the editor.
+        controller.mainView.searchField.stringValue = "alpha"
+        controller.searchQueryDidChange()
+        controller.listController.select(alpha)
+        XCTAssertTrue(window.isVisible)
+        XCTAssertTrue(delegate.isMainWindowVisible)
 
+        // Visible but not the active application: the first press summons.
+        hotKey.fire()
+        XCTAssertEqual(activations, 1)
+        XCTAssertTrue(window.isVisible)
+        XCTAssertIdentical(window.firstResponder, controller.mainView.searchField.currentEditor())
+
+        // Visible and active: the second press hides. The app is not activated or deactivated,
+        // the window is not closed, and nothing in it is disturbed.
+        delegate.isAppActive = { true }
+        hotKey.fire()
+        XCTAssertEqual(activations, 1, "hiding does not activate")
+        XCTAssertFalse(window.isVisible)
+        XCTAssertFalse(delegate.isMainWindowVisible)
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "alpha")
+        XCTAssertEqual(controller.listController.selectedID, alpha)
+        XCTAssertEqual(controller.listController.results.map(\.id), [alpha])
+
+        // Hidden, whether or not the app is still active: the third press shows again and
+        // focuses the search field with the query selected.
+        window.makeFirstResponder(nil)
+        hotKey.fire()
+        XCTAssertEqual(activations, 2)
+        XCTAssertTrue(window.isVisible)
         let editor = try XCTUnwrap(controller.mainView.searchField.currentEditor())
         XCTAssertIdentical(window.firstResponder, editor)
-        XCTAssertEqual(controller.mainView.searchField.stringValue, "")
-        XCTAssertEqual(editor.selectedRange, NSRange(location: 0, length: 0))
+        XCTAssertEqual(editor.selectedRange, NSRange(location: 0, length: 5))
+        XCTAssertEqual(controller.listController.selectedID, alpha, "the selection survived the round trip")
+
+        // And once more from active-and-visible: hidden; so the press is a toggle, not a latch.
+        hotKey.fire()
+        XCTAssertFalse(window.isVisible)
+        delegate.isAppActive = { false }
+        hotKey.fire()
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(activations, 3)
     }
 
     // MARK: - PR-1, W-3: the recorder in Preferences
@@ -383,6 +427,7 @@ final class HotKeySmokeTests: XCTestCase {
         // The new combination drives the same press path.
         var activations = 0
         delegate.activateApp = { activations += 1 }
+        delegate.isAppActive = { false }
         try XCTUnwrap(delegate.globalHotKey).fire()
         XCTAssertEqual(activations, 1)
 

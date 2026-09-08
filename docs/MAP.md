@@ -37,7 +37,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 ## Sources/MDNotesApp (AppKit layer: window, controllers, views; headlessly testable)
 
 - `Sources/MDNotesApp/App.swift` — entry point called by `main.swift`; everything else stays library-side for tests. `App.run()`.
-- `Sources/MDNotesApp/AppDelegate.swift` — launch: opens library root, builds window, menu, hotkey, Settings; termination handling. `AppDelegate.openLibrary`, `setHotKey`, `activateFromHotKey`.
+- `Sources/MDNotesApp/AppDelegate.swift` — launch: opens library root, builds window, menu, hotkey, Settings; hotkey toggle, hide-on-close, Dock reopen, termination (W-3, W-4, E-4). `AppDelegate.openLibrary`, `setHotKey`, `toggleFromHotKey`, `showMainWindow`, `hideMainWindow`, `isAppActive`.
 - `Sources/MDNotesApp/MainMenu.swift` — code-built menu bar (P-2); targetless items resolved through the responder chain. `MainMenu` (App/Edit/Note/View/Window menus; View holds Bigger/Smaller/Actual Size (E-8) and the backlinks toggle).
 - `Sources/MDNotesApp/MainWindowController.swift` — the single main window (W-1), floating and following the active Space (W-5): search field, list, editor wiring; commit/rename/delete/open-link/insert-image actions; View menu font size actions (E-8). `MainWindowController.attach`, `commitQuery`, `commitTitle`, `openLink`, `search`, `makeTextBigger/Smaller/ActualSize`, `validateMenuItem`, `windowLevel`, `overlayLevel`.
 - `Sources/MDNotesApp/MainView.swift` — content layout per W-2/W-6: search field, eviction bar, message line, list, split, editor, backlinks. `MainView.showMessage`, `focusSearchField`, `applyEditorFont`.
@@ -101,7 +101,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/ManualAutosaveClock.swift` — `AutosaveClock` that only advances when a test says so; timers fire in deadline order (E-4).
 - `Tests/MDNotesAppTests/AppSmokeTests.swift` — the smallest headless launch: real controllers without a running app.
 - `Tests/MDNotesAppTests/LayoutSmokeTests.swift` — view stacking order at a given size, frame and split-position persistence (W-1, W-2).
-- `Tests/MDNotesAppTests/MenuSmokeTests.swift` — menu items found by action, sent down the responder chain; close behaviour (W-4).
+- `Tests/MDNotesAppTests/MenuSmokeTests.swift` — menu items found by action, sent down the responder chain; Cmd-W and close button hide, Dock reopen, quit writes edits (W-4).
 - `Tests/MDNotesAppTests/WindowLevelSmokeTests.swift` — main window `.floating` and `moveToActiveSpace`; completion panel and Settings at `overlayLevel` above it (W-5).
 - `Tests/MDNotesAppTests/BundleTests.swift` — runs `scripts/info-plist.sh` directly to cover the emitted Info.plist.
 - `Tests/MDNotesAppTests/SearchSmokeTests.swift` — typing in the real field editor drives the list per keystroke (S-1, S-5).
@@ -115,7 +115,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/EditorStylingSmokeTests.swift` — styling applied by the storage delegate and its paragraph scope; the mono font on code tokens only (E-2, E-3, E-8).
 - `Tests/MDNotesAppTests/EditorFontSmokeTests.swift` — system font at the stored size, size clamped to 9 to 36, View menu Bigger/Smaller/Actual Size clamping and persisting, stale family key deleted at launch, Settings without font controls; editor and Settings snapshots (E-8, PR-1, V-1).
 - `Tests/MDNotesAppTests/PreferencesSmokeTests.swift` — library folder remembered, read at launch, changed via the chooser (PR-1, L-1).
-- `Tests/MDNotesAppTests/HotKeySmokeTests.swift` — default Ctrl-Cmd-N, Carbon registration, activation and recording (W-3, PR-1).
+- `Tests/MDNotesAppTests/HotKeySmokeTests.swift` — default Ctrl-Cmd-N, Carbon registration, show/hide toggle via `fire()` and recording (W-3, PR-1).
 - `Tests/MDNotesAppTests/LinkCompletionSmokeTests.swift` — the `[[` popover driven by real key events (K-4).
 - `Tests/MDNotesAppTests/TagCompletionSmokeTests.swift` — the `#` popover and click-to-search on a tag (T-3, T-4).
 - `Tests/MDNotesAppTests/LinkOpeningSmokeTests.swift` — Cmd-Return and Cmd-click opening the link under the caret/pointer (K-3).
