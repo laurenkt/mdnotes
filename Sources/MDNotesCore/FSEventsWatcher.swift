@@ -17,6 +17,13 @@ import Synchronization
 /// not filtered here; that is `OwnWrites` (E-6). Safe to start and stop from any thread, but
 /// not from inside the handler. The last reference may be dropped from anywhere, the handler
 /// included: `deinit` stops the stream, and never runs on the watcher's own queue.
+///
+/// The stream does not refer to the watcher directly. Its `info` pointer is a `StreamContext`
+/// the stream itself retains, holding the watcher weakly, so a callback that arrives while or
+/// after the watcher deinitialises finds nothing and returns. A callback that does find the
+/// watcher takes one reference of its own and hands that reference to a global queue to be
+/// released, and never releases it on the watcher's queue; that hand-off is what keeps `deinit`,
+/// and so `stop()`'s drain of the queue, off the queue being drained (I-2).
 public final class FSEventsWatcher: Sendable {
     /// How long the kernel may hold events to coalesce them before delivery. The first event
     /// after a quiet period is delivered without waiting, so a single change arrives well within
@@ -85,8 +92,14 @@ public final class FSEventsWatcher: Sendable {
     public func start() throws {
         try state.withLock { state in
             if state.stream != 0 { return }
+            // The stream owns the context: created at +1 here, released by `release` when the
+            // stream is deallocated after `stop()`.
             var context = FSEventStreamContext(
-                version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil,
+                version: 0, info: Unmanaged.passRetained(StreamContext(self)).toOpaque(), retain: nil,
+                release: { info in
+                    guard let info else { return }
+                    Unmanaged<StreamContext>.fromOpaque(info).release()
+                },
                 copyDescription: nil)
             let flags = FSEventStreamCreateFlags(
                 kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
@@ -119,9 +132,10 @@ public final class FSEventsWatcher: Sendable {
         guard let stream else { return }
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        // Drain a callback that may already be running with an unretained reference to self.
+        // Drain a callback that may already be running, so none runs after this returns and the
+        // stream's context outlives every use of it.
         queue.sync {}
+        FSEventStreamRelease(stream)
     }
 
     public enum WatchError: Error, Equatable {
@@ -131,14 +145,36 @@ public final class FSEventsWatcher: Sendable {
 
     // MARK: - Event handling
 
+    /// What the stream's `info` pointer refers to. Retained by the stream, not the watcher, and
+    /// holding the watcher weakly, so the stream never refers to a watcher that is going away.
+    private final class StreamContext: Sendable {
+        private struct Weak: Sendable {
+            weak var watcher: FSEventsWatcher?
+        }
+        private let weak: Weak
+
+        init(_ watcher: FSEventsWatcher) {
+            weak = Weak(watcher: watcher)
+        }
+
+        /// A reference of the caller's own, at +1, or nil once the watcher's `deinit` has begun.
+        func retainWatcher() -> Unmanaged<FSEventsWatcher>? {
+            guard let watcher = weak.watcher else { return nil }
+            return Unmanaged.passRetained(watcher)
+        }
+    }
+
     private static let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
-        guard let info else { return }
-        let watcher = Unmanaged<FSEventsWatcher>.fromOpaque(info).takeUnretainedValue()
-        // The reference taken for this call is released on another queue afterwards. If the
-        // owner let go of the watcher while this callback ran, this reference is the last one,
-        // and releasing it here would run `deinit`, and so `stop()`, on the watcher's own queue,
-        // where waiting for that queue to drain is a deadlock libdispatch traps on.
-        defer { DispatchQueue.global(qos: .utility).async { withExtendedLifetime(watcher) {} } }
+        guard let info, let retained = Unmanaged<StreamContext>.fromOpaque(info).takeUnretainedValue().retainWatcher()
+        else { return }
+        // If the owner lets go of the watcher while this callback runs, the reference taken above
+        // is the last one, and whichever release brings the count to zero runs `deinit`, and so
+        // `stop()`, which waits for this queue to drain: a deadlock libdispatch traps on if it
+        // happens here. So this queue never releases it. `retainWatcher()` let its own strong
+        // reference go before returning, and the one below is balanced within the statement;
+        // neither can be last while the +1 is outstanding, and that +1 is released on a global
+        // queue after the work is done, from a closure that owns it outright rather than sharing
+        // it with a local this queue would release afterwards.
         let cStrings = paths.assumingMemoryBound(to: UnsafePointer<CChar>?.self)
         var events: [(path: String, flags: FSEventStreamEventFlags)] = []
         events.reserveCapacity(count)
@@ -146,7 +182,8 @@ public final class FSEventsWatcher: Sendable {
             guard let cString = cStrings[i] else { continue }
             events.append((String(cString: cString), flags[i]))
         }
-        watcher.handle(events)
+        retained.takeUnretainedValue().handle(events)
+        DispatchQueue.global(qos: .utility).async { retained.release() }
     }
 
     private func handle(_ events: [(path: String, flags: FSEventStreamEventFlags)]) {

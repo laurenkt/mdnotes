@@ -136,6 +136,10 @@ final class FSEventsWatcherTests: XCTestCase {
     /// does when it is released on the main thread mid-callback. The callback's own reference is
     /// then the last one, and dropping it must not run `deinit`, and so `stop()`, on the
     /// watcher's queue: waiting for that queue from itself is a deadlock libdispatch traps on.
+    ///
+    /// Which release turns out to be the last is a matter of thread timing, so one round only
+    /// sometimes exercises the path; forty rounds at zero latency reached it in most runs before
+    /// the fix (I-2), and the whole loop takes about half a second.
     func testX1_ownerMayDropTheWatcherWhileItsHandlerRuns() throws {
         /// Held only by the handler, so it goes when the watcher does.
         final class Token: Sendable {
@@ -144,12 +148,9 @@ final class FSEventsWatcherTests: XCTestCase {
             deinit { onDeinit() }
         }
         let owner = Mutex<FSEventsWatcher?>(nil)
-        let handled = expectation(description: "handler ran")
-        handled.assertForOverFulfill = false
-        let deallocated = expectation(description: "watcher deallocated")
-        func startOwnedWatcher() throws {
+        func startOwnedWatcher(handled: XCTestExpectation, deallocated: XCTestExpectation) throws {
             let token = Token { deallocated.fulfill() }
-            let watcher = FSEventsWatcher(root: root, knownNotes: [], latency: 0.05) { _ in
+            let watcher = FSEventsWatcher(root: root, knownNotes: [], latency: 0) { _ in
                 withExtendedLifetime(token) {}
                 // The owner lets go while this callback is on the watcher's queue.
                 owner.withLock { $0 = nil }
@@ -158,10 +159,15 @@ final class FSEventsWatcherTests: XCTestCase {
             try watcher.start()
             owner.withLock { $0 = watcher }
         }
-        try startOwnedWatcher()
-        try write("fresh.md")
-        wait(for: [handled, deallocated], timeout: timeout)
-        XCTAssertNil(owner.withLock { $0 })
+        for round in 0..<40 {
+            let handled = expectation(description: "handler ran, round \(round)")
+            handled.assertForOverFulfill = false
+            let deallocated = expectation(description: "watcher deallocated, round \(round)")
+            try startOwnedWatcher(handled: handled, deallocated: deallocated)
+            try write("fresh-\(round).md")
+            wait(for: [handled, deallocated], timeout: timeout)
+            XCTAssertNil(owner.withLock { $0 }, "round \(round)")
+        }
     }
 
     func testX1_renameIsRemovalPlusAddition() throws {

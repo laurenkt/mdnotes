@@ -28,4 +28,4 @@ Format: `- [ ] I-<n> <kind> \`<where>\` (<date>): <what was seen, and how to rep
       iterations to every `*PerfTests` class that the median is stable across three consecutive
       runs on an idle machine, and make each perf test print its median so future flake entries
       carry the number.
-- [ ] I-2 flaky `FSEventsWatcherTests.testX1_ownerMayDropTheWatcherWhileItsHandlerRuns` (2026-09-07): crashed with signal 5 in about one of four runs of the debug suite (the unit and smoke step of scripts/check.sh) on 2026-09-07 and passed on rerun; not captured further. Reproduce by running the debug suite repeatedly.
+- [x] I-2 flaky `FSEventsWatcherTests.testX1_ownerMayDropTheWatcherWhileItsHandlerRuns` (2026-09-07): crashed with signal 5 in about one of four runs of the debug suite (the unit and smoke step of scripts/check.sh) on 2026-09-07 and passed on rerun; not captured further. Reproduce by running the debug suite repeatedly.
