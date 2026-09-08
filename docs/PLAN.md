@@ -229,3 +229,57 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [ ] M9.6 Manual acceptance pass for M9 and the whole of v2 against `docs/ACCEPTANCE.md`;
       discrepancies become tasks above this line.
 - [ ] M9.7 Tag `v0.2.0`.
+
+## M10: Halfway editor: in-place markdown styling, rich paste, rules and banding
+
+- [ ] M10.1 `MarkdownScanner` grows to the full block and inline set (ED-1): emphasis (`**`, `__`,
+      `*`, `_` at word boundaries, `~~`), standard links `[t](u)`, images `![a](u)`,
+      autolinks `<u>` and bare http(s) URLs, list items (bullet, ordered, task, nesting by
+      two spaces), blockquote prefixes, pipe-table rows and separator rows, thematic breaks
+      per ED-8, setext headings per ED-9. Tokens carry marker ranges separately from content
+      ranges. Tests: one test per construct, code-span and fenced-block exclusion, word-boundary
+      underscore, nesting depth, blank-line-before rule, setext under text.
+- [ ] M10.2 Marker dimming and emphasis traits in `EditorStyler` (ED-2, ED-3): markers in tertiary
+      label colour; bold, italic and strikethrough traits on content; nothing inside code.
+      Tests: attributes per token; markers and content styled separately.
+- [ ] M10.3 Heading scale (ED-4): 1.4 / 1.25 / 1.1 / 1.0 times the body size, bold; `#` and setext
+      underline dimmed; scales with Cmd-plus. Restyle stays paragraph-scoped (E-3). Tests:
+      font size per level; a heading edit relays out only its paragraph.
+- [ ] M10.4 Lists (ED-5): hanging indent via paragraph style so wrapped lines align under the item
+      text, two spaces per nesting level, markers dimmed; ordered markers too. Tests: head
+      indent per level; wrapped line x-origin equals text start.
+- [ ] M10.5 Task items (ED-6): `[ ]` / `[x]` set in the monospaced font at body size; done items in
+      secondary colour; a plain click on the box toggles space and x as one undoable edit that
+      autosaves. Tests: equal advance widths; click toggles; undo restores; file updated.
+- [ ] M10.6 Blockquotes and tables (ED-7): blockquote paragraphs hanging-indented with `>` dimmed,
+      nested `>` nests; pipe-table lines in the monospaced font, separator row dimmed. Tests:
+      attributes and indents.
+- [ ] M10.7 Horizontal rule extension (ED-8): a custom `NSLayoutManager` draws faded hyphens from the
+      end of the typed rule to the trailing edge, unselectable, visible rect only. Tests: rule
+      token ranges; drawn extension excluded from selection and copy; snapshot per V-1.
+- [ ] M10.8 Section banding (ED-10): the layout manager fills alternate sections between rules with
+      a subtle system fill across the full editor width, the rule line first in its band,
+      visible rect only, recomputed from the scanner's rule list. Tests: band ranges for
+      0, 1, 3 rules and for a rule at document start; snapshot per V-1 in light and dark.
+- [ ] M10.9 Link state (ED-11): missing wikilink targets get a dotted underline and the tooltip
+      "Cmd-click to create"; existing in link colour; ambiguous unchanged. Standard links,
+      autolinks and bare URLs styled as links. Tests: attributes per state; restyle when a
+      target appears or disappears.
+- [ ] M10.10 Cmd-hover and browser opening (ED-12, K-3): holding Cmd over any link shows the
+      pointing-hand cursor and a solid underline; Cmd-click or Cmd-Enter on a standard link or
+      URL opens it with `NSWorkspace`. Tests: cursor and underline after simulated
+      flagsChanged over a link; open action receives the URL.
+- [ ] M10.11 `HTMLToMarkdown` in Core (ED-13): walks tidy-parsed HTML and emits headings, emphasis,
+      links, lists with nesting, task items, code, blockquotes, pipe tables, remote images,
+      paragraphs and line breaks; everything else as plain text. Fixtures: Mail, Safari,
+      Notes, Google Docs exports. Tests: one per fixture, byte-exact expected markdown.
+- [ ] M10.12 `RTFToMarkdown` fallback (ED-13): attributed-string traits, links and list markers to
+      markdown when no HTML is present. Fixture: Pages and TextEdit RTF.
+- [ ] M10.13 Rich paste wiring (ED-14): `EditorTextView` converts HTML, else RTF, else plain;
+      Cmd-Shift-V (Paste and Match Style) pastes plain; image data still goes to `i/` (I-1).
+      `PastePerfTests`: PF-9, 200 KB of HTML under 100 ms. Smoke tests per pasteboard type.
+- [ ] M10.14 `EditorPerfTests` extended (PF-3): the 1 MB note now contains every construct, with
+      banding and rule extensions drawn; keystroke-to-redraw stays under 8 ms.
+- [ ] M10.15 Manual acceptance pass for M10 against `docs/ACCEPTANCE.md` (one line per ED bullet);
+      discrepancies become tasks above this line.
+- [ ] M10.16 Tag `v0.3.0`.
