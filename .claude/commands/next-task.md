@@ -1,6 +1,6 @@
 ---
 description: Orchestrate one plan task or issue in a fresh subagent, verify it landed, tag milestones. Run as `/loop /next-task`.
-allowed-tools: Bash(scripts/next-item.sh:*), Bash(scripts/verify-item.sh:*), Bash(scripts/log-metric.sh:*), Bash(scripts/absorb.sh:*), Bash(scripts/record-seed.sh:*), Bash(git add:*), Bash(git commit:*), Edit, Agent, PushNotification
+allowed-tools: Bash(scripts/next-item.sh:*), Bash(scripts/verify-item.sh:*), Bash(scripts/log-metric.sh:*), Bash(scripts/absorb.sh:*), Bash(scripts/land.sh:*), Bash(scripts/record-seed.sh:*), Bash(git add:*), Bash(git commit:*), Edit, Agent, PushNotification
 ---
 
 You are the orchestrator. You never implement anything; every item runs in a fresh subagent.
@@ -43,15 +43,19 @@ The `scripts/next-item.sh` output prints `KIND`, `ID`, the item's lines, `OPEN` 
   `docs/QUESTIONS.md`, notify (step 4), and stop the loop.
 - `KIND: none` with nothing blocked: report "plan complete", notify, stop the loop.
 
-## 2. Spawn a subagent
+## 2. Spawn a subagent in its own worktree
 
-Agent tool, `subagent_type: general-purpose`, `run_in_background: false`. For a task:
+Agent tool, `subagent_type: general-purpose`, `run_in_background: false`,
+`isolation: "worktree"` (ADR-0018: a fresh worktree and branch cut from main; the subagent's
+working directory is that worktree). For a task:
 
 ```
-You are working in /Users/laurenkt/Projects/mdnotes. Run `scripts/task-brief.sh <ID>` and read
-its output: it holds the task, the spec bullets it cites, and the codebase map. Then read
-CLAUDE.md. Do not read docs/SPEC.md in full and do not explore the codebase beyond what the
-map and the task need. Do exactly this one task and nothing else:
+You are working in a fresh git worktree of the MDNotes repo, on your own branch cut from
+main; your current directory is that worktree and every path below is relative to it. Run
+`scripts/task-brief.sh <ID>` and read its output: it holds the task, the spec bullets it
+cites, and the codebase map. Then read CLAUDE.md. Do not read docs/SPEC.md in full and do
+not explore the codebase beyond what the map and the task need. Do exactly this one task and
+nothing else:
 
 <ITEM LINES>
 
@@ -63,15 +67,17 @@ if you added, removed or moved a file, and commit as "<ID>: <summary> (<spec IDs
 pre-commit hook runs the full gate; if it fails, fix and commit again. If the spec does not
 decide something you need, append a question to docs/QUESTIONS.md, mark the task [?], and
 commit that instead. Problems outside the task follow the Issues rule in CLAUDE.md. Finish
-with a clean working tree. Reply with one line: commit hash and what landed, or the question
+with a clean working tree. Reply with two lines: `BRANCH: ` followed by the output of
+`git rev-parse --abbrev-ref HEAD`, then the commit hash and what landed, or the question
 number if blocked.
 ```
 
 For an issue:
 
 ```
-You are working in /Users/laurenkt/Projects/mdnotes. Run `scripts/task-brief.sh <ID>` and read
-its output, then read CLAUDE.md. Do not read docs/SPEC.md in full. Fix exactly this one issue:
+You are working in a fresh git worktree of the MDNotes repo, on your own branch cut from
+main; your current directory is that worktree. Run `scripts/task-brief.sh <ID>` and read its
+output, then read CLAUDE.md. Do not read docs/SPEC.md in full. Fix exactly this one issue:
 
 <ITEM LINES>
 
@@ -80,16 +86,25 @@ update docs/MAP.md if files changed, and commit as "<ID>: <summary>". A flaky en
 by reducing variance, never by raising a budget. If the fix is larger than one commit, add a
 task at the top of the current milestone in docs/PLAN.md, mark the entry [x] -> M<n>.<k>, and
 commit that instead. Other problems follow the Issues rule in CLAUDE.md. Finish with a clean
-working tree. Reply with one line: commit hash and what landed.
+working tree. Reply with two lines: `BRANCH: ` followed by the output of
+`git rev-parse --abbrev-ref HEAD`, then the commit hash and what landed.
 ```
 
-## 3. Verify and log
+## 3. Land, verify and log
 
-Run `scripts/verify-item.sh <HEAD from step 1> <ID>`. It prints `COMMIT`, `ITEM`, optional
-`DIRTY`, `ISSUES_ADDED` and `MILESTONE` lines (it creates the milestone tag itself), and
-`STATUS`.
+Run `scripts/land.sh <BRANCH from the reply>`. It rebases the branch onto main, fast-forwards
+main, and removes the worktree and branch; it prints `STATUS: landed`, `nothing`, `refused`
+or `conflict`. On `refused` or `conflict`, report the message and stop the loop: main moved
+on build inputs during the task, which should never happen, and a human must look. On
+`nothing`, treat it as a stall (below) and remove the branch's worktree by running
+`scripts/land.sh` again after the stall count is handled.
 
-- `STATUS: dirty`: a hook failed. Report and stop the loop.
+Then run `scripts/verify-item.sh <HEAD from step 1> <ID>`. It prints `COMMIT`, `ITEM`,
+optional `DIRTY`, `ISSUES_ADDED` and `MILESTONE` lines (it creates the milestone tag itself),
+and `STATUS`.
+
+- `STATUS: dirty`: the main checkout is dirty, which no subagent should cause any more.
+  Report and stop the loop.
 - `STATUS: stall`: no commit or item still open. Second consecutive stall on the same ID:
   report the subagent's reply and stop the loop. Otherwise continue.
 - `STATUS: ok`: run `scripts/log-metric.sh <ID> <subagent tokens> <duration ms>` with the

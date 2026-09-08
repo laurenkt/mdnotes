@@ -8,3 +8,4 @@ DerivedData/
 *.swp
 /Package.resolved
 .claude/settings.local.json
+.claude/worktrees/

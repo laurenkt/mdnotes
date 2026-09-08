@@ -19,7 +19,10 @@ if [ "$event" = "SubagentStop" ]; then
         *) exit 0 ;;
     esac
 fi
-cd "$(dirname "$0")/../.."
+# A task subagent runs in its own worktree (ADR-0018); the hook input's cwd names it.
+# CLAUDE_PROJECT_DIR stays at the main checkout, so do not derive the tree from $0.
+cwd="$(printf '%s' "$input" | jq -r '.cwd // empty')"
+cd "${cwd:-$(dirname "$0")/../..}"
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 0
 fi

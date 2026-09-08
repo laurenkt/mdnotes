@@ -7,9 +7,10 @@ instant. Read `docs/SPEC.md` before writing code. The plan is `docs/PLAN.md`.
 ## Orchestration
 
 The human runs `/loop /next-task` in one session. That session is the orchestrator: each tick
-it runs `scripts/next-item.sh`, spawns a fresh subagent for exactly that item, verifies with
-`scripts/verify-item.sh` (which tags milestones), logs cost to `docs/METRICS.md`, and never
-implements anything itself (`.claude/commands/next-task.md`). Fresh context per item is
+it absorbs docs-only branches, applies the inbox, runs `scripts/next-item.sh`, spawns a fresh
+subagent in its own worktree for exactly that item, lands its branch with `scripts/land.sh`,
+verifies with `scripts/verify-item.sh` (which tags milestones), logs cost to
+`docs/METRICS.md`, and never implements anything itself (`.claude/commands/next-task.md`). Fresh context per item is
 deliberate: the spec, the plan and git history are the memory, not the conversation. The
 orchestrator holds no state, so it can be compacted or restarted at any time with nothing
 lost. The loop ends when the plan is complete or every remaining task is blocked on
@@ -99,9 +100,11 @@ xcrun swift-format format --in-place <file>    (a PostToolUse hook does this on 
 - The real library at `~/Documents/MDnotes` is read-only to you (hooks enforce it). Tests use
   `SyntheticLibrary` in a temp directory or a copy.
 - History is append-only: no amend, rebase, reset, or hook bypass. Fix with a new commit.
-- Implementation is one linear `main`: no branches, merges, or worktrees for task sessions;
-  decline worktree isolation when implementing. Discussion sessions may use them; their
-  docs-only branches are merged by `scripts/absorb.sh`, the only sanctioned merge.
+- `main` stays linear. A task subagent works in a worktree the orchestrator gave it, on its
+  own branch cut from main, and never creates branches or worktrees itself; the orchestrator
+  lands the branch by rebase and fast-forward with `scripts/land.sh` (ADR-0018). Discussion
+  sessions' docs-only branches are merged by `scripts/absorb.sh`. Those two scripts are the
+  only sanctioned merge and rebase.
 - Never end a turn with a dirty working tree (a Stop hook enforces it). Commit or record a
   question and commit that.
 - Product behaviour lives in `docs/SPEC.md` and changes only through an ADR in `docs/adr/`.
@@ -122,7 +125,7 @@ Tests/MDNotesCoreTests/      unit tests and *PerfTests for the core.
 Tests/MDNotesAppTests/       headless smoke tests and *PerfTests for the app layer.
 scripts/                     check.sh, bundle.sh, setup.sh, record-issue.sh, next-item.sh,
                              verify-item.sh, task-brief.sh, log-metric.sh, absorb.sh,
-                             inbox-status.sh, record-seed.sh
+                             land.sh, inbox-status.sh, record-seed.sh
 .githooks/pre-commit         runs scripts/check.sh full
 .claude/                     settings.json (permissions + hooks), hooks/, commands/ (next-task,
                              feedback, milestone)
