@@ -7,6 +7,42 @@ release tag; the setup and the driving scripts it needs are described at the end
 Result key: **pass**, **fail** (task named), **gate** (enforced by `scripts/check.sh full`,
 not checkable by hand), **n/a by hand** (why), **blocked** (question in `QUESTIONS.md`).
 
+## Pass of 2026-09-08 (M6.9, v2)
+
+Build: `scripts/bundle.sh` at commit 1b017f4 (M6.8), macOS 26.2. Library: a nine-note stand-in
+(a heading, links, a tag, inline and fenced code in `Hub`; a 95-character title; notes dated
+today, yesterday, three days ago, 1 March, July 2025 and January 2024 via `touch -t`), launched
+with `-LibraryRoot`. The human's own instance was running on the real library throughout, so
+this one also took `-GlobalHotKeyKeyCode 45 -GlobalHotKeyModifiers 1310720` (the default
+Ctrl-Cmd-N in the argument domain) to keep the two hotkeys apart, and the defaults domain was
+exported before and re-imported afterwards. System Events cannot tell two processes of one name
+apart, so the window was read and driven through the AX API by pid (`AXUIElementCreateApplication`,
+`CGEvent.postToPid`, the HID tap for the hotkey, a `rapp` Apple event for the Dock click).
+Screen capture is not granted to the terminal, so what has to be seen rather than read was
+checked in the V-1 snapshots the smoke tests write (`build/snapshots/{eviction-bar,note-list,
+editor-fonts,settings}-light.png`). Scope: the eleven IDs M6.1 to M6.8 cite. Every other ID
+stands as recorded in the M5.6 and v0.1.0 passes.
+
+Summary: 11 IDs; 7 pass, 1 fail (M7.4, already planned), 3 n/a by hand.
+
+| ID   | Result | Notes |
+|------|--------|-------|
+| L-7  | n/a by hand | Needs an evicted file in an iCloud container; `NoteStoreTests` and `DownloadRequestSmokeTests` cover it with the injected availability probe. |
+| L-9  | n/a by hand | Same: no dataless note can be fabricated outside iCloud. `DownloadRequesterTests` (once per note per 60 s, repeat on re-eviction) and `DownloadRequestSmokeTests` (after scan and after every watcher batch) cover it. |
+| L-10 | n/a by hand | Same. The `eviction-bar` snapshot shows the bar directly under the search field reading "2 notes not downloaded from iCloud. Search is incomplete. · 985 MB free" with an Open Storage Settings button; `EvictionBarSmokeTests` covers the transitions and the 2 GB threshold. |
+| S-9  | pass | Rows read `Today 11:56`, `Yesterday 11:56`, `Sat` (three days ago), `1 Mar`, `15 Jul 2025`, `2 Jan 2024`; 24-hour time from the en_GB locale. Refresh on day change and key window is not waitable by hand; `NoteListSmokeTests` drives both. |
+| S-10 | pass | At 925 pt the date labels are 65, 85, 20, 31, 63 and 62 pt wide (their intrinsic widths); at 400 pt they keep those widths and the title labels shrink from 815 to 290 pt. The `note-list` snapshot shows the title ending in an ellipsis with the date whole at the right. |
+| E-2  | pass | AX runs: `# Hub` in `.SFNS-Bold 13`, links in the link colour (0.00/0.41/0.85), `#idea` purple, inline and fenced code in the secondary colour, everything else the base font at the same size; the file was unchanged by styling. |
+| E-8  | pass | Prose `.AppleSystemUIFont 13`, code `.AppleSystemUIFontMonospaced-Regular 13`. Cmd-plus went to 14 (`EditorFontSize` 14 in the domain), Cmd-minus back to 13, Cmd-0 from 15 to 13; thirty Cmd-plus stopped at 36 and forty Cmd-minus at 9; View › Bigger, Smaller and Actual Size did the same. An `EditorFontFamily = Menlo` written before launch was gone once the app was up. |
+| W-3  | pass | With the Finder active and `hub` in the field, Ctrl-Cmd-N activated the app, showed the window and focused the field with `hub` selected; a second press hid the window (process alive); a third showed it again with the query intact. No Accessibility prompt. |
+| W-4  | pass | Cmd-W and the close button each ordered the window out with the process still running; a reopen event (what the Dock click sends) brought it back with focus still in the field. Text typed into `Hub` followed by Cmd-Q at once: the process was gone within 100 ms and the file held the text. |
+| W-5  | pass | The main window is at CG layer 3 (`.floating`) and stayed on screen and above the Finder's, Safari's and Calendar's windows while the Finder was active. The `[[` completion panel (layer 4) and the Settings window (layer 4) both sit above it. Following the active Space is not observable by hand; `WindowLevelSmokeTests` asserts `moveToActiveSpace`. |
+| PR-1 | **fail** (M7.4) | Cmd-comma opens it: fixed size (AXSize not settable, zoom and minimize disabled), no toolbar, one `NSGridView` with right-aligned captions, a Choose… button and the hotkey recorder, and the font controls M6.6 removed are gone. But the window and its title bar read `Preferences`, not `Settings`, and the captions are `Library folder:` and `Global hotkey:` where PR-1 says `Notes folder` and `Global shortcut`. M7.4 already carries the retitle. |
+
+Observation outside the spec: after the hotkey hides the window the app is no longer the active
+application (AppKit deactivates an app with no windows on screen), so the next press takes the
+"show" branch as W-3 intends; nothing in the spec says which app should be active afterwards.
+
 ## Release pass of 2026-09-07 (M5.7, `v0.1.0`)
 
 Build: `scripts/bundle.sh` at commit 96d28d4 (M5.6e); the plist reports 0.1.0 and the bundle
@@ -193,5 +229,10 @@ which passes.
 2. Drive the window with `osascript` System Events (`keystroke`, `key code`, the table's rows,
    the editor's `AXValue`) and read styling with `AXAttributedStringForRange` on the editor.
    Read files with `cat`/`stat` to confirm what the app wrote.
-3. Record every ID here, quit the app (Cmd-W is W-4), and remove
+3. Record every ID here, quit the app (Cmd-Q; since v2 Cmd-W only hides, W-4), and remove
    `defaults delete dev.laurenkt.mdnotes` if the pass launched without `-LibraryRoot`.
+4. If another MDNotes is already running (the human's, on the real library), System Events
+   resolves both by name and picks the wrong one: drive the pass instance through the AX API
+   by pid instead, give it its own hotkey in the argument domain (`-GlobalHotKeyKeyCode`,
+   `-GlobalHotKeyModifiers`) so the two do not fight over one combination, and export the
+   defaults domain first (`defaults export`) so it can be put back afterwards instead of deleted.

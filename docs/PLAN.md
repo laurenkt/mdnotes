@@ -167,7 +167,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       and focuses search; Cmd-W and the close button hide; Dock click reopens
       (`applicationShouldHandleReopen`); `applicationShouldTerminateAfterLastWindowClosed`
       false. Smoke tests drive `fire()` twice and assert visibility, then reopen.
-- [ ] M6.9 Manual acceptance pass for M6 against `docs/ACCEPTANCE.md` (append a v2 section, one
+- [x] M6.9 Manual acceptance pass for M6 against `docs/ACCEPTANCE.md` (append a v2 section, one
       line per changed spec ID); discrepancies become tasks above this line.
 
 ## M7: Window and Settings redesign
