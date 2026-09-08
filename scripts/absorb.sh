@@ -18,6 +18,10 @@ fi
 
 merged=0
 for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | grep -vx main); do
+    # Already absorbed: nothing new on the branch since it was merged.
+    if git merge-base --is-ancestor "$b" main; then
+        continue
+    fi
     base=$(git merge-base main "$b")
     build_paths=$(git diff --name-only "$base" "$b" | grep -E '^(Sources/|Tests/|Package\.swift|Resources/)' || true)
     if [ -n "$build_paths" ]; then
@@ -25,11 +29,14 @@ for b in $(git for-each-ref --format='%(refname:short)' refs/heads/ | grep -vx m
         continue
     fi
     if git merge --no-edit -m "absorb: $b" "$b" >/dev/null 2>&1; then
-        git branch -D "$b" >/dev/null
-        wt=$(git worktree list --porcelain | awk -v b="refs/heads/$b" '$1=="worktree"{w=$2} $1=="branch" && $2==b {print w}')
-        [ -n "$wt" ] && git worktree remove --force "$wt" >/dev/null 2>&1 || true
         echo "absorb: merged $b"
         merged=$((merged + 1))
+        # A branch with a worktree may still have a session open in it: keep both. A bare
+        # branch has served its purpose.
+        wt=$(git worktree list --porcelain | awk -v b="refs/heads/$b" '$1=="worktree"{w=$2} $1=="branch" && $2==b {print w}')
+        if [ -z "$wt" ]; then
+            git branch -d "$b" >/dev/null 2>&1 && echo "absorb: deleted $b"
+        fi
     else
         git merge --abort >/dev/null 2>&1 || true
         echo "absorb: conflict merging $b; left for a human" >&2
