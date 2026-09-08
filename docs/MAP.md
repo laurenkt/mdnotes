@@ -119,7 +119,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/LinkCompletionSmokeTests.swift` — the `[[` popover driven by real key events (K-4).
 - `Tests/MDNotesAppTests/TagCompletionSmokeTests.swift` — the `#` popover and click-to-search on a tag (T-3, T-4).
 - `Tests/MDNotesAppTests/LinkOpeningSmokeTests.swift` — Cmd-Return and Cmd-click opening the link under the caret/pointer (K-3).
-- `Tests/MDNotesAppTests/BacklinksSmokeTests.swift` — backlinks strip contents, click-to-open, hide/collapse (K-6).
+- `Tests/MDNotesAppTests/BacklinksSmokeTests.swift` — backlinks strip contents, click-to-open, hide/collapse, the title-button cap (K-6, PF-6).
 - `Tests/MDNotesAppTests/LinkRewriteSmokeTests.swift` — a committed rename rewriting links on disk atomically (R-3).
 - `Tests/MDNotesAppTests/ImageInsertSmokeTests.swift` — paste/drop writing under `i/` and embedding at the caret (I-1, I-2).
 - `Tests/MDNotesAppTests/ExternalEditSmokeTests.swift` — disk changes behind the app's back arriving via the real watcher (X-2, X-3, X-4).
@@ -130,6 +130,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesAppTests/LaunchPerfTests.swift` — cold launch to interactive through the real `applicationDidFinishLaunching` (PF-1).
 - `Tests/MDNotesAppTests/ListPerfTests.swift` — keystroke, query, reload, visible-row layout over 20k notes (PF-2).
 - `Tests/MDNotesAppTests/EditorPerfTests.swift` — keystroke, paragraph restyle, redraw in a 1 MB note (PF-3, E-3).
+- `Tests/MDNotesAppTests/BacklinksPerfTests.swift` — `BacklinksStrip.show` with 2,000 backlinks, expanded and collapsed, warm-up plus median in release (K-6, PF-6).
 
 ## Where things happen
 
@@ -146,4 +147,4 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - Menus: `Sources/MDNotesApp/MainMenu.swift`; item enablement via `MainWindowController.validateMenuItem`; app-level items in `AppDelegate.swift`.
 - Images and embeds: `Sources/MDNotesApp/ImagePasteboard.swift` (decode off-main), `LibraryController.storeImage`, `Core/ImageStore.swift`; resolution via `LibraryController.locateEmbed`. Thumbnails: none yet (M8).
 - iCloud download status: `Core/NoteStore.isDownloaded`/`isAvailable`, `Core/DownloadRequester.swift`, `LibraryController.EvictionStatus`, `EvictionBar.swift` / `ReadOnlyNoticeBar.swift`.
-- Perf tests and budgets: budgets in `Sources/MDNotesTestSupport/PerfGate.swift`; fixtures in `SyntheticLibrary.swift`; gates in `Tests/MDNotesCoreTests/IndexPerfTests.swift`, `IndexMemoryPerfTests.swift`, `Tests/MDNotesAppTests/LaunchPerfTests.swift`, `ListPerfTests.swift`, `EditorPerfTests.swift`.
+- Perf tests and budgets: budgets in `Sources/MDNotesTestSupport/PerfGate.swift`; fixtures in `SyntheticLibrary.swift`; gates in `Tests/MDNotesCoreTests/IndexPerfTests.swift`, `IndexMemoryPerfTests.swift`, `Tests/MDNotesAppTests/LaunchPerfTests.swift`, `ListPerfTests.swift`, `EditorPerfTests.swift`, `BacklinksPerfTests.swift`.

@@ -42,6 +42,11 @@ public final class BacklinksStrip: NSView {
     /// the buttons unbuilt and this set, and expanding builds them.
     private var titlesAreStale = false
 
+    /// Title buttons built earlier and not in the stack, waiting to be re-titled. Making an
+    /// `NSButton` costs close to a millisecond; re-titling one costs next to nothing, so the
+    /// strip keeps the ones it has made, at most `maxTitleButtons` of them (PF-6, I-3).
+    private var spareTitleButtons: [NSButton] = []
+
     /// Called with the note whose title was clicked. Installed by the window controller.
     public var onOpen: (@MainActor (NoteID) -> Void)?
 
@@ -114,15 +119,28 @@ public final class BacklinksStrip: NSView {
         updateSummary()
     }
 
-    /// Replaces the title buttons with one per backlink up to `maxTitleButtons`.
+    /// Makes the title buttons one per backlink up to `maxTitleButtons`, re-titling the buttons
+    /// the stack already holds and the spares before making any, and handing the stack the
+    /// whole set in one `setViews` rather than a view at a time.
     private func rebuildTitleButtons() {
-        removeTitleButtons()
-        for (offset, id) in backlinks.prefix(Self.maxTitleButtons).enumerated() {
-            let button = Self.makeTitleButton(for: id)
+        let wanted = Array(backlinks.prefix(Self.maxTitleButtons))
+        var buttons = titleButtons
+        if buttons.count > wanted.count {
+            spareTitleButtons.append(contentsOf: buttons[wanted.count...])
+            buttons.removeLast(buttons.count - wanted.count)
+        }
+        while buttons.count < wanted.count {
+            buttons.append(spareTitleButtons.popLast() ?? makeTitleButton())
+        }
+        for (offset, (button, id)) in zip(buttons, wanted).enumerated() {
+            button.title = id.title
+            button.toolTip = id.relativePath
             button.tag = offset
-            button.target = self
-            button.action = #selector(titleClicked(_:))
-            titlesStack.addView(button, in: .leading)
+        }
+        if !titlesStack.views.elementsEqual(buttons, by: ===) {
+            titlesStack.setViews(buttons, in: .leading)
+        }
+        for (offset, button) in buttons.enumerated() {
             // Titles past the bar's width drop from the end first, never the beginning.
             let priority = max(Float(NSStackView.VisibilityPriority.notVisible.rawValue) + 1, 900 - Float(offset))
             titlesStack.setVisibilityPriority(NSStackView.VisibilityPriority(rawValue: priority), for: button)
@@ -130,8 +148,10 @@ public final class BacklinksStrip: NSView {
         titlesAreStale = false
     }
 
+    /// Takes every title button out of the stack and keeps it as a spare.
     private func removeTitleButtons() {
-        for view in titlesStack.views { titlesStack.removeView(view) }
+        spareTitleButtons.append(contentsOf: titleButtons)
+        titlesStack.setViews([], in: .leading)
     }
 
     @objc private func titleClicked(_ sender: NSButton) {
@@ -207,12 +227,12 @@ public final class BacklinksStrip: NSView {
         return stack
     }
 
-    private static func makeTitleButton(for id: NoteID) -> NSButton {
-        let button = NSButton(title: id.title, target: nil, action: nil)
+    /// A title button with no title yet; `rebuildTitleButtons` gives it its note.
+    private func makeTitleButton() -> NSButton {
+        let button = NSButton(title: "", target: self, action: #selector(titleClicked(_:)))
         button.isBordered = false
         button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         button.contentTintColor = .linkColor
-        button.toolTip = id.relativePath
         button.lineBreakMode = .byTruncatingTail
         button.translatesAutoresizingMaskIntoConstraints = false
         return button

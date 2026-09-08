@@ -16,6 +16,10 @@ public enum PerfGate {
         public static let fullIndex20k: Double = 2000
         /// PF-5: resident memory after a full index of 20k notes. Megabytes.
         public static let memoryAfterIndex20kMB: Double = 200
+        /// The main thread's share of K-6 under PF-6: `BacklinksStrip.show` with 2,000 backlinks
+        /// (buttons for the first `maxTitleButtons` only). Not a spec table row; the number the
+        /// debug smoke test asserted before the gate moved here (I-3).
+        public static let backlinksShow2k: Double = 25
     }
 
     /// Note count the budgets are measured against.

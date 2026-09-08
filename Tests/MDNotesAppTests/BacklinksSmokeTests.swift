@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import MDNotesApp
 import MDNotesCore
-import MDNotesTestSupport
 import XCTest
 
 /// Headless smoke tests for the backlinks strip (K-6): the bar below the editor lists the
@@ -188,28 +187,26 @@ final class BacklinksSmokeTests: XCTestCase {
         XCTAssertTrue(strip.titlesStack.detachedViews.isEmpty)
     }
 
-    // MARK: K-6, PF-6 the strip stays cheap for any number of backlinks
+    // MARK: K-6, PF-6 the strip's work is bounded for any number of backlinks
 
     /// A note with thousands of backlinks (a daily-notes hub, say) must not stall the main
     /// thread: `show` builds a button for the first `maxTitleButtons` only and puts the count
-    /// in the summary. The budget is loose for a debug build; the fault this guards against was
-    /// seconds, not milliseconds.
-    func testK6_PF6_showWithThousandsOfBacklinksBuildsOnlyTheCapAndStaysCheap() throws {
+    /// in the summary. This checks the bound; how long the bounded work takes is a release
+    /// gate in `BacklinksPerfTests` (ADR-0007, I-3).
+    func testK6_PF6_showWithThousandsOfBacklinksBuildsOnlyTheCap() throws {
         let (window, strip) = try makeWindowedStrip(width: 800)
         defer { window.close() }
         let content = try XCTUnwrap(window.contentView)
         let cap = BacklinksStrip.maxTitleButtons
         XCTAssertLessThanOrEqual(cap, 20, "a small fixed cap")
         let lists = (0..<5).map { run in (0..<2_000).map { NoteID(relativePath: "hub/run\(run)/Note \($0).md") } }
-        var runs = lists.makeIterator()
 
         var opened: [NoteID] = []
         strip.onOpen = { opened.append($0) }
-        let median = PerfGate.medianMilliseconds(iterations: lists.count) {
-            guard let notes = runs.next() else { return XCTFail("ran out of lists") }
+        for notes in lists {
             strip.show(notes)
+            XCTAssertEqual(strip.titleButtons.count, cap, "never more than the cap, list after list")
         }
-        XCTAssertLessThan(median, 25, "show with 2,000 backlinks took \(String(format: "%.2f", median)) ms")
 
         let last = try XCTUnwrap(lists.last)
         XCTAssertFalse(strip.isHidden)
@@ -243,8 +240,7 @@ final class BacklinksSmokeTests: XCTestCase {
         let few = (0..<3).map { NoteID(relativePath: "few/Note \($0).md") }
 
         strip.setCollapsed(true)
-        let median = PerfGate.medianMilliseconds(iterations: 3) { strip.show(many) }
-        XCTAssertLessThan(median, 25, "show while collapsed took \(String(format: "%.2f", median)) ms")
+        strip.show(many)
         XCTAssertFalse(strip.isHidden)
         XCTAssertEqual(strip.backlinks, many)
         XCTAssertEqual(strip.titleButtons, [], "no titles behind the count")
