@@ -124,7 +124,7 @@ final class NoteListSmokeTests: XCTestCase {
 
         XCTAssertEqual(try rowView(controller, 0).titleLabel.stringValue, "Gamma")
         XCTAssertEqual(try rowView(controller, 0).snippetLabel.stringValue, "", "empty body, empty snippet")
-        XCTAssertEqual(try rowView(controller, 2).snippetLabel.stringValue, "# Alpha First line of alpha. Second line.")
+        XCTAssertEqual(try rowView(controller, 2).snippetLabel.stringValue, "Alpha First line of alpha. Second line.")
 
         // The three labels sit inside the row, date at the trailing edge, snippet below the title.
         row.layoutSubtreeIfNeeded()

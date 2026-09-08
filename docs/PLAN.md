@@ -179,7 +179,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `windowBackgroundColor` strip, hairline `separatorColor` beneath, list, split, editor,
       backlinks. Remove any non-semantic colours. Smoke test asserts frames and insets;
       snapshot inspected against direction B on the canvas.
-- [ ] M7.3 Snippets strip markdown (S-6): `BodySnippet` drops heading markers, wikilink
+- [x] M7.3 Snippets strip markdown (S-6): `BodySnippet` drops heading markers, wikilink
       brackets and labels' pipes, embed syntax entirely, code fences, emphasis markers. Tests
       for each construct and for PF-2 unaffected (snippet work stays in the index build).
 - [ ] M7.4 Settings window per PR-1: title `Settings`, `Settings…` Cmd-comma, fixed size,
