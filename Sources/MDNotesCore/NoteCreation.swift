@@ -80,17 +80,19 @@ extension NoteStore {
         public let created: Bool
     }
 
-    /// Creates the empty file backing `id`, making any missing folders on the way (C-2). The
-    /// write is atomic (E-5). An existing file is never overwritten, a case variant of the name
-    /// on a case-insensitive volume included: it is left as it is and `created` is false.
-    /// Synchronous file I/O: call it off the main thread (PF-6).
-    public func create(_ id: NoteID) throws -> Creation {
+    /// Creates the file backing `id` holding `body`, empty for a note made from the search
+    /// field (C-2) and a template's expanded body for one made from a template (TP-4), making
+    /// any missing folders on the way. The write is atomic (E-5). An existing file is never
+    /// overwritten, a case variant of the name on a case-insensitive volume included: it is
+    /// left as it is and `created` is false. Synchronous file I/O: call it off the main thread
+    /// (PF-6).
+    public func create(_ id: NoteID, body: String = "") throws -> Creation {
         let url = self.url(for: id)
         if FileManager.default.fileExists(atPath: url.path) {
             return Creation(modifiedAt: try NoteStore.modificationDate(at: url), created: false)
         }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let modifiedAt = try AtomicWriter().write("", to: url)
+        let modifiedAt = try AtomicWriter().write(body, to: url)
         return Creation(modifiedAt: modifiedAt, created: true)
     }
 }

@@ -475,32 +475,70 @@ public final class LibraryController {
     /// stopped or restarted before the write lands, `completion` is never called.
     public func create(_ id: NoteID, completion: @escaping @MainActor (Result<NoteStore.Creation, any Error>) -> Void) {
         let generation = generation
-        let store = store
         queue.async { [self] in
             guard worker.isCurrent(generation) else { return }
-            let outcome: Result<NoteStore.Creation, any Error>
-            do {
-                let creation = try writes.sync {
-                    let creation = try store.create(id)
-                    if creation.created { ownWrites.record(id, modifiedAt: creation.modifiedAt) }
-                    return creation
+            let outcome = Result { try createOnQueue(id, body: "", generation: generation) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard generation == self.generation else { return }
+                    completion(outcome)
                 }
-                let changes = LibraryChanges(added: [id])
-                let (index, phase, _) = worker.update { state in
-                    state.touchedSinceScan.insert(id)
-                    if creation.created {
-                        // The body is known to be empty; no need to read the file back.
-                        state.index = state.index.applying(changes: changes) { _ in
-                            (modifiedAt: creation.modifiedAt, body: "")
-                        }
-                    } else {
-                        state.index = state.index.applying(changes: changes, store: store)
-                    }
+            }
+        }
+    }
+
+    /// The disk and snapshot half of `create` and `instantiate`, on the queue: writes the file
+    /// unless it exists, records the write (E-6), folds the note into the snapshot without
+    /// rereading a file we just wrote, and publishes.
+    nonisolated private func createOnQueue(_ id: NoteID, body: String, generation: Int) throws -> NoteStore.Creation {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let store = store
+        let creation = try writes.sync {
+            let creation = try store.create(id, body: body)
+            if creation.created { ownWrites.record(id, modifiedAt: creation.modifiedAt) }
+            return creation
+        }
+        let changes = LibraryChanges(added: [id])
+        let images = ImageStore(root: root)
+        let (index, phase, _) = worker.update { state in
+            state.touchedSinceScan.insert(id)
+            if creation.created {
+                // The body is what was just written; no need to read the file back.
+                state.index = state.index.applying(changes: changes, images: images) { _ in
+                    (modifiedAt: creation.modifiedAt, body: body)
                 }
-                publish(index, phase: phase, generation: generation)
-                outcome = .success(creation)
-            } catch {
-                outcome = .failure(error)
+            } else {
+                state.index = state.index.applying(changes: changes, store: store)
+            }
+        }
+        publish(index, phase: phase, generation: generation)
+        return creation
+    }
+
+    // MARK: - Templates: instantiation (TP-4)
+
+    /// Reads the template called `name` on the background queue (PF-6), expands it for
+    /// `title` (TP-3) and creates or opens the note its path names (TP-4): an existing file
+    /// is left untouched and reported as found; otherwise the folders are made and the file
+    /// written with the expanded body, then folded into the snapshot and published like
+    /// `create` does. `completion` runs on the main thread once the snapshot lists the note.
+    /// A template that does not parse (TP-2) or whose path breaks a C-3 rule fails with a
+    /// `TemplateInstantiation.Rejection`, whose `localizedDescription` is the inline message;
+    /// a template that cannot be read fails with the read error. `environment` is what the
+    /// date tokens are evaluated against; tests pin it. If the library is stopped or
+    /// restarted before the write lands, `completion` is never called.
+    public func instantiate(
+        templateNamed name: String, title: String, in environment: TemplateParser.Environment = .init(),
+        completion: @escaping @MainActor (Result<TemplateInstantiation.Outcome, any Error>) -> Void
+    ) {
+        let generation = generation
+        let templates = templates
+        queue.async { [self] in
+            guard worker.isCurrent(generation) else { return }
+            let outcome = Result { () throws -> TemplateInstantiation.Outcome in
+                let plan = try TemplateInstantiation.plan(try templates.read(name), title: title, in: environment)
+                let creation = try createOnQueue(plan.id, body: plan.body.text, generation: generation)
+                return TemplateInstantiation.Outcome(plan: plan, creation: creation)
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {

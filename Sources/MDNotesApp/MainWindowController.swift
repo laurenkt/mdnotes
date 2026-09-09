@@ -114,6 +114,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// was opened or created, or nil when the query was rejected or the write failed.
     public var onCommitQuery: (@MainActor (NoteID?) -> Void)?
 
+    /// Called on the main thread once `instantiateTemplate(named:title:in:)` has settled
+    /// (TP-4): with the note that was created or opened, or nil when the template was refused
+    /// or the write failed.
+    public var onInstantiateTemplate: (@MainActor (NoteID?) -> Void)?
+
     /// Called on the main thread once opening a link (K-3) has settled: with the link's target
     /// and the note that was opened or created for it, or nil when the target could not name a
     /// note or the write failed. Not called for an embed, which is not a note (K-1); that is
@@ -358,6 +363,36 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             if titleMatch == nil, CaseFolding.areEqual(entry.id.title, text) { titleMatch = entry.id }
         }
         return titleMatch
+    }
+
+    // MARK: - Templates: instantiation (TP-4)
+
+    /// Creates or opens the note the template called `name` names for `title` (TP-4): the
+    /// template is read and expanded off the main thread, an existing `<path>.md` is opened
+    /// and nothing written, otherwise the file is written with the expanded body and its
+    /// folders made. Either way the note is then opened and the editor focused, with the
+    /// caret at the body's `{{cursor}}`, or at the end, when the file was created. A template
+    /// that does not parse (TP-2), whose expanded path breaks a C-3 rule, or whose file cannot
+    /// be read or written shows the reason under the search field and creates nothing. Does
+    /// nothing without a library. `onInstantiateTemplate` reports the outcome. `environment`
+    /// is what the date tokens see; tests pin it.
+    public func instantiateTemplate(
+        named name: String, title: String, in environment: TemplateParser.Environment = .init()
+    ) {
+        guard let library else { return }
+        hideInlineMessage()
+        library.instantiate(templateNamed: name, title: title, in: environment) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .success(let result):
+                open(result.id)
+                if let offset = result.cursorOffset { editorController.placeCaret(at: offset, in: result.id) }
+                onInstantiateTemplate?(result.id)
+            case .failure(let error):
+                showInlineMessage(error.localizedDescription)
+                onInstantiateTemplate?(nil)
+            }
+        }
     }
 
     /// Selects `id` in the list, which loads it into the editor (S-8), and focuses the editor.

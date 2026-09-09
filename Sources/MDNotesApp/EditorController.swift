@@ -122,6 +122,9 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     /// Bumped by every `load` and `clear`; a read or write result tagged with an older value
     /// is dropped.
     private var generation = 0
+    /// `placeCaret(at:in:)` for a note whose load has not landed yet (TP-4): the note and the
+    /// UTF-16 file offset the caret goes to once it has.
+    private var pendingCaret: (id: NoteID, offset: Int)?
 
     /// The undo stack of one note (E-7), kept for the session.
     @MainActor
@@ -484,7 +487,24 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         leaveShownNote()
         noteID = id
         self.library = library
+        if pendingCaret?.id != id { pendingCaret = nil }
         read(id, from: library, restoring: nil)
+    }
+
+    /// TP-4: puts the caret at `offset`, a UTF-16 offset into `id`'s file text, clamped to it.
+    /// Applied at once when the editor already shows `id`; otherwise remembered and applied
+    /// when the load of `id` in flight lands, in place of the start of the text. Forgotten by
+    /// a load of another note or a `clear()`.
+    public func placeCaret(at offset: Int, in id: NoteID) {
+        if noteID == id, body != nil {
+            let fileText = editorText
+            let range = fileText.storageRange(
+                forFileRange: Self.clamp(NSRange(location: offset, length: 0), to: fileText.string))
+            textView.setSelectedRange(range)
+            textView.scrollRangeToVisible(range)
+        } else {
+            pendingCaret = (id, offset)
+        }
     }
 
     /// X-2: the shown note changed on disk and the editor has no unsaved edits, so the file is
@@ -525,6 +545,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         noteID = nil
         body = nil
         library = nil
+        pendingCaret = nil
         thumbnails.reset()
         replaceText(with: "")
         textView.isEditable = false
@@ -570,6 +591,13 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         replaceText(with: text)
         textView.isEditable = body?.isWritable ?? false
         setReadOnlyNotice(Self.readOnlyNotice(for: body))
+        var selection = selection
+        if let pendingCaret {
+            // TP-4: the caret a template asked for lands with the note's first load; the
+            // storage holds the file's text at this point, so the file offset is the storage's.
+            if pendingCaret.id == id, selection == nil { selection = NSRange(location: pendingCaret.offset, length: 0) }
+            self.pendingCaret = nil
+        }
         let range = Self.clamp(selection ?? NSRange(location: 0, length: 0), to: text)
         textView.setSelectedRange(range)
         textView.scrollRangeToVisible(range)
