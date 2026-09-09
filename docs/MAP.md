@@ -31,6 +31,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesCore/TagCompletion.swift` — same rules for the `#` popover (T-3). `TagCompletion.anchor`, `filterText`, `tags(withPrefix:in:)`, `insertion`.
 - `Sources/MDNotesCore/NoteCreation.swift` — query text to note to create, or a typed rejection (C-2/C-3). `NoteCreation.noteID(forQuery:)`, `Rejection`, `NoteStore.create`.
 - `Sources/MDNotesCore/NoteRename.swift` — edited title to renamed id or rejection, plus collision check (R-2). `NoteRename.noteID(renaming:toTitle:)`, `collision`, `NoteStore.rename`.
+- `Sources/MDNotesCore/TemplateParser.swift` — template header block and `path` to `Template` or a typed rejection (TP-2); `{{date:FORMAT}}` (Unicode pattern via `DateFormatter`), `{{title}}`, `{{cursor}}` expansion with unknown tokens literal (TP-3). `TemplateParser.parse`, `expandPath`, `expandBody` (UTF-16 `cursorOffset`), `Template.pathNeedsTitle`, `Environment` (date, zone, locale for tests), `Rejection`.
 - `Sources/MDNotesCore/LinkRewrite.swift` — pure plan for rewriting wikilinks after a rename (R-3). `LinkRewrite.plan`, `rewriting(_:replacing:)`, `Replacements`.
 - `Sources/MDNotesCore/ImageStore.swift` — where pasted/dropped images go under `i/`, which file an embed names (I-1, I-2), and a body's first embed that resolves to an existing image file (S-11). `ImageStore.write`, `url(forEmbed:)`, `relativePath(forEmbed:)`, `candidatePaths(forEmbed:)`, `firstImage(in:)`, `isImageFile`, `fileName`, `Failure`.
 
@@ -91,6 +92,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesCoreTests/TagCompletionTests.swift` — `#` session opening, prefix filtering, candidate tags (T-3).
 - `Tests/MDNotesCoreTests/NoteCreationTests.swift` — query to note id, rejections, and `NoteStore.create` writing folders (C-2, C-3).
 - `Tests/MDNotesCoreTests/NoteRenameTests.swift` — title to renamed id, rejections, and renames that never overwrite (R-2).
+- `Tests/MDNotesCoreTests/TemplateParserTests.swift` — header block, `path`, missing/unclosed header and missing path rejections (TP-2); each token in path and body, date patterns, time zone and locale pinned, cursor removal and UTF-16 offset, unknown tokens literal (TP-3).
 - `Tests/MDNotesCoreTests/LinkRewriteTests.swift` — which links a rename must rewrite and how one body is rewritten (R-3).
 - `Tests/MDNotesCoreTests/ImageStoreTests.swift` — image file naming under `i/` and embed-to-file lookup (I-1, I-2).
 - `Tests/MDNotesCoreTests/FirstImageTests.swift` — first-image resolution: none, one, first of several, unresolvable, skipped code, image-by-extension; stored on the snapshot by build and by disk/memory updates; re-resolved without a reread when an image file arrives or goes (S-11, K-1, X-1).

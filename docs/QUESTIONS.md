@@ -62,3 +62,20 @@ Options:
 Answer: Option 1 (2026-09-08). They were the harness session's orchestrator scripts, written
   while the loop was running; that session committed them itself. Leaving them alone and
   recording this was the right call. No task is affected.
+
+## Q3: TP-3's example date letters (`YYYY`, `DD`, `dddd`) are not what a Unicode pattern means by them; which should the spec say?   (task: M9.1, 2026-09-09)
+Context: TP-3 says FORMAT is a Unicode date format pattern, and M9.1 says it is handed to
+`DateFormatter`; M9.1 implements exactly that (`TemplateParser`). But the letters TP-3 lists
+as examples, and the TP-8 daily path `daily/{{date:YYYY}}/{{date:MM-MMMM}}/{{date:DD-dddd}}`,
+read as moment.js-style tokens: under Unicode `YYYY` is the week-based year (differs from the
+calendar year around New Year), `DD` is the day of the year (`252` on 9 September) and `dddd`
+is the day of the month padded to four digits (`0009`), so TP-8 as written yields
+`daily/2026/09-September/252-0009` rather than `.../09-Wednesday`. The Unicode spelling of the
+intended path is `daily/{{date:yyyy}}/{{date:MM-MMMM}}/{{date:dd-EEEE}}`, which works today.
+Not blocking: the mechanism is decided in two places and shipped; only the examples are off.
+Options: (1) keep Unicode patterns and correct the examples in TP-3 and TP-8 to `yyyy`, `MM`,
+`MMMM`, `dd`, `EEEE`, `HH`, `mm` (a docs fix, no ADR needed for behaviour); (2) add
+moment-style aliases (`YYYY`→`yyyy`, `DD`→`dd`, `dddd`→`EEEE`) on top of Unicode via an ADR,
+which makes `YYYY` and `DD` unreachable in their Unicode meaning and mixes two grammars.
+Recommendation: option 1.
+Answer:
