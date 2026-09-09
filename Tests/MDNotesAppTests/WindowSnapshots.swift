@@ -23,6 +23,9 @@ extension XCTestCase {
             .appendingPathComponent("snapshots", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var written: [URL] = []
+        // A table applies a selection made on this run-loop turn to its row views on the next
+        // one; without this the first capture misses a highlight the second shows (I-9).
+        RunLoop.main.run(until: Date())
         for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             window.appearance = NSAppearance(named: appearance)
             view.layoutSubtreeIfNeeded()

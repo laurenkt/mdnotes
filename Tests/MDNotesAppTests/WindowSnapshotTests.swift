@@ -51,4 +51,38 @@ final class WindowSnapshotTests: XCTestCase {
         }
         XCTAssertNotEqual(corners[0], corners[1], "light and dark backgrounds differ")
     }
+
+    /// I-9: a row selected on the same run-loop turn as the capture is highlighted in both
+    /// files. The light capture came first and showed no band while the dark one, drawn after
+    /// the appearance change, did.
+    func testV1_aSelectionMadeJustBeforeTheCaptureShowsInBothAppearances() throws {
+        let controller = makeMainWindowController()
+        let window = try XCTUnwrap(controller.window)
+        window.setContentSize(NSSize(width: 480, height: 320))
+        controller.mainView.layoutSubtreeIfNeeded()
+        controller.listController.show(templates: [
+            NoteListController.TemplateRow(name: "one", snippet: "1"),
+            NoteListController.TemplateRow(name: "two", snippet: "2"),
+            NoteListController.TemplateRow(name: "three", snippet: "3"),
+        ])
+        let table = controller.mainView.tableView
+        let contentView = try XCTUnwrap(window.contentView)
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+
+        let written = try writeWindowSnapshots(of: controller, named: "selected-row")
+
+        // A pixel near the right edge of a row, clear of its text, in image coordinates.
+        func pixel(ofRow row: Int, in rep: NSBitmapImageRep) throws -> NSColor {
+            let rect = contentView.convert(table.rect(ofRow: row), from: table)
+            let x = Int((rect.maxX - 10) * 2)
+            let y = Int((contentView.bounds.height - rect.midY) * 2)
+            return try XCTUnwrap(rep.colorAt(x: x, y: y), "pixel at \(x),\(y)")
+        }
+        for url in written {
+            let rep = try XCTUnwrap(NSBitmapImageRep(data: try Data(contentsOf: url)), url.path)
+            let unselected = try pixel(ofRow: 0, in: rep)
+            let selected = try pixel(ofRow: 1, in: rep)
+            XCTAssertNotEqual(selected, unselected, "\(url.lastPathComponent) shows the selected row's band")
+        }
+    }
 }
