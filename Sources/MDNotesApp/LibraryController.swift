@@ -21,6 +21,10 @@ import Synchronization
 /// is folded into the snapshot like `apply(_:)` does, and is then reported through
 /// `onExternalChanges`.
 ///
+/// The templates (TP-1) are listed by name once the root has been walked and again after
+/// every batch that names one, so `templateNames` follows `templates/` on disk the way the
+/// snapshot follows the notes (TP-7). A template is never in the snapshot.
+///
 /// Evicted notes are asked for without anyone opening them (L-9, ADR-0009): after the scan
 /// `start()` makes, which is also the full rescan a restart makes, and after every watcher
 /// batch, `downloadRequester` runs one pass over every note in the library on its own queue
@@ -114,8 +118,23 @@ public final class LibraryController {
     /// process's own writes (E-6, X-1), after the snapshot reflecting them has been published.
     /// Never called for an autosave, a `create` or a `delete` of ours. Also called with a
     /// modification for each dataless note the eviction poll finds readable (L-7, L-10), and
-    /// with the image files that arrived, changed or went, ours included, in `images` (S-11).
+    /// with the image files that arrived, changed or went, ours included, in `images` (S-11),
+    /// and the templates that did in `templates` (TP-7).
     public var onExternalChanges: (@MainActor (LibraryChanges) -> Void)?
+
+    /// The `templates/` folder under the root (TP-1). Reads disk: use it off the main thread.
+    public let templates: TemplateStore
+
+    /// The templates by name, as `TemplateStore.names()` last listed them (TP-1): listed on
+    /// the background queue when `start()` has walked the root, and again after every batch,
+    /// the watcher's or `apply(_:)`'s, that names a template (TP-7). Empty before that and
+    /// after `stop()`. Replaced on the main thread.
+    public private(set) var templateNames: [String] = []
+
+    /// Called on the main thread after `templateNames` has been replaced, once per listing:
+    /// after a batch that only changed a template's contents too, with the same names, since
+    /// what the template would create may have changed (TP-2, TP-5).
+    public var onTemplateNamesChange: (@MainActor ([String]) -> Void)?
 
     /// How many notes are dataless, with the boot volume's free space while any are (L-10).
     /// Replaced on the main thread after each requester pass whose findings differ; `.none`
@@ -177,6 +196,7 @@ public final class LibraryController {
         self.freeSpace = freeSpace
         let store = availability.map { NoteStore(root: root, isAvailable: $0) } ?? NoteStore(root: root)
         self.store = store
+        templates = TemplateStore(root: root)
         downloadRequester = DownloadRequester(store: store, request: requestDownload)
         worker = Worker()
     }
@@ -193,6 +213,7 @@ public final class LibraryController {
         worker.reset(generation: generation)
         stopWatching()
         resetEvictionStatus()
+        resetTemplateNames()
 
         let root = root
         queue.async { [self] in
@@ -205,7 +226,8 @@ public final class LibraryController {
                 return
             }
             // The stream is live before the titles are published, so a change made while the
-            // bodies are still being read is not lost (X-1).
+            // bodies are still being read is not lost (X-1). The templates are listed after it
+            // for the same reason (TP-7).
             if watchesFileSystem {
                 startWatching(knownNotes: Set(titlesOnly.entries.map(\.id)), generation: generation)
             }
@@ -215,6 +237,7 @@ public final class LibraryController {
             let phase: Phase = notes.isEmpty ? .ready : .indexing(bodiesRead: 0, of: notes.count)
             worker.replace(titlesOnly, phase: phase)
             publish(titlesOnly, phase: phase, generation: generation)
+            listTemplates(generation: generation)
             requestDownloads(for: notes, generation: generation)
             enqueueBatch(of: notes, from: 0, generation: generation)
         }
@@ -228,17 +251,20 @@ public final class LibraryController {
         phase = .idle
         stopWatching()
         resetEvictionStatus()
+        resetTemplateNames()
     }
 
     /// Folds file-system changes into the index (X-1), reading only the notes named, and
-    /// publishes the result. Safe to call while the initial population is still running: a
-    /// batch never overwrites a note that a change has touched since the scan.
+    /// publishes the result; a batch that names a template has `templates/` listed again and
+    /// `templateNames` published (TP-7). Safe to call while the initial population is still
+    /// running: a batch never overwrites a note that a change has touched since the scan.
     public func apply(_ changes: LibraryChanges) {
         fold(changes, generation: generation)
     }
 
     /// `apply(_:)` for any thread, with the generation the changes belong to. Returns without
-    /// queueing anything when there is nothing to fold or the generation is stale.
+    /// queueing anything when there is nothing to fold or the generation is stale. The snapshot
+    /// is touched, and published, only when a note or an image changed.
     nonisolated private func fold(
         _ changes: LibraryChanges, generation: Int, then completion: (@Sendable () -> Void)? = nil
     ) {
@@ -246,15 +272,51 @@ public final class LibraryController {
         let store = store
         queue.async { [self] in
             guard worker.isCurrent(generation) else { return }
-            let (index, phase, _) = worker.update { state in
-                state.touchedSinceScan.formUnion(changes.added)
-                state.touchedSinceScan.formUnion(changes.modified)
-                state.touchedSinceScan.formUnion(changes.removed)
-                state.index = state.index.applying(changes: changes, store: store)
+            if changes.affectsIndex {
+                let (index, phase, _) = worker.update { state in
+                    state.touchedSinceScan.formUnion(changes.added)
+                    state.touchedSinceScan.formUnion(changes.modified)
+                    state.touchedSinceScan.formUnion(changes.removed)
+                    state.index = state.index.applying(changes: changes, store: store)
+                }
+                publish(index, phase: phase, generation: generation)
             }
-            publish(index, phase: phase, generation: generation)
+            if !changes.templates.isEmpty { listTemplates(generation: generation) }
             completion?()
         }
+    }
+
+    // MARK: - Templates (TP-1, TP-7)
+
+    /// Lists `templates/` on the calling queue and hands the names to the main thread, where
+    /// they are published unless `generation` is stale by then. A folder that cannot be listed
+    /// is reported on the log and leaves the names as they were.
+    nonisolated private func listTemplates(generation: Int) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let names: [String]
+        do {
+            names = try templates.names()
+        } catch {
+            log("could not list \(templates.directory.path): \(error)")
+            return
+        }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                guard generation == self.generation else { return }
+                self.publishTemplateNames(names)
+            }
+        }
+    }
+
+    private func publishTemplateNames(_ names: [String]) {
+        templateNames = names
+        onTemplateNamesChange?(names)
+    }
+
+    /// `start()` and `stop()`: no templates are known until the next listing says otherwise.
+    private func resetTemplateNames() {
+        guard !templateNames.isEmpty else { return }
+        publishTemplateNames([])
     }
 
     // MARK: - Watching (X-1, E-6)

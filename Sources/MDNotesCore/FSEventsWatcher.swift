@@ -13,7 +13,11 @@ import Synchronization
 /// under it. A dropped-events flag rescans the whole root and diffs it against the known notes.
 /// An image file (`ImageStore.isImageFile`) that appears, changes or vanishes is reported by
 /// its root-relative path in `images`, so the notes embedding it and the thumbnails of it can
-/// follow (S-11, E-9); other non-note files are ignored (L-6).
+/// follow (S-11, E-9); other non-note files are ignored (L-6). A template, a `.md` file directly
+/// inside `templates/`, is not a note either (TP-1): one that appears, changes or vanishes is
+/// reported by name in `templates`, and an event for the `templates/` folder itself, or for the
+/// root, has the folder listed again and its difference from the last listing reported the same
+/// way, so the template list follows the disk like the note list does (TP-7).
 ///
 /// A scan judges the disk as it is when the callback runs, which can be ahead of the stream: a
 /// note written after the folder event but before the callback is on disk for the scan, and its
@@ -50,6 +54,8 @@ public final class FSEventsWatcher: Sendable {
         /// Notes a scan reported, with the modification date it saw, until their own event
         /// arrives or they are reported again.
         var scanned: [NoteID: Date] = [:]
+        /// The templates as of the last listing of `templates/` (TP-7).
+        var templates: Set<String> = []
     }
 
     private let state: Mutex<State>
@@ -94,14 +100,22 @@ public final class FSEventsWatcher: Sendable {
         state.withLock { $0.known }
     }
 
+    /// The templates the watcher believes are in `templates/`: what `start()` listed, brought
+    /// up to date by every batch that touched the folder (TP-7). Exposed for tests.
+    public var knownTemplates: Set<String> {
+        state.withLock { $0.templates }
+    }
+
     /// Begins delivering changes that happen from now on. Throws if the stream cannot be created
     /// or started. Calling it while running does nothing.
     ///
     /// When no `knownNotes` were given, the root is walked here, synchronously, after the stream
     /// is live, so nothing slips between the walk and the first event; call it off the main
     /// thread in that case (PF-6). A note created during the walk is reported as modified rather
-    /// than added, which the index treats alike. FSEvents may also replay a change made just
-    /// before `start()` as the stream's first event; it is judged against the disk like any other.
+    /// than added, which the index treats alike. The `templates/` folder is listed here in every
+    /// case, one directory read, so its first change has something to be compared with (TP-7).
+    /// FSEvents may also replay a change made just before `start()` as the stream's first event;
+    /// it is judged against the disk like any other.
     public func start() throws {
         try state.withLock { state in
             if state.stream != 0 { return }
@@ -133,6 +147,8 @@ public final class FSEventsWatcher: Sendable {
             let scanned = (try? LibraryScanner.scan(root: root)) ?? []
             state.withLock { $0.known.formUnion(scanned.map(\.id)) }
         }
+        let templates = listTemplates()
+        state.withLock { $0.templates = templates }
     }
 
     /// Stops delivery. No callback runs after this returns. Calling it while stopped does nothing.
@@ -202,13 +218,14 @@ public final class FSEventsWatcher: Sendable {
     private func handle(_ events: [(path: String, flags: FSEventStreamEventFlags)]) {
         // Only this queue changes `known` and `scanned`, so reading them before the disk work
         // and writing after is consistent, and the lock is not held across file I/O.
-        let (known, scanned) = state.withLock { ($0.known, $0.scanned) }
-        let (changes, stillScanned) = fold(events, known: known, scanned: scanned)
+        let (known, scanned, templates) = state.withLock { ($0.known, $0.scanned, $0.templates) }
+        let (changes, stillScanned, templatesNow) = fold(events, known: known, scanned: scanned, templates: templates)
         state.withLock { state in
             state.known.formUnion(changes.added)
             state.known.formUnion(changes.modified)
             state.known.subtract(changes.removed)
             state.scanned = stillScanned
+            state.templates = templatesNow
         }
         if changes.isEmpty { return }
         handler(changes)
@@ -216,10 +233,12 @@ public final class FSEventsWatcher: Sendable {
 
     /// One batch of events as `LibraryChanges`, judged against `known` and the disk as it is now,
     /// plus the scan-reported notes still awaiting their own event: `scanned` less those this
-    /// batch settled, plus those this batch's scans reported.
+    /// batch settled, plus those this batch's scans reported, and the templates on disk now if
+    /// the batch touched `templates/`, else `templates` as given (TP-7).
     private func fold(
-        _ events: [(path: String, flags: FSEventStreamEventFlags)], known: Set<NoteID>, scanned: [NoteID: Date]
-    ) -> (LibraryChanges, [NoteID: Date]) {
+        _ events: [(path: String, flags: FSEventStreamEventFlags)], known: Set<NoteID>, scanned: [NoteID: Date],
+        templates: Set<String>
+    ) -> (LibraryChanges, [NoteID: Date], Set<String>) {
         var changes = LibraryChanges()
         var scanned = scanned
         var folders: [String: Bool] = [:]  // relative folder path -> whether events were dropped
@@ -261,11 +280,21 @@ public final class FSEventsWatcher: Sendable {
             for note in found where !before.contains(note.id) || dropped { scanned[note.id] = note.modifiedAt }
             for id in before.subtracting(present) { scanned[id] = nil }
         }
+        // An event for the `templates/` folder, or the root, has the folder listed again and
+        // compared with the last listing; a template file's event names it whatever happened.
+        // Either way the disk decides what the templates are now (TP-7).
+        var templatesTouched = folders[""] != nil || folders[TemplateStore.folderName] != nil
         for relative in files {
             if Self.isImagePath(relative) {
                 // Not a note (L-6): reported by path, whatever happened to it, for the embeds
                 // that name it (S-11, E-9).
                 changes.images.insert(relative)
+                continue
+            }
+            if let name = TemplateStore.name(forRelativePath: relative) {
+                // Not a note (TP-1): reported by name, whatever happened to it.
+                changes.templates.insert(name)
+                templatesTouched = true
                 continue
             }
             guard let id = LibraryScanner.noteID(forRelativePath: relative) else { continue }
@@ -289,7 +318,18 @@ public final class FSEventsWatcher: Sendable {
         // Disk is the authority: a note that exists now is not removed, whatever else was seen.
         changes.removed.subtract(changes.added)
         changes.removed.subtract(changes.modified)
-        return (changes, scanned)
+        var templates = templates
+        if templatesTouched {
+            let present = listTemplates()
+            changes.templates.formUnion(present.symmetricDifference(templates))
+            templates = present
+        }
+        return (changes, scanned, templates)
+    }
+
+    /// The templates on disk now, by name; none when the folder is missing or unreadable.
+    private func listTemplates() -> Set<String> {
+        Set((try? TemplateStore(root: root).names()) ?? [])
     }
 
     /// Whether the file at root-relative `relative` is an image an embed could name (S-11,

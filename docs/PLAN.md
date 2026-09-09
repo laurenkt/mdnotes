@@ -216,7 +216,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M9.1 `TemplateParser` in Core (TP-2, TP-3): header block, `path`, tokens `{{date:FORMAT}}`
       (Unicode patterns via `DateFormatter`), `{{title}}`, `{{cursor}}`; unknown tokens left
       literal. Tests for each token, missing header, missing path, cursor removal and offset.
-- [ ] M9.2 `TemplateStore` (TP-1, TP-7): lists `templates/*.md` by name, updated by the watcher.
+- [x] M9.2 `TemplateStore` (TP-1, TP-7): lists `templates/*.md` by name, updated by the watcher.
       Tests: add, remove, rename a template file.
 - [ ] M9.3 Instantiation (TP-4): expand path, apply C-3 checks, open-if-exists, else create with
       folders and expanded body, caret at cursor. Tests: existing path opens without writing,

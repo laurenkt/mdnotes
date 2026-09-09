@@ -1,9 +1,9 @@
 import Foundation
 
 /// A batch of file-system changes to a library, as the watcher reports them (X-1): note ids
-/// that were added, modified, or removed since the last snapshot, and the image files that
-/// arrived, changed or went. A rename is a removal of the old id plus an addition of the new
-/// one.
+/// that were added, modified, or removed since the last snapshot, the image files that
+/// arrived, changed or went, and the templates that did (TP-7). A rename is a removal of the
+/// old id plus an addition of the new one.
 public struct LibraryChanges: Hashable, Sendable {
     public var added: Set<NoteID>
     public var modified: Set<NoteID>
@@ -13,17 +13,27 @@ public struct LibraryChanges: Hashable, Sendable {
     /// reread or listed for it, but a note whose embed names it is re-resolved (S-11) and a
     /// thumbnail of it on show is refreshed (E-9).
     public var images: Set<String>
+    /// Names (`TemplateStore.name(forRelativePath:)`) of templates whose file arrived, changed
+    /// or went, whatever else they were before (TP-7). A template is not a note (TP-1): the
+    /// index ignores these, and the owner re-lists `templates/` when there are any.
+    public var templates: Set<String>
 
     public init(
-        added: Set<NoteID> = [], modified: Set<NoteID> = [], removed: Set<NoteID> = [], images: Set<String> = []
+        added: Set<NoteID> = [], modified: Set<NoteID> = [], removed: Set<NoteID> = [], images: Set<String> = [],
+        templates: Set<String> = []
     ) {
         self.added = added
         self.modified = modified
         self.removed = removed
         self.images = images
+        self.templates = templates
     }
 
-    public var isEmpty: Bool { added.isEmpty && modified.isEmpty && removed.isEmpty && images.isEmpty }
+    public var isEmpty: Bool { !affectsIndex && templates.isEmpty }
+
+    /// True when the snapshot has anything to fold: a note or an image changed. A batch that
+    /// names only templates leaves the index alone.
+    public var affectsIndex: Bool { !(added.isEmpty && modified.isEmpty && removed.isEmpty && images.isEmpty) }
 
     /// Ids whose current state on disk decides what happens: added and modified are treated
     /// alike, since a coalesced batch cannot tell a create-then-edit from an edit.
@@ -43,7 +53,7 @@ extension SearchIndex {
     /// root without being reread (S-11). Synchronous file I/O: call it off the main thread
     /// (PF-6). This snapshot is unchanged.
     public func applying(changes: LibraryChanges, store: NoteStore) -> SearchIndex {
-        if changes.isEmpty { return self }
+        if !changes.affectsIndex { return self }
         var present: [ScannedNote] = []
         var gone = changes.dropped
         for id in changes.reread {
@@ -67,7 +77,7 @@ extension SearchIndex {
         changes: LibraryChanges, images: ImageStore? = nil,
         contents: (NoteID) -> (modifiedAt: Date, body: String)?
     ) -> SearchIndex {
-        if changes.isEmpty { return self }
+        if !changes.affectsIndex { return self }
         var upserts: [(id: NoteID, note: FoldedNote)] = []
         var gone = changes.dropped
         for id in changes.reread {

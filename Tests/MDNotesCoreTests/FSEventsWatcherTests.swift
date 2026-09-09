@@ -24,12 +24,18 @@ final class FSEventsWatcherTests: XCTestCase {
                 acc.modified.formUnion(next.modified)
                 acc.removed.formUnion(next.removed)
                 acc.images.formUnion(next.images)
+                acc.templates.formUnion(next.templates)
             }
         }
 
         /// How many batches so far named the image at root-relative `path`.
         func reports(ofImage path: String) -> Int {
             all.filter { $0.images.contains(path) }.count
+        }
+
+        /// How many batches so far named the template called `name`.
+        func reports(ofTemplate name: String) -> Int {
+            all.filter { $0.templates.contains(name) }.count
         }
 
         /// Polls until `condition` holds or `timeout` passes. Returns whether it held.
@@ -361,7 +367,78 @@ final class FSEventsWatcherTests: XCTestCase {
         XCTAssertEqual(union.removed, [], "\(recorder.all)")
         // S-11: the one image that is not hidden is reported by path, and as nothing else.
         XCTAssertEqual(union.images, ["i/picture.png"], "\(recorder.all)")
+        // TP-1, TP-7: the template is reported by name, and as nothing else.
+        XCTAssertEqual(union.templates, ["daily"], "\(recorder.all)")
         XCTAssertEqual(try XCTUnwrap(watcher).knownNotes, [id("sentinel.md")])
+    }
+
+    // MARK: TP-7 with TP-1: templates are reported by name as they are added, removed and renamed
+
+    func testTP7_templateAddedRemovedAndRenamedIsReportedByName() throws {
+        let latency = 0.05
+        try write("templates/daily.md", "---\npath: daily/{{date:yyyy-MM-dd}}\n---\n")
+        try startWatching(latency: latency)
+        XCTAssertEqual(try XCTUnwrap(watcher).knownTemplates, ["daily"], "start() lists templates/")
+
+        // Added.
+        try write("templates/meeting.md", "---\npath: meetings/{{title}}\n---\n")
+        waitFor("meeting added") { $0.templates.contains("meeting") }
+        XCTAssertEqual(try XCTUnwrap(watcher).knownTemplates, ["daily", "meeting"])
+
+        // Changed in place: reported again by the same name.
+        Thread.sleep(forTimeInterval: latency * 6)
+        try write("templates/meeting.md", "---\npath: meetings/{{date:yyyy}}/{{title}}\n---\n")
+        XCTAssertTrue(
+            recorder.wait(timeout: timeout) { _ in recorder.reports(ofTemplate: "meeting") >= 2 },
+            "the change was not reported: \(recorder.all)")
+
+        // Renamed: the old name and the new one, and the listing follows.
+        Thread.sleep(forTimeInterval: latency * 6)
+        try FileManager.default.moveItem(at: url("templates/meeting.md"), to: url("templates/standup.md"))
+        waitFor("standup renamed") {
+            $0.templates.contains("standup") && recorder.reports(ofTemplate: "meeting") >= 3
+        }
+        XCTAssertEqual(try XCTUnwrap(watcher).knownTemplates, ["daily", "standup"])
+
+        // Removed.
+        Thread.sleep(forTimeInterval: latency * 6)
+        try FileManager.default.removeItem(at: url("templates/daily.md"))
+        waitFor("daily removed") { _ in recorder.reports(ofTemplate: "daily") >= 1 }
+        XCTAssertEqual(try XCTUnwrap(watcher).knownTemplates, ["standup"])
+
+        // Never a note, in any batch (TP-1).
+        XCTAssertTrue(
+            recorder.all.allSatisfy { $0.added.isEmpty && $0.modified.isEmpty && $0.removed.isEmpty },
+            "\(recorder.all)")
+        XCTAssertTrue(recorder.all.allSatisfy { !$0.isEmpty }, "a template-only batch is not empty")
+        XCTAssertEqual(try XCTUnwrap(watcher).knownNotes, [])
+    }
+
+    func testTP7_templatesFolderArrivingAndGoingReportsEveryTemplateInIt() throws {
+        let latency = 0.05
+        try startWatching(latency: latency)
+        XCTAssertEqual(try XCTUnwrap(watcher).knownTemplates, [], "no templates/ folder, no templates")
+
+        // The folder arrives with files already in it: each is reported by name.
+        let staging = root.deletingLastPathComponent().appendingPathComponent("mdnotes-staging-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        try Data("---\npath: a\n---\n".utf8).write(to: staging.appendingPathComponent("alpha.md"))
+        try Data("---\npath: b\n---\n".utf8).write(to: staging.appendingPathComponent("beta.md"))
+        try Data("not a template".utf8).write(to: staging.appendingPathComponent("notes.txt"))
+        try FileManager.default.moveItem(at: staging, to: url("templates"))
+        waitFor("alpha and beta arrived") { $0.templates.isSuperset(of: ["alpha", "beta"]) }
+        XCTAssertEqual(try XCTUnwrap(watcher).knownTemplates, ["alpha", "beta"])
+
+        // The folder goes: each template that was in it is reported by name.
+        Thread.sleep(forTimeInterval: latency * 6)
+        try FileManager.default.removeItem(at: url("templates"))
+        waitFor("alpha and beta went") { _ in
+            recorder.reports(ofTemplate: "alpha") >= 2 && recorder.reports(ofTemplate: "beta") >= 2
+        }
+        XCTAssertEqual(try XCTUnwrap(watcher).knownTemplates, [])
+        XCTAssertEqual(recorder.union.templates, ["alpha", "beta"], "\(recorder.all)")
+        XCTAssertEqual(recorder.union.added, [], "\(recorder.all)")
     }
 
     // MARK: X-1 with S-11, E-9: image files are reported by path
