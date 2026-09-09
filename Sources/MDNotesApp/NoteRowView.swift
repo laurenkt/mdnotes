@@ -82,10 +82,15 @@ public final class NoteRowView: NSTableCellView {
 
     /// S-11: shows `image`, cropped to its centre square, in the thumbnail view, but only while
     /// the row still shows the note whose image is at `path`: a completion for a row since
-    /// recycled to another note is dropped. Returns whether the image was taken.
+    /// recycled to another note is dropped. Nil empties the square: the file is gone or is no
+    /// longer an image (X-1). Returns whether the answer was taken.
     @discardableResult
-    public func showThumbnail(_ image: CGImage, for path: String) -> Bool {
+    public func showThumbnail(_ image: CGImage?, for path: String) -> Bool {
         guard path == thumbnailPath else { return false }
+        guard let image else {
+            thumbnailView.image = nil
+            return true
+        }
         let side = min(image.width, image.height)
         let square = CGRect(x: (image.width - side) / 2, y: (image.height - side) / 2, width: side, height: side)
         let cropped = image.cropping(to: square) ?? image

@@ -11,12 +11,17 @@ public final class ThumbnailAttachment: NSTextAttachment {
     public let target: String
     /// The image file the thumbnail is of.
     public let url: URL
+    /// The thumbnail as the cache handed it over: the cache answers with this very object
+    /// while the file is unchanged, so a later answer that is another object means the file
+    /// changed (X-1).
+    public let cgImage: CGImage
 
-    public init(target: String, url: URL, image: NSImage, size: NSSize) {
+    public init(target: String, url: URL, cgImage: CGImage, size: NSSize) {
         self.target = target
         self.url = url
+        self.cgImage = cgImage
         super.init(data: nil, ofType: nil)
-        self.image = image
+        image = NSImage(cgImage: cgImage, size: size)
         bounds = NSRect(origin: .zero, size: size)
     }
 
@@ -47,6 +52,10 @@ public final class ThumbnailAttachment: NSTextAttachment {
 /// text may have moved on, so the embed is found again by its text, in every place the text
 /// now has it, and a thumbnail is placed below each such line that still lacks one. A lookup
 /// already in flight for a target is joined, and a note switch drops every outstanding one.
+///
+/// An image file that changes on disk without the note changing is heard of through
+/// `imagesDidChange` (X-1): the thumbnails of it are asked for again and replaced or dropped,
+/// and embeds without one are looked up again in case theirs has just arrived.
 @MainActor
 public final class EditorThumbnails {
     /// E-9: the most a thumbnail may measure, in points.
@@ -120,14 +129,64 @@ public final class EditorThumbnails {
     /// main run loop.
     func textDidChange(in editedRange: NSRange, changeInLength delta: Int) {
         if let dirty {
-            self.dirty = NSUnionRange(Self.adjust(dirty, forEdit: editedRange, delta: delta), editedRange)
-        } else {
-            dirty = editedRange
+            self.dirty = Self.adjust(dirty, forEdit: editedRange, delta: delta)
         }
+        scheduleReconcile(of: editedRange)
+    }
+
+    /// Adds `range`, a storage range of the text as it is now, to what the next reconciliation
+    /// covers, and schedules one on the next turn of the main run loop unless one is due.
+    private func scheduleReconcile(of range: NSRange) {
+        dirty = dirty.map { NSUnionRange($0, range) } ?? range
         guard !isScheduled else { return }
         isScheduled = true
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.reconcileNow() }
+        }
+    }
+
+    /// X-1: the image files at `paths`, root-relative to the editor's library, arrived, changed
+    /// or went behind the app's back, without the note changing. Every thumbnail on show of one
+    /// of them is asked for again through the cache, which notices the file's new date: an
+    /// answer that is the same image means the file is as it was, any other means it changed
+    /// or is gone, and the thumbnail is removed and its line reconciled, so the target is
+    /// looked up afresh and gets the new image where it still resolves. The whole text is
+    /// reconciled too, since an embed without a thumbnail may name a file that has just
+    /// arrived (E-9). Nothing happens without a library or a text.
+    public func imagesDidChange(_ paths: Set<String>) {
+        guard let editor, let root = editor.library?.root, let storage = editor.textView.textStorage,
+            storage.length > 0
+        else { return }
+        let changed = Set(paths.map { root.appendingPathComponent($0, isDirectory: false).standardizedFileURL.path })
+        let text = EditorText(storage: storage)
+        let generation = generation
+        let pixelSize = pixelSize
+        for run in text.displayOnlyRanges {
+            for (_, thumbnail) in Self.thumbnails(in: run, of: storage)
+            where changed.contains(thumbnail.url.standardizedFileURL.path) {
+                cache.request(thumbnail.url, pixelSize: pixelSize) { [weak self] image in
+                    guard let self, generation == self.generation else { return }
+                    if let image, image === thumbnail.cgImage { return }
+                    remove(thumbnail)
+                }
+            }
+        }
+        scheduleReconcile(of: NSRange(location: 0, length: storage.length))
+    }
+
+    /// Takes `thumbnail` off the text, wherever it sits now, and has the line it was below
+    /// reconciled, so its target is looked up again.
+    private func remove(_ thumbnail: ThumbnailAttachment) {
+        guard let editor, let storage = editor.textView.textStorage else { return }
+        let text = EditorText(storage: storage)
+        for run in text.displayOnlyRanges {
+            for (index, found) in Self.thumbnails(in: run, of: storage) where found === thumbnail {
+                editor.removeAttachments(in: NSRange(location: index, length: 0))
+                // The run began with the line break ending the embed's line; its location now
+                // ends that line, so the reconciliation covers the embed.
+                scheduleReconcile(of: NSRange(location: run.location, length: 0))
+                return
+            }
         }
     }
 
@@ -266,8 +325,7 @@ public final class EditorThumbnails {
         }
         let size = Self.displaySize(forPixelSize: CGSize(width: image.width, height: image.height), scale: scale)
         for line in lines.sorted(by: >) where !hasThumbnail(for: target, belowLineContaining: line, in: text) {
-            let attachment = ThumbnailAttachment(
-                target: target, url: url, image: NSImage(cgImage: image, size: size), size: size)
+            let attachment = ThumbnailAttachment(target: target, url: url, cgImage: image, size: size)
             editor.addAttachment(attachment, belowLineContaining: line)
         }
     }

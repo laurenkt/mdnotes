@@ -852,6 +852,13 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// edits the editor's text stands and the pending autosave writes it over the disk version
     /// (X-3), so nothing is done here. Deletions are handled from the snapshot instead.
     private func libraryDidChangeExternally(_ changes: LibraryChanges) {
+        // S-11, E-9: an image that arrived, changed or went on its own reaches the row squares
+        // and the inline thumbnails here; the snapshot already published has re-resolved the
+        // notes embedding it.
+        if !changes.images.isEmpty {
+            listController.imagesDidChange(changes.images)
+            editorController.thumbnails.imagesDidChange(changes.images)
+        }
         guard let id = editorController.noteID, changes.modified.contains(id) || changes.added.contains(id) else {
             return
         }

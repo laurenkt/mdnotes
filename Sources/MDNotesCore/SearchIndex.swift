@@ -195,9 +195,15 @@ public struct SearchIndex: Sendable {
         }
 
         init(entry: Entry) {
+            self.init(entry: entry, firstImage: entry.firstImagePath)
+        }
+
+        /// `entry` as it is, with its first image replaced: what re-resolving an image after
+        /// a change on disk produces (S-11), the text untouched.
+        init(entry: Entry, firstImage: String?) {
             id = entry.id
             modifiedAt = entry.modifiedAt
-            firstImage = entry.firstImagePath
+            self.firstImage = firstImage
             title = entry.arena.bytes[entry.titleRange]
             path = entry.arena.bytes[entry.pathRange]
             body = entry.arena.bytes[entry.bodyRange]

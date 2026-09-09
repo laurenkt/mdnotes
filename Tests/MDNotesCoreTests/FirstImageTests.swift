@@ -135,4 +135,67 @@ final class FirstImageTests: XCTestCase {
         XCTAssertNil(removed.entry(for: id("a.md"))?.firstImagePath)
         XCTAssertNotEqual(fromMemory.entry(for: id("a.md")), removed.entry(for: id("a.md")))
     }
+
+    // MARK: S-11 with X-1: an image that arrives, changes or goes without its note changing
+
+    func testS11_anImageArrivingOrGoingReResolvesTheNotesEmbeddingItWithoutRereadingThem() throws {
+        try write("png", at: "i/photo.png")
+        try write("![[late.png]] then ![[photo.png]]", at: "a.md")
+        try write("only ![[late.png]]", at: "b.md")
+        try write("![[assets/pic.gif]] by path", at: "c.md")
+        try write("no embeds, a [[late.png]] link only", at: "d.md")
+        let store = NoteStore(root: root)
+        let initial = SearchIndex.build(notes: try LibraryScanner.scan(root: root), store: store)
+        XCTAssertEqual(initial.entry(for: id("a.md"))?.firstImagePath, "i/photo.png")
+        XCTAssertNil(initial.entry(for: id("b.md"))?.firstImagePath)
+        XCTAssertNil(initial.entry(for: id("c.md"))?.firstImagePath)
+
+        // The images arrive. The notes' files are rewritten too, so a reread would show.
+        try write("png", at: "i/late.png")
+        try write("gif", at: "assets/pic.gif")
+        for note in ["a.md", "b.md", "c.md", "d.md"] { try write("rewritten on disk", at: note) }
+        let arrived = initial.applying(changes: LibraryChanges(images: ["i/late.png", "assets/pic.gif"]), store: store)
+        XCTAssertEqual(arrived.entry(for: id("a.md"))?.firstImagePath, "i/late.png", "the earlier embed now resolves")
+        XCTAssertEqual(arrived.entry(for: id("b.md"))?.firstImagePath, "i/late.png")
+        XCTAssertEqual(arrived.entry(for: id("c.md"))?.firstImagePath, "assets/pic.gif", "an embed by path")
+        XCTAssertEqual(arrived.entry(for: id("a.md"))?.body, "![[late.png]] then ![[photo.png]]", "not reread")
+        XCTAssertEqual(arrived.entry(for: id("b.md"))?.body, "only ![[late.png]]")
+        XCTAssertEqual(arrived.entry(for: id("d.md")), initial.entry(for: id("d.md")), "a link is not an embed")
+        XCTAssertEqual(arrived.entries.map(\.id), initial.entries.map(\.id), "list order is kept (S-3)")
+        XCTAssertEqual(arrived.entries.map(\.modifiedAt), initial.entries.map(\.modifiedAt))
+
+        // One goes: the note falls back to its next embed, or to none.
+        try FileManager.default.removeItem(at: root.appendingPathComponent("i/late.png"))
+        let gone = arrived.applying(changes: LibraryChanges(images: ["i/late.png"]), store: store)
+        XCTAssertEqual(gone.entry(for: id("a.md"))?.firstImagePath, "i/photo.png")
+        XCTAssertNil(gone.entry(for: id("b.md"))?.firstImagePath)
+        XCTAssertEqual(gone.entry(for: id("c.md")), arrived.entry(for: id("c.md")), "untouched")
+
+        // A change to an image no note embeds changes nothing.
+        let unrelated = gone.applying(changes: LibraryChanges(images: ["i/other.png"]), store: store)
+        XCTAssertEqual(unrelated.entries, gone.entries)
+    }
+
+    func testS11_imageChangesReResolveThroughTheInMemoryUpdateOnlyWhenGivenAStore() throws {
+        try write("![[late.png]]", at: "a.md")
+        let store = NoteStore(root: root)
+        let initial = SearchIndex.build(notes: try LibraryScanner.scan(root: root), store: store)
+        XCTAssertNil(initial.entry(for: id("a.md"))?.firstImagePath)
+        try write("png", at: "i/late.png")
+
+        let unresolved = initial.applying(changes: LibraryChanges(images: ["i/late.png"])) { _ in nil }
+        XCTAssertNil(unresolved.entry(for: id("a.md"))?.firstImagePath, "no store to resolve against")
+        let resolved = initial.applying(changes: LibraryChanges(images: ["i/late.png"]), images: self.store) { _ in nil
+        }
+        XCTAssertEqual(resolved.entry(for: id("a.md"))?.firstImagePath, "i/late.png")
+        XCTAssertEqual(resolved.count, 1, "nothing was reread or dropped")
+
+        // A note whose body is not indexed yet has no embeds to re-resolve; its body read does.
+        let titlesOnly = SearchIndex.titlesOnly(try LibraryScanner.scan(root: root))
+        let untouched = titlesOnly.applying(imageChanges: ["i/late.png"], images: self.store)
+        XCTAssertEqual(untouched.entries, titlesOnly.entries)
+        XCTAssertEqual(
+            untouched.applying(reading: try LibraryScanner.scan(root: root), store: store).entry(for: id("a.md"))?
+                .firstImagePath, "i/late.png")
+    }
 }

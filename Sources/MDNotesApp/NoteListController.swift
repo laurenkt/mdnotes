@@ -19,6 +19,8 @@ import MDNotesCore
 /// a cached image is shown at once, anything else is requested and the row stays empty until
 /// the completion, on main, finds the row still showing that note (PF-8). Paths in the
 /// snapshot are root-relative, so `imageRoot` is needed before any thumbnail is looked up.
+/// An image file that changes on disk without its note changing reaches the rows through
+/// `imagesDidChange` (X-1), since a cached image is shown without asking the file.
 @MainActor
 public final class NoteListController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     /// Every row is this tall (S-6).
@@ -331,6 +333,38 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
             guard let image, let view else { return }
             view.showThumbnail(image, for: path)
         }
+    }
+
+    /// X-1: the image files at `paths`, root-relative, arrived, changed or went behind the
+    /// app's back. A row on show whose note's image is one of them, or a file the cache holds
+    /// a thumbnail of, is asked for again: the request notices the file's new date and replaces
+    /// the cache's entry, so a row made meanwhile gets the new image, and the rows showing the
+    /// path when the answer arrives are refilled, or emptied for a file that is gone (S-11).
+    /// A file no row shows and the cache does not hold is left alone: a row made later misses
+    /// and asks.
+    public func imagesDidChange(_ paths: Set<String>) {
+        guard let imageRoot else { return }
+        let pixelSize = thumbnailPixelSize
+        for path in paths {
+            let url = imageRoot.appendingPathComponent(path, isDirectory: false)
+            guard !rows(showing: path).isEmpty || thumbnails.cachedImage(for: url, pixelSize: pixelSize) != nil
+            else { continue }
+            thumbnails.request(url, pixelSize: pixelSize) { [weak self] image in
+                guard let self else { return }
+                for row in rows(showing: path) { row.showThumbnail(image, for: path) }
+            }
+        }
+    }
+
+    /// The rows on show whose note's first image is at root-relative `path`.
+    private func rows(showing path: String) -> [NoteRowView] {
+        var found: [NoteRowView] = []
+        tableView.enumerateAvailableRowViews { rowView, _ in
+            if let view = rowView.view(atColumn: 0) as? NoteRowView, view.thumbnailPath == path {
+                found.append(view)
+            }
+        }
+        return found
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {

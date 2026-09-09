@@ -11,6 +11,9 @@ import Synchronization
 /// it has; one that is gone is `removed`. A rename therefore arrives as a removal of the old id
 /// plus an addition of the new one, and a folder rename or removal as the same for every note
 /// under it. A dropped-events flag rescans the whole root and diffs it against the known notes.
+/// An image file (`ImageStore.isImageFile`) that appears, changes or vanishes is reported by
+/// its root-relative path in `images`, so the notes embedding it and the thumbnails of it can
+/// follow (S-11, E-9); other non-note files are ignored (L-6).
 ///
 /// A scan judges the disk as it is when the callback runs, which can be ahead of the stream: a
 /// note written after the folder event but before the callback is on disk for the scan, and its
@@ -259,6 +262,12 @@ public final class FSEventsWatcher: Sendable {
             for id in before.subtracting(present) { scanned[id] = nil }
         }
         for relative in files {
+            if Self.isImagePath(relative) {
+                // Not a note (L-6): reported by path, whatever happened to it, for the embeds
+                // that name it (S-11, E-9).
+                changes.images.insert(relative)
+                continue
+            }
             guard let id = LibraryScanner.noteID(forRelativePath: relative) else { continue }
             // Exact about case (L-4): after a rename of `Alpha.md` to `alpha.md` the old path
             // still "exists" on a case-insensitive volume, but the old note is gone.
@@ -281,6 +290,13 @@ public final class FSEventsWatcher: Sendable {
         changes.removed.subtract(changes.added)
         changes.removed.subtract(changes.modified)
         return (changes, scanned)
+    }
+
+    /// Whether the file at root-relative `relative` is an image an embed could name (S-11,
+    /// E-9): an image by its extension, as `ImageStore` judges files, and not hidden at any
+    /// depth, the scanner's rule for notes, so an atomic write's temp file is not one.
+    private static func isImagePath(_ relative: String) -> Bool {
+        ImageStore.isImageFile(relative) && !relative.split(separator: "/").contains { $0.hasPrefix(".") }
     }
 
     /// `path` relative to the root with `/` separators, `""` for the root itself, or nil if the

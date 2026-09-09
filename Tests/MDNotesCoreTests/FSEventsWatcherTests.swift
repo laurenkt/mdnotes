@@ -23,7 +23,13 @@ final class FSEventsWatcherTests: XCTestCase {
                 acc.added.formUnion(next.added)
                 acc.modified.formUnion(next.modified)
                 acc.removed.formUnion(next.removed)
+                acc.images.formUnion(next.images)
             }
+        }
+
+        /// How many batches so far named the image at root-relative `path`.
+        func reports(ofImage path: String) -> Int {
+            all.filter { $0.images.contains(path) }.count
         }
 
         /// Polls until `condition` holds or `timeout` passes. Returns whether it held.
@@ -331,9 +337,9 @@ final class FSEventsWatcherTests: XCTestCase {
         waitFor("sub/late.md modified") { $0.modified.contains(self.id("sub/late.md")) }
     }
 
-    // MARK: X-1 with L-2, L-3, L-6: only notes are reported
+    // MARK: X-1 with L-2, L-3, L-6: only notes are reported as notes
 
-    func testX1_nonNotesAndSkippedPathsAreIgnored() throws {
+    func testX1_nonNotesAndSkippedPathsAreNotReportedAsNotes() throws {
         try startWatching()
         try write("readme.txt")
         try write("note.md.bak")
@@ -342,6 +348,8 @@ final class FSEventsWatcherTests: XCTestCase {
         try write("Trash/old.md")
         try write("templates/daily.md")
         try write("i/picture.png")
+        try write("i/.hidden.png")
+        try write(".cache/thumb.png")
         try write("deep/.secret/x.md")
         try write("sentinel.md")
         waitFor("sentinel") { $0.added.contains(self.id("sentinel.md")) }
@@ -351,6 +359,44 @@ final class FSEventsWatcherTests: XCTestCase {
         XCTAssertEqual(union.added, [id("sentinel.md")], "\(recorder.all)")
         XCTAssertEqual(union.modified, [], "\(recorder.all)")
         XCTAssertEqual(union.removed, [], "\(recorder.all)")
+        // S-11: the one image that is not hidden is reported by path, and as nothing else.
+        XCTAssertEqual(union.images, ["i/picture.png"], "\(recorder.all)")
+        XCTAssertEqual(try XCTUnwrap(watcher).knownNotes, [id("sentinel.md")])
+    }
+
+    // MARK: X-1 with S-11, E-9: image files are reported by path
+
+    func testX1_imageFilesAreReportedByPathWhenTheyArriveChangeAndGo() throws {
+        let latency = 0.05
+        try startWatching(latency: latency)
+        try write("i/late.png", "one")
+        waitFor("i/late.png arrived") { $0.images.contains("i/late.png") }
+        XCTAssertEqual(recorder.reports(ofImage: "i/late.png"), 1, "\(recorder.all)")
+        XCTAssertTrue(recorder.all.allSatisfy { $0.added.isEmpty && $0.modified.isEmpty && $0.removed.isEmpty })
+
+        // Changed: reported again, though the watcher has seen it.
+        Thread.sleep(forTimeInterval: latency * 6)
+        try write("i/late.png", "two")
+        XCTAssertTrue(
+            recorder.wait(timeout: timeout) { _ in recorder.reports(ofImage: "i/late.png") >= 2 },
+            "the change was not reported: \(recorder.all)")
+
+        // Gone: reported once more, by the path that no longer exists.
+        Thread.sleep(forTimeInterval: latency * 6)
+        try FileManager.default.removeItem(at: url("i/late.png"))
+        XCTAssertTrue(
+            recorder.wait(timeout: timeout) { _ in recorder.reports(ofImage: "i/late.png") >= 3 },
+            "the removal was not reported: \(recorder.all)")
+
+        // An image anywhere under the root, by any image extension, is one; a note is not.
+        try write("assets/photo.jpg")
+        try write("sentinel.md")
+        waitFor("assets/photo.jpg and the sentinel") {
+            $0.images.contains("assets/photo.jpg") && $0.added.contains(self.id("sentinel.md"))
+        }
+        XCTAssertEqual(recorder.union.images, ["i/late.png", "assets/photo.jpg"])
+        XCTAssertEqual(try XCTUnwrap(watcher).knownNotes, [id("sentinel.md")], "an image is never a known note")
+        XCTAssertTrue(recorder.all.allSatisfy { !$0.isEmpty }, "an image-only batch is not empty")
     }
 
     func testX1_idsAreRootRelativeWithSlashesAndExtension() throws {

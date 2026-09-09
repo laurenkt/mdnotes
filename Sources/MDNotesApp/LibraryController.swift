@@ -113,7 +113,8 @@ public final class LibraryController {
     /// Called on the main thread with each batch of file-system changes that were not this
     /// process's own writes (E-6, X-1), after the snapshot reflecting them has been published.
     /// Never called for an autosave, a `create` or a `delete` of ours. Also called with a
-    /// modification for each dataless note the eviction poll finds readable (L-7, L-10).
+    /// modification for each dataless note the eviction poll finds readable (L-7, L-10), and
+    /// with the image files that arrived, changed or went, ours included, in `images` (S-11).
     public var onExternalChanges: (@MainActor (LibraryChanges) -> Void)?
 
     /// How many notes are dataless, with the boot volume's free space while any are (L-10).
@@ -620,7 +621,9 @@ public final class LibraryController {
     /// background queue (PF-6): the source is read or converted (`ImageSource.encoded()`),
     /// written atomically as `<yyyyMMdd-HHmmss>.<ext>` by `ImageStore`, and `completion` runs on
     /// the main thread with the file's name, for the editor to embed, or the error. An image is
-    /// not a note (L-6): the snapshot is untouched and the watcher never reports the file. If
+    /// not a note (L-6): the snapshot is untouched here; the watcher reports the file by path
+    /// in `LibraryChanges.images`, which re-resolves the notes whose embeds name it, none yet
+    /// for a fresh name, and leaves a thumbnail already made from the same file as it is. If
     /// the library is stopped or restarted before the write lands, nothing is written and
     /// `completion` is never called.
     public func storeImage(_ source: ImageSource, completion: @escaping @MainActor (Result<String, any Error>) -> Void)

@@ -99,12 +99,22 @@ public struct ImageStore: Sendable {
     /// search index stores for a note's first image (S-11), so a snapshot does not depend on
     /// where the root is.
     public func relativePath(forEmbed target: String) -> String? {
+        Self.candidatePaths(forEmbed: target).first {
+            Self.isRegularFile(root.appendingPathComponent($0, isDirectory: false))
+        }
+    }
+
+    /// The root-relative paths `url(forEmbed:)` looks at for `target`, in the order it tries
+    /// them: `i/<name>` then `<name>` for a bare name, the text itself for a path. Empty for a
+    /// target that names nothing at all, such as one that would leave the root. Touches no
+    /// file: this is how a change to an image file is matched to the embeds that could name
+    /// it (S-11, X-1).
+    public static func candidatePaths(forEmbed target: String) -> [String] {
         let text = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
+        guard !text.isEmpty else { return [] }
         let segments = text.split(separator: "/", omittingEmptySubsequences: false)
-        guard segments.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return nil }
-        let candidates = text.contains("/") ? [text] : ["\(Self.folderName)/\(text)", text]
-        return candidates.first { Self.isRegularFile(root.appendingPathComponent($0, isDirectory: false)) }
+        guard segments.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return [] }
+        return text.contains("/") ? [text] : ["\(Self.folderName)/\(text)", text]
     }
 
     private static func isRegularFile(_ url: URL) -> Bool {
