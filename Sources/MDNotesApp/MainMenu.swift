@@ -12,6 +12,12 @@ import AppKit
 /// The File menu holds `New from Template` (TP-6) and Close; there is no New item and no Save
 /// item, as the search field creates notes (S-1) and autosave writes them (E-4). The Window
 /// menu is the standard one: Minimize, Zoom, Bring All to Front and the windows AppKit lists.
+///
+/// The `New from Template` submenu is filled as it opens (TP-6): its `TemplateMenuDelegate`
+/// asks for the library's template names each time AppKit is about to show it, so it follows
+/// `templates/` on disk (TP-7) and the library in use (L-1) with nothing to keep in step.
+/// Every template is one row, sending `newFromTemplate(_:)` down the responder chain with
+/// the name as its `representedObject`; with none there is one disabled `No Templates` row.
 @MainActor
 public enum MainMenu {
     /// The application's name as the menu titles use it.
@@ -24,8 +30,9 @@ public enum MainMenu {
     public static let viewMenuTitle = "View"
     public static let windowMenuTitle = "Window"
 
-    /// TP-6: `File > New from Template`. Until M9 fills the submenu from the template store it
-    /// holds one disabled placeholder row, `noTemplatesItemTitle`, as an empty list is shown.
+    /// TP-6: `File > New from Template`. The submenu lists the library's templates by name
+    /// (`fillTemplatesMenu`); with none it holds one disabled row, `noTemplatesItemTitle`,
+    /// which is also what `make()` builds before any library is open.
     public static let newFromTemplateItemTitle = "New from Template"
     public static let noTemplatesItemTitle = "No Templates"
     public static let closeItemTitle = "Close"
@@ -47,16 +54,36 @@ public enum MainMenu {
 
     /// Builds the whole menu bar: the application menu, File, Edit, Note, View and Window. The
     /// Window menu is returned separately so the caller can hand it to the application as its
-    /// windows menu.
-    public static func make() -> (mainMenu: NSMenu, windowMenu: NSMenu) {
+    /// windows menu, and the `New from Template` submenu so the caller can give it a
+    /// `TemplateMenuDelegate` (TP-6); until then it holds the `No Templates` row.
+    public static func make() -> (mainMenu: NSMenu, windowMenu: NSMenu, templatesMenu: NSMenu) {
         let main = NSMenu(title: "Main")
         let window = makeWindowMenu()
-        for menu in [makeAppMenu(), makeFileMenu(), makeEditMenu(), makeNoteMenu(), makeViewMenu(), window] {
+        let templates = NSMenu(title: newFromTemplateItemTitle)
+        fillTemplatesMenu(templates, names: [])
+        for menu in [makeAppMenu(), makeFileMenu(templates), makeEditMenu(), makeNoteMenu(), makeViewMenu(), window] {
             let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
             item.submenu = menu
             main.addItem(item)
         }
-        return (main, window)
+        return (main, window, templates)
+    }
+
+    /// Replaces the rows of the `New from Template` submenu with one per name in `names`, in
+    /// that order (TP-6): each sends `MainWindowController.newFromTemplate(_:)` down the
+    /// responder chain with its name as `representedObject` and shows no shortcut. With no
+    /// names the one row is `noTemplatesItemTitle`, action-less so the menu leaves it disabled.
+    public static func fillTemplatesMenu(_ menu: NSMenu, names: [String]) {
+        menu.removeAllItems()
+        guard !names.isEmpty else {
+            menu.addItem(NSMenuItem(title: noTemplatesItemTitle, action: nil, keyEquivalent: ""))
+            return
+        }
+        for name in names {
+            let item = item(name, #selector(MainWindowController.newFromTemplate(_:)))
+            item.representedObject = name
+            menu.addItem(item)
+        }
     }
 
     private static func makeAppMenu() -> NSMenu {
@@ -75,13 +102,10 @@ public enum MainMenu {
         return menu
     }
 
-    private static func makeFileMenu() -> NSMenu {
+    private static func makeFileMenu(_ templates: NSMenu) -> NSMenu {
         let menu = NSMenu(title: fileMenuTitle)
-        // TP-6: the submenu lists templates by name once M9 builds it from the template store.
-        // A placeholder row keeps the item from opening onto nothing; it has no action, so
-        // the menu leaves it disabled.
-        let templates = NSMenu(title: newFromTemplateItemTitle)
-        templates.addItem(NSMenuItem(title: noTemplatesItemTitle, action: nil, keyEquivalent: ""))
+        // TP-6: the submenu lists the templates by name (`fillTemplatesMenu`); the item itself
+        // only opens it.
         let newFromTemplate = NSMenuItem(title: newFromTemplateItemTitle, action: nil, keyEquivalent: "")
         newFromTemplate.submenu = templates
         menu.addItem(newFromTemplate)
@@ -149,5 +173,24 @@ public enum MainMenu {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.keyEquivalentModifierMask = modifiers
         return item
+    }
+}
+
+/// Fills the `New from Template` submenu each time AppKit is about to show it (TP-6): the
+/// names `templateNames` returns now become its rows through `MainMenu.fillTemplatesMenu`.
+/// The application delegate makes one over the library controller in use, so the submenu
+/// follows `templates/` on disk (TP-7) and a change of library (L-1) without being told.
+/// `NSMenu.delegate` is weak: the owner keeps this alive.
+@MainActor
+public final class TemplateMenuDelegate: NSObject, NSMenuDelegate {
+    /// The template names to list, in menu order, asked for on every showing.
+    public var templateNames: @MainActor () -> [String]
+
+    public init(templateNames: @escaping @MainActor () -> [String]) {
+        self.templateNames = templateNames
+    }
+
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        MainMenu.fillTemplatesMenu(menu, names: templateNames())
     }
 }

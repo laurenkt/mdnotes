@@ -86,7 +86,10 @@ import MDNotesCore
 /// `templates/` (TP-7). Enter in the field, or on a selected template row, instantiates the
 /// selected template, or the first, with the query's remaining words as the title
 /// (`instantiateTemplate`); a template whose path needs a title is refused inline when none
-/// was typed. Escape leaves the mode as it clears any query (S-7).
+/// was typed. Escape leaves the mode as it clears any query (S-7). A template chosen from
+/// `File > New from Template` (TP-6) reaches `newFromTemplate(_:)` through the responder
+/// chain and does the same with no title, putting `@name ` in the field and asking for the
+/// title there when the path needs one.
 ///
 /// The window floats (W-5, ADR-0011): its level is `.floating`, so it stays above other apps'
 /// windows whenever it is visible, and its collection behaviour is `moveToActiveSpace`, so it
@@ -124,8 +127,9 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
 
     /// Called on the main thread once `instantiateTemplate(named:title:in:)` has settled
     /// (TP-4): with the note that was created or opened, or nil when the template was refused
-    /// or the write failed. Enter in template mode (TP-5) reports here too, with nil when
-    /// nothing was instantiated because no template was listed or a title was missing.
+    /// or the write failed. Enter in template mode (TP-5) and a template chosen from the File
+    /// menu (TP-6) report here too, with nil when nothing was instantiated because no template
+    /// was listed or a title was missing.
     public var onInstantiateTemplate: (@MainActor (NoteID?) -> Void)?
 
     /// What the date tokens of a template see in template mode (TP-3, TP-5): for the paths
@@ -410,15 +414,63 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             onInstantiateTemplate?(nil)
             return
         }
-        if templateQuery.title.isEmpty, case .success(let template)? = library.parsedTemplates[name],
-            template.pathNeedsTitle
-        {
-            showInlineMessage(
-                "\u{201C}\(name)\u{201D} needs a title: type it after the name, as in @\(name) My title.")
+        if templateQuery.title.isEmpty, pathNeedsTitle(ofTemplateNamed: name, in: library) {
+            showInlineMessage(Self.titleNeededMessage(forTemplateNamed: name))
             onInstantiateTemplate?(nil)
             return
         }
         instantiateTemplate(named: name, title: templateQuery.title, in: templateEnvironment())
+    }
+
+    /// Whether the template called `name` parsed and its path needs `{{title}}` (TP-3). A
+    /// template that did not parse, or is not listed, needs none: `instantiateTemplate` is
+    /// left to refuse it with its own reason.
+    private func pathNeedsTitle(ofTemplateNamed name: String, in library: LibraryController) -> Bool {
+        guard case .success(let template)? = library.parsedTemplates[name] else { return false }
+        return template.pathNeedsTitle
+    }
+
+    /// The inline message asking for a title for the template called `name` (TP-5, TP-6).
+    private static func titleNeededMessage(forTemplateNamed name: String) -> String {
+        "\u{201C}\(name)\u{201D} needs a title: type it after the name, as in @\(name) My title."
+    }
+
+    // MARK: - File > New from Template (TP-6)
+
+    /// A template chosen from `File > New from Template` (TP-6): the item's `representedObject`
+    /// names it. Behaves as Enter on that template in template mode with no title (TP-5): a
+    /// template whose path does not need `{{title}}` is instantiated at once
+    /// (`instantiateTemplate`), the query left as it is; one that did not parse is refused
+    /// inline by the same path (TP-2). A template whose path needs a title is prompted for
+    /// inline in the search field instead: the query becomes `@name ` with the field focused
+    /// and the caret after the space, the list shows the template selected, and the message
+    /// under the field asks for the title, so typing it and pressing Enter creates the note
+    /// as TP-5 does. Nothing is created until then, and `onInstantiateTemplate` reports nil.
+    /// Does nothing without a library or a name.
+    @objc public func newFromTemplate(_ sender: Any?) {
+        guard let library, let name = (sender as? NSMenuItem)?.representedObject as? String else { return }
+        guard pathNeedsTitle(ofTemplateNamed: name, in: library) else {
+            instantiateTemplate(named: name, title: "", in: templateEnvironment())
+            return
+        }
+        promptForTitle(ofTemplateNamed: name)
+        onInstantiateTemplate?(nil)
+    }
+
+    /// Puts the search field in template mode on the template called `name`, ready for its
+    /// title (TP-6): the query `@name `, the field focused with the caret at its end so the
+    /// typed words become the title, the template's row selected so Enter acts on it whatever
+    /// else the name word lists, and the title asked for under the field.
+    private func promptForTitle(ofTemplateNamed name: String) {
+        let text = "@\(name) "
+        search(for: text)
+        mainView.focusSearchField()
+        mainView.searchField.currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+        if let row = listController.templateRows?.firstIndex(where: { $0.name == name }) {
+            mainView.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            mainView.tableView.scrollRowToVisible(row)
+        }
+        showInlineMessage(Self.titleNeededMessage(forTemplateNamed: name))
     }
 
     /// The rows template mode shows for `templateQuery` (TP-5): the library's templates whose
@@ -794,13 +846,16 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         EditorFontPreference.resetSize()
     }
 
-    /// Rename Note and Delete Note need a selected row (R-1, D-1); the backlinks item is titled
-    /// for what it will do next (K-6); Bigger, Smaller and Actual Size are available while
-    /// they would change the size (E-8). Every other item of ours is always available.
+    /// Rename Note and Delete Note need a selected row (R-1, D-1); a template row of `File >
+    /// New from Template` needs a library (TP-6); the backlinks item is titled for what it will
+    /// do next (K-6); Bigger, Smaller and Actual Size are available while they would change
+    /// the size (E-8). Every other item of ours is always available.
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(renameNote(_:)), #selector(deleteNote(_:)):
             return library != nil && listController.selectedEntry != nil
+        case #selector(newFromTemplate(_:)):
+            return library != nil
         case #selector(toggleBacklinks(_:)):
             menuItem.title =
                 mainView.backlinksStrip.isCollapsed ? MainMenu.showBacklinksItemTitle : MainMenu.hideBacklinksItemTitle

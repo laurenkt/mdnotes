@@ -9,7 +9,9 @@ import XCTest
 /// responder chain from the window's first responder, which is what the menu does for the key
 /// window (a headless test process has none). Closing is driven through `performClose`, with
 /// the delegate standing in as the application's for the duration, and reopening through the
-/// delegate's `applicationShouldHandleReopen`, as a Dock click does.
+/// delegate's `applicationShouldHandleReopen`, as a Dock click does. `File > New from
+/// Template` (TP-6) is opened as AppKit opens it, through its delegate's `menuNeedsUpdate`,
+/// over a library with real template files; choosing a row goes down the responder chain.
 @MainActor
 final class MenuSmokeTests: XCTestCase {
     private var root: URL = FileManager.default.temporaryDirectory
@@ -24,6 +26,19 @@ final class MenuSmokeTests: XCTestCase {
         ("Gamma.md", "gamma body"),
     ]
     private static let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+    /// The templates a TP-6 test writes under `templates/` before launching, listed in
+    /// case-insensitive order (TP-1): one whose path needs a title, one whose path does not,
+    /// and one without a header (TP-2).
+    private static let templates: [(name: String, text: String)] = [
+        ("meeting", "---\npath: meetings/{{date:yyyy-MM-dd}}/{{title}}\n---\n# {{title}}\n\n{{cursor}}\n"),
+        ("daily", "---\npath: daily/{{date:yyyy-MM-dd}}\n---\n# {{date:EEEE}}\n"),
+        ("headless", "no header here\n"),
+    ]
+    private static let templateNames = ["daily", "headless", "meeting"]
+
+    /// Wednesday 9 September 2026, 23:30:00 UTC, which `environment()` pins in UTC.
+    private static let instant = Date(timeIntervalSince1970: 1_788_996_600)
 
     private let alpha = NoteID(relativePath: "Alpha.md")
     private let beta = NoteID(relativePath: "daily/Beta.md")
@@ -99,6 +114,94 @@ final class MenuSmokeTests: XCTestCase {
 
     private func controller(of delegate: AppDelegate) throws -> MainWindowController {
         try XCTUnwrap(delegate.mainWindowController)
+    }
+
+    // MARK: - Templates (TP-6)
+
+    private func url(_ relativePath: String) -> URL {
+        root.appendingPathComponent(relativePath, isDirectory: false)
+    }
+
+    private func writeTemplate(_ name: String, _ text: String) throws {
+        let url = url("\(TemplateStore.folderName)/\(name).md")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func environment() throws -> TemplateParser.Environment {
+        let zone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        return TemplateParser.Environment(
+            date: Self.instant, timeZone: zone, calendar: calendar, locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    /// Writes the fixture templates and launches over them, the date pinned and the library's
+    /// template list up.
+    private func launchWithTemplates() async throws -> AppDelegate {
+        for template in Self.templates { try writeTemplate(template.name, template.text) }
+        let delegate = try await launch()
+        let controller = try controller(of: delegate)
+        let environment = try environment()
+        controller.templateEnvironment = { environment }
+        let library = try XCTUnwrap(delegate.libraryController)
+        await waitUntil("templates listed") { library.templateNames == Self.templateNames }
+        return delegate
+    }
+
+    private func templatesMenu(of delegate: AppDelegate) throws -> NSMenu {
+        let file = try submenu(titled: MainMenu.fileMenuTitle, of: delegate.mainMenu)
+        return try submenu(titled: MainMenu.newFromTemplateItemTitle, of: file)
+    }
+
+    /// Opens the `New from Template` submenu as AppKit does, by telling its delegate it is
+    /// about to be shown, and returns its rows.
+    private func openTemplatesMenu(of delegate: AppDelegate) throws -> [NSMenuItem] {
+        let menu = try templatesMenu(of: delegate)
+        let menuDelegate = try XCTUnwrap(menu.delegate, "the submenu has a delegate to fill it")
+        menuDelegate.menuNeedsUpdate?(menu)
+        return menu.items
+    }
+
+    /// The submenu's row for the template called `name`, the submenu opened first.
+    private func templateItem(_ name: String, in delegate: AppDelegate) throws -> NSMenuItem {
+        try XCTUnwrap(try openTemplatesMenu(of: delegate).first { $0.title == name }, "a row for \(name)")
+    }
+
+    /// Chooses `item` as the menu would and waits for the instantiation it starts, or the
+    /// refusal, to be reported.
+    private func chooseAndSettle(_ item: NSMenuItem, in delegate: AppDelegate) async throws -> NoteID? {
+        let controller = try controller(of: delegate)
+        let window = try window(of: delegate)
+        let settled = expectation(description: "instantiation settled")
+        var reported: NoteID?
+        controller.onInstantiateTemplate = { id in
+            reported = id
+            settled.fulfill()
+        }
+        XCTAssertTrue(try perform(item, in: window), "the row's action found the window controller")
+        await fulfillment(of: [settled], timeout: 10)
+        controller.onInstantiateTemplate = nil
+        return reported
+    }
+
+    /// A focused text field's first responder is its field editor, not the field itself.
+    private func searchFieldEditor(_ controller: MainWindowController) throws -> NSTextView {
+        let editor = try XCTUnwrap(controller.window?.firstResponder as? NSTextView, "focus is in a text view")
+        XCTAssertTrue(editor.isFieldEditor && editor.delegate === controller.mainView.searchField, "the search field's")
+        return editor
+    }
+
+    /// Every file under the root, as relative paths, sorted.
+    private func filesOnDisk() throws -> [String] {
+        let enumerator = try XCTUnwrap(
+            FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey], options: []))
+        var paths: [String] = []
+        for case let url as URL in enumerator
+        where try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+            paths.append(String(url.standardizedFileURL.path.dropFirst(root.standardizedFileURL.path.count + 1)))
+        }
+        return paths.sorted()
     }
 
     private func window(of delegate: AppDelegate) throws -> NSWindow {
@@ -263,9 +366,9 @@ final class MenuSmokeTests: XCTestCase {
             }.map(\.title), [])
     }
 
-    // MARK: - TP-6: File > New from Template, a placeholder until M9 fills it
+    // MARK: - TP-6: File > New from Template lists the library's templates by name
 
-    func testTP6_fileMenuHoldsANewFromTemplatePlaceholderSubmenuAndClose() async throws {
+    func testTP6_fileMenuHoldsNewFromTemplateWithADisabledPlaceholderWhenThereAreNoneAndClose() async throws {
         let delegate = try await launch()
         let file = try submenu(titled: MainMenu.fileMenuTitle, of: delegate.mainMenu)
         XCTAssertEqual(
@@ -278,7 +381,11 @@ final class MenuSmokeTests: XCTestCase {
         XCTAssertTrue(newFromTemplate.hasSubmenu, "the item only opens its submenu")
         let templates = try XCTUnwrap(newFromTemplate.submenu, "New from Template is a submenu")
         XCTAssertEqual(templates.title, MainMenu.newFromTemplateItemTitle)
-        XCTAssertEqual(templates.items.map(\.title), [MainMenu.noTemplatesItemTitle], "one placeholder row")
+        XCTAssertEqual(templates.items.map(\.title), [MainMenu.noTemplatesItemTitle], "one placeholder row at launch")
+        XCTAssertEqual(delegate.libraryController?.templateNames, [], "this library has no templates/")
+        XCTAssertEqual(
+            try openTemplatesMenu(of: delegate).map(\.title), [MainMenu.noTemplatesItemTitle],
+            "and the placeholder is what opening it shows")
         let placeholder = try XCTUnwrap(templates.items.first)
         XCTAssertNil(placeholder.action)
         XCTAssertNil(placeholder.target)
@@ -294,6 +401,140 @@ final class MenuSmokeTests: XCTestCase {
         XCTAssertEqual(
             items(in: delegate.mainMenu).filter { $0.action == #selector(NSWindow.performClose(_:)) }.count, 1,
             "and nowhere else")
+    }
+
+    func testTP6_openingTheSubmenuListsTheLibrarysTemplatesByNameAndFollowsTheWatcher() async throws {
+        let delegate = try await launchWithTemplates()
+        let controller = try controller(of: delegate)
+        let library = try XCTUnwrap(delegate.libraryController)
+        let menu = try templatesMenu(of: delegate)
+        XCTAssertEqual(menu.items.map(\.title), [MainMenu.noTemplatesItemTitle], "nothing is built until it opens")
+
+        let rows = try openTemplatesMenu(of: delegate)
+        XCTAssertEqual(rows.map(\.title), Self.templateNames, "every template, by name, in the library's order")
+        XCTAssertEqual(rows.map { $0.representedObject as? String }, Self.templateNames, "each row names its template")
+        for row in rows {
+            XCTAssertEqual(row.action, #selector(MainWindowController.newFromTemplate(_:)), row.title)
+            XCTAssertNil(row.target, "\(row.title) goes down the responder chain")
+            XCTAssertFalse(row.hasSubmenu)
+            assertShortcut(row, "")
+            XCTAssertTrue(controller.validateMenuItem(row), "\(row.title) is available with a library open")
+        }
+        let first = try XCTUnwrap(rows.first)
+        XCTAssertFalse(
+            makeMainWindowController(autosaveClock: ManualAutosaveClock()).validateMenuItem(first),
+            "and not without one")
+        XCTAssertEqual(
+            try openTemplatesMenu(of: delegate).map(\.title), Self.templateNames, "opening again rebuilds the same rows"
+        )
+
+        // TP-7: a template that arrives on disk is listed next time the submenu opens, and one
+        // that goes is not, through the real watcher.
+        try writeTemplate("weekly", "---\npath: weekly/{{date:yyyy}}-W{{date:ww}}\n---\n")
+        await waitUntil("weekly listed") { library.templateNames.contains("weekly") }
+        XCTAssertEqual(try openTemplatesMenu(of: delegate).map(\.title), ["daily", "headless", "meeting", "weekly"])
+        try FileManager.default.removeItem(at: url("\(TemplateStore.folderName)/headless.md"))
+        await waitUntil("headless gone") { !library.templateNames.contains("headless") }
+        XCTAssertEqual(try openTemplatesMenu(of: delegate).map(\.title), ["daily", "meeting", "weekly"])
+    }
+
+    func testTP6_choosingATemplateWhosePathNeedsNoTitleCreatesAndOpensTheNote() async throws {
+        let delegate = try await launchWithTemplates()
+        let controller = try controller(of: delegate)
+        let window = try window(of: delegate)
+        controller.search(for: "gam")
+        XCTAssertEqual(controller.listController.results.map(\.id), [gamma])
+        XCTAssertTrue(window.makeFirstResponder(controller.mainView.textView), "focus anywhere: the menu is global")
+        let before = try filesOnDisk()
+
+        let created = NoteID(relativePath: "daily/2026-09-09.md")
+        let reported = try await chooseAndSettle(try templateItem("daily", in: delegate), in: delegate)
+        XCTAssertEqual(reported, created, "TP-5 with no title: the path needs none, so the note is made")
+        XCTAssertEqual(try String(contentsOf: url(created.relativePath), encoding: .utf8), "# Wednesday\n")
+        XCTAssertEqual(try filesOnDisk(), (before + [created.relativePath]).sorted(), "and nothing else")
+        XCTAssertNil(controller.inlineMessage)
+        await waitUntil("editor shows the new note") {
+            controller.editorController.noteID == created && controller.editorController.body != nil
+        }
+        XCTAssertEqual(controller.mainView.textView.string, "# Wednesday\n")
+        XCTAssertTrue(window.firstResponder === controller.mainView.textView, "the editor is focused (TP-4)")
+        XCTAssertEqual(controller.query, "gam", "the query is left as it was")
+        XCTAssertFalse(controller.listController.isShowingTemplates)
+
+        // Choosing it again opens the same note and writes nothing (TP-4).
+        let again = try await chooseAndSettle(try templateItem("daily", in: delegate), in: delegate)
+        XCTAssertEqual(again, created)
+        XCTAssertEqual(try filesOnDisk(), (before + [created.relativePath]).sorted())
+    }
+
+    func testTP6_choosingATemplateWhosePathNeedsATitlePromptsInTheSearchFieldAndEnterThenCreatesIt() async throws {
+        let delegate = try await launchWithTemplates()
+        let controller = try controller(of: delegate)
+        let window = try window(of: delegate)
+        try await select(alpha, in: delegate)
+        XCTAssertTrue(window.makeFirstResponder(controller.mainView.textView))
+        let before = try filesOnDisk()
+
+        let reported = try await chooseAndSettle(try templateItem("meeting", in: delegate), in: delegate)
+        XCTAssertNil(reported, "nothing is created without a title")
+        XCTAssertEqual(try filesOnDisk(), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url("meetings").path), "no folder was made either")
+
+        // The prompt: template mode on that template, focus in the field after the name,
+        // ready for the title, and the ask under the field.
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "@meeting ")
+        XCTAssertEqual(controller.query, "@meeting ")
+        XCTAssertTrue(controller.isInTemplateMode)
+        XCTAssertTrue(controller.listController.isShowingTemplates)
+        XCTAssertEqual(controller.listController.templateRows?.map(\.name), ["meeting"])
+        XCTAssertEqual(controller.listController.selectedTemplate?.name, "meeting", "selected, so Enter acts on it")
+        XCTAssertNil(controller.listController.selectedEntry, "no note is selected in template mode")
+        let editor = try searchFieldEditor(controller)
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 9, length: 0), "the caret is after the space")
+        let message = try XCTUnwrap(controller.inlineMessage)
+        XCTAssertTrue(message.contains("needs a title"), message)
+        XCTAssertTrue(message.contains("meeting"), message)
+        XCTAssertFalse(controller.mainView.messageLabel.isHidden)
+        XCTAssertEqual(controller.mainView.messageLabel.stringValue, message)
+
+        // Typing the title clears the ask; Enter creates the note as TP-5 does.
+        for character in "Standup" {
+            editor.insertText(String(character), replacementRange: editor.selectedRange())
+        }
+        XCTAssertEqual(controller.query, "@meeting Standup")
+        XCTAssertNil(controller.inlineMessage)
+        XCTAssertTrue(controller.mainView.messageLabel.isHidden)
+        let settled = expectation(description: "instantiation settled")
+        var created: NoteID?
+        controller.onInstantiateTemplate = { id in
+            created = id
+            settled.fulfill()
+        }
+        window.sendEvent(try keyDown("\r", modifiers: [], keyCode: 36, in: window))
+        await fulfillment(of: [settled], timeout: 10)
+        controller.onInstantiateTemplate = nil
+        let note = NoteID(relativePath: "meetings/2026-09-09/Standup.md")
+        XCTAssertEqual(created, note)
+        XCTAssertEqual(try String(contentsOf: url(note.relativePath), encoding: .utf8), "# Standup\n\n\n")
+        await waitUntil("editor shows the new note") {
+            controller.editorController.noteID == note && controller.editorController.body != nil
+        }
+    }
+
+    func testTP2_choosingATemplateThatDoesNotParseIsRefusedInlineAndCreatesNothing() async throws {
+        let delegate = try await launchWithTemplates()
+        let controller = try controller(of: delegate)
+        controller.search(for: "gam")
+        let before = try filesOnDisk()
+
+        let reported = try await chooseAndSettle(try templateItem("headless", in: delegate), in: delegate)
+        XCTAssertNil(reported)
+        XCTAssertEqual(controller.inlineMessage, TemplateParser.Rejection.missingHeader.message)
+        XCTAssertFalse(controller.mainView.messageLabel.isHidden)
+        XCTAssertEqual(try filesOnDisk(), before, "nothing was created")
+        XCTAssertEqual(controller.query, "gam", "the query is left as it was: there is no title to ask for")
+        XCTAssertFalse(controller.listController.isShowingTemplates)
+        XCTAssertNil(controller.editorController.noteID)
     }
 
     // MARK: - E-7: the Edit menu carries undo and redo, and the clipboard

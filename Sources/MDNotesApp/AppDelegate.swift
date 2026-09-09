@@ -10,6 +10,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public private(set) var globalHotKey: GlobalHotKey?
     /// The menu bar (`MainMenu`), built and installed at launch.
     public private(set) var mainMenu: NSMenu?
+    /// Fills `File > New from Template` from the library in use as the submenu opens (TP-6).
+    /// `NSMenu.delegate` is weak; this keeps it alive.
+    private var templateMenuDelegate: TemplateMenuDelegate?
 
     /// How `applicationShouldTerminate` tells AppKit the last write has landed. Tests, which
     /// must not actually terminate, replace it to observe the reply.
@@ -63,6 +66,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = menus.mainMenu
         NSApp.windowsMenu = menus.windowMenu
         mainMenu = menus.mainMenu
+        // TP-6: the submenu lists whatever the library controller of the moment lists, so a
+        // re-listed `templates/` (TP-7) and a change of library (L-1) need no other wiring.
+        let templateMenuDelegate = TemplateMenuDelegate { [weak self] in self?.libraryController?.templateNames ?? [] }
+        menus.templatesMenu.delegate = templateMenuDelegate
+        self.templateMenuDelegate = templateMenuDelegate
 
         // The window comes first and the index fills in behind it (PF-1, PF-7).
         let controller = mainWindowController ?? MainWindowController()

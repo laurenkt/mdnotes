@@ -224,7 +224,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M9.4 Template mode in the search field (TP-5): `@` prefix, list shows templates with
       expanded path as snippet, Enter with remaining words as title, inline prompt when title
       is required, `@` alone lists all. Smoke tests for each rule and for Escape.
-- [ ] M9.5 `File > New from Template` submenu (TP-6) built from `TemplateStore`, prompting
+- [x] M9.5 `File > New from Template` submenu (TP-6) built from `TemplateStore`, prompting
       inline when a title is needed. Smoke test on menu contents and action.
 - [ ] M9.6 Manual acceptance pass for M9 and the whole of v2 against `docs/ACCEPTANCE.md`;
       discrepancies become tasks above this line.
