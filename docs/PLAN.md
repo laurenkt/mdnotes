@@ -228,7 +228,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       inline when a title is needed. Smoke test on menu contents and action.
 - [x] M9.6 Manual acceptance pass for M9 and the whole of v2 against `docs/ACCEPTANCE.md`;
       discrepancies become tasks above this line.
-- [ ] M9.7 Tag `v0.2.0`.
+- [x] M9.7 Tag `v0.2.0`.
 
 ## M10: Halfway editor: in-place markdown styling, rich paste, rules and banding
 

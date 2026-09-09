@@ -7,6 +7,33 @@ release tag; the setup and the driving scripts it needs are described at the end
 Result key: **pass**, **fail** (task named), **gate** (enforced by `scripts/check.sh full`,
 not checkable by hand), **n/a by hand** (why), **blocked** (question in `QUESTIONS.md`).
 
+## Release pass of 2026-09-09 (M9.7, `v0.2.0`)
+
+Build: `scripts/bundle.sh` at commit 176e032 (I-9), macOS 26.2; `scripts/info-plist.sh` now
+defaults to 0.2.0, the plist reports `CFBundleShortVersionString` and `CFBundleVersion` 0.2.0
+(`plutil -p`), `plutil -lint` is clean and the bundle is ad-hoc signed (`codesign -dv`:
+`Signature=adhoc`, identifier `dev.laurenkt.mdnotes`). No app was launched, as in the M7.6 to
+M9.6 passes: the human's instance runs on the real library. `scripts/check.sh quick` on the
+same commit: 745 tests green, the 8 perf gates skipped in the debug run and run by the full
+gate in the commit that carries this tag. Scope: the one ID whose code changed since the M9.6
+pass, V-1 (I-9 touched the snapshot helper and its test only; `git diff --stat 73d5372..176e032`
+names `WindowSnapshotTests.swift` and `WindowSnapshots.swift` and nothing under `Sources/`).
+Every other ID stands as recorded in the v5 pass and the whole-of-v2 roll-up below, which
+re-checked the v2, v3, v4 and v5 sections on code that has not changed since.
+
+| ID  | Result | Notes |
+|-----|--------|-------|
+| V-1 | pass | `template-list-light.png` and `template-list-dark.png` from this run, opened and compared: both now show the inactive grey band on row 4 (`meeting`), so the observation the v5 pass recorded as I-9 is closed; the rest of the pair reads as v5 described it (the `@` field, hairline, five 46 pt rows with the semibold name and the expanded path as the secondary snippet, no date or square, the editor below empty, light and dark differing on `windowBackgroundColor`). Twenty-two files in all this run: the helper's own `selected-row` pair (`testV1_*` in `WindowSnapshotTests`, I-9) joins the twenty of v5. |
+
+Release decision: `v0.2.0` is tagged with Q3 open (TP-3 and TP-8: the spec's example date
+letters `YYYY`, `DD`, `dddd` are not what a Unicode pattern means by them). The result key above
+admits a blocked entry in a release pass; the v5 pass and the roll-up record TP-8 as pass on the
+mechanism and blocked on the spec's own example only; the behaviour shipped is the one TP-3 and
+M9.1 both decide (Unicode patterns via `DateFormatter`) and the intended daily path is reachable
+today with the Unicode spelling Q3 gives. No task is open above M9.7 in `PLAN.md` and `ISSUES.md`
+has no open entry. Q3 is the human's to answer; its answer, a docs fix under the recommended
+option, ships in a later tag.
+
 ## Pass of 2026-09-09 (M9.6, v5)
 
 Build: debug `swift test` via `scripts/check.sh quick` at commit 1be6a68 (code as of a6afbc5,
