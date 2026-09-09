@@ -58,13 +58,50 @@ final class BodySnippetTests: XCTestCase {
         XCTAssertEqual(BodySnippet.make(from: "**bold**, then *em*."), "bold, then em.")
         XCTAssertEqual(BodySnippet.make(from: "snake_case and __init__ stay"), "snake_case and init stay")
         XCTAssertEqual(BodySnippet.make(from: "2 * 3 ** 4"), "2 * 3 ** 4", "a run with space on both sides")
-        XCTAssertEqual(BodySnippet.make(from: "* bullet\n* two"), "* bullet * two", "a bullet marker is not emphasis")
+        XCTAssertEqual(BodySnippet.make(from: "~~gone~~ text"), "gone text", "strikethrough is emphasis too")
         XCTAssertEqual(BodySnippet.make(from: "`*not* stripped`"), "`*not* stripped`")
         XCTAssertEqual(BodySnippet.make(from: "```\na * b **c**\n```"), "a * b **c**")
     }
 
+    // MARK: I-10: every marker the scanner knows is stripped, through its tokens (ADR-0019)
+
+    func testS6_snippetDropsLinkImageAndAutolinkMarkers() {
+        XCTAssertEqual(BodySnippet.make(from: "see [the docs](https://x.y/d \"t\") now"), "see the docs now")
+        XCTAssertEqual(BodySnippet.make(from: "![alt text](i/p.png) after"), "alt text after")
+        XCTAssertEqual(BodySnippet.make(from: "<https://x.y/path>"), "https://x.y/path")
+        XCTAssertEqual(BodySnippet.make(from: "bare https://x.y stays"), "bare https://x.y stays")
+        XCTAssertEqual(BodySnippet.make(from: "[**bold** link](u)"), "bold link", "markers nested in a link")
+    }
+
+    func testS6_snippetDropsListMarkersAndTaskBoxes() {
+        XCTAssertEqual(BodySnippet.make(from: "- one\n* two\n+ three\n1. four"), "one two three four")
+        XCTAssertEqual(BodySnippet.make(from: "- outer\n  - nested"), "outer nested")
+        XCTAssertEqual(BodySnippet.make(from: "- [ ] todo\n- [x] done"), "todo done", "a box is a control, not text")
+        XCTAssertEqual(BodySnippet.make(from: "- **bold** item"), "bold item", "markers nested in an item")
+        XCTAssertEqual(BodySnippet.make(from: "-not a list\n1.nor this"), "-not a list 1.nor this")
+    }
+
+    func testS6_snippetDropsBlockquotePrefixes() {
+        XCTAssertEqual(BodySnippet.make(from: "> quoted\n>> deeper\n> > spaced"), "quoted deeper spaced")
+        XCTAssertEqual(BodySnippet.make(from: "> # *Quoted* heading"), "Quoted heading")
+        XCTAssertEqual(BodySnippet.make(from: "a > b"), "a > b", "only at line start")
+    }
+
+    func testS6_snippetDropsTablePipesAndSeparators() {
+        XCTAssertEqual(BodySnippet.make(from: "| a | b |\n|---|:-:|\n| c | d |"), "a b c d")
+        XCTAssertEqual(BodySnippet.make(from: "| **h** |\n|---|"), "h", "markers nested in a cell")
+        XCTAssertEqual(BodySnippet.make(from: "a | b\nno separator"), "a | b no separator")
+    }
+
+    func testS6_snippetDropsThematicBreaks() {
+        XCTAssertEqual(BodySnippet.make(from: "above\n\n---\nbelow"), "above below")
+        XCTAssertEqual(BodySnippet.make(from: "* * *\ntext"), "text")
+        XCTAssertEqual(BodySnippet.make(from: "Setext\n---\nbelow"), "Setext below", "an underline is a heading marker")
+    }
+
     func testS6_snippetOfNothingButSyntaxIsEmpty() {
         XCTAssertEqual(BodySnippet.make(from: "# \n![[a.png]]\n```\n```\n"), "")
+        XCTAssertEqual(BodySnippet.make(from: "- [ ]\n> \n\n___\n\n* * *\n"), "")
         XCTAssertEqual(BodySnippet.make(from: "\n**\n"), "**", "a run with whitespace on both sides is literal")
     }
 

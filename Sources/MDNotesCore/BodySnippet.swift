@@ -9,15 +9,20 @@ import Foundation
 /// UTF-16 units of a body are examined, so a 1 MB note costs the same as a short one (PF-4),
 /// and all of this happens once, when the index is built; a query never touches it (PF-2).
 ///
-/// What is stripped, using `MarkdownScanner`'s tokens for everything it recognises:
-/// - heading markers: the `#` run opening an ATX heading (`## Title` shows as `Title`);
+/// What is stripped is every marker `MarkdownScanner` reports (ADR-0019 makes its tokens the
+/// one source of markdown structure; the snippet never reads syntax itself):
+/// - heading markers: the `#` run of an ATX heading or a setext underline (`## Title` shows as
+///   `Title`);
 /// - wikilinks: `[[Target]]` shows as `Target`, `[[Target|label]]` as `label`;
 /// - embeds: `![[image.png]]` contributes nothing;
 /// - code fences: the opening fence line, info string included, and the closing fence line
 ///   are dropped; the code between them is kept as written;
-/// - emphasis markers: `*`, `**`, `_` and `__` runs that could open or close emphasis under
-///   CommonMark's flanking rules (`**bold**` shows as `bold`), so `snake_case`, `2 * 3` and a
-///   `* bullet` keep their characters. Nothing is stripped inside inline code or fenced code.
+/// - emphasis markers: `**bold**` shows as `bold`, `~~gone~~` as `gone`; under CommonMark's
+///   flanking rules `snake_case`, `2 * 3` and a lone `**` keep their characters;
+/// - link syntax: `[text](url)` shows as `text`, `![alt](url)` as `alt`, `<url>` as `url`;
+/// - list markers and task boxes (`- [x] done` shows as `done`), blockquote prefixes, table
+///   pipes, and separator rows and thematic breaks whole.
+/// Inline code keeps its backticks, tags their `#`. Nothing is stripped inside code.
 public enum BodySnippet {
     /// Longest snippet produced, in UTF-16 units, so at most that many characters; the cut never
     /// splits a character. Wider than any row can show, so truncation is the row's decision, not
@@ -125,10 +130,9 @@ private struct Stripper {
     let units: [UInt16]
     var kept: [UInt16] = []
 
-    /// Unit ranges dropped entirely, in order, non-overlapping.
+    /// Unit ranges dropped entirely: the scanner's markers and its syntax-only tokens, put in
+    /// order and merged by `collectSkips`.
     private var skips: [Range<Int>] = []
-    /// Unit ranges (code) inside which emphasis markers are literal, in order.
-    private var literal: [Range<Int>] = []
 
     init(units: [UInt16]) {
         self.units = units
@@ -139,10 +143,9 @@ private struct Stripper {
     /// stops two units past the cut, enough to see whether the cut would split a character.
     /// Nothing here walks graphemes: over 20k bodies that alone costs a fifth of PF-4.
     mutating func run() -> String {
-        collectEdits()
+        collectSkips()
         var pendingSpace = false
         var skip = 0
-        var lit = 0
         var i = 0
         let stopAt = BodySnippet.maxCharacters + 2
         while i < units.count, kept.count < stopAt {
@@ -151,25 +154,10 @@ private struct Stripper {
                 skip += 1
                 continue
             }
-            while lit < literal.count, literal[lit].upperBound <= i { lit += 1 }
-            let inCode = lit < literal.count && literal[lit].contains(i)
             let u = units[i]
-            if !inCode, u == U.asterisk || u == U.underscore {
-                var end = i + 1
-                while end < units.count, units[end] == u { end += 1 }
-                if !Emphasis.isDelimiterRun(u, i..<end, in: units) {
-                    if pendingSpace {
-                        kept.append(U.space)
-                        pendingSpace = false
-                    }
-                    kept.append(contentsOf: units[i..<end])
-                }
-                i = end
-                continue
-            }
+            i += 1
             if U.isWhitespace(u) {
                 pendingSpace = !kept.isEmpty
-                i += 1
                 continue
             }
             if pendingSpace {
@@ -177,64 +165,67 @@ private struct Stripper {
                 pendingSpace = false
             }
             kept.append(u)
-            i += 1
         }
         return Transcoding.string(from: kept[..<Cut.position(in: kept, at: BodySnippet.maxCharacters)])
     }
 
-    /// Turns the scanner's tokens into skip and literal ranges.
-    private mutating func collectEdits() {
+    /// Turns the scanner's tokens into the ranges to drop. Tokens arrive in location order with
+    /// an enclosing token first, so its closing marker lands after the markers of what it
+    /// encloses (`**a *b* c**`, `[**x**](u)`); a sort, only when that happened, puts the ranges
+    /// back in order, and a merge folds any overlap so the walk takes them one after another.
+    private mutating func collectSkips() {
         let tokens = MarkdownScanner.scan(units, in: NSRange(location: 0, length: units.count))
+        var sorted = true
         for token in tokens {
-            let start = token.range.location
-            let end = start + token.range.length
             switch token.kind {
-            case .heading:
-                // The `#` run of an ATX heading, or the underline of a setext one (ED-9).
-                for marker in token.markers {
-                    skips.append(marker.location..<(marker.location + marker.length))
-                }
             case .wikilink(let target, let label, let isEmbed):
+                // The brackets, and with a `|` the target and the bar too, so the label shows.
                 if isEmbed {
-                    skips.append(start..<end)
+                    append(token.range, &sorted)
                 } else {
                     let shown = label ?? target
-                    skips.append(start..<shown.location)
-                    skips.append((shown.location + shown.length)..<end)
+                    let start = token.range.location
+                    let end = start + token.range.length
+                    append(start..<shown.location, &sorted)
+                    append((shown.location + shown.length)..<end, &sorted)
                 }
-            case .inlineCode:
-                literal.append(start..<end)
-            case .fencedCode:
-                let openingEnd = Lines.nextLineStart(after: start, in: units, limit: end)
-                skips.append(start..<openingEnd)
-                let closingStart = Lines.lastLineStart(before: end, in: units, floor: openingEnd)
-                if closingStart >= openingEnd, Fences.isClosingLine(closingStart, end, in: units) {
-                    literal.append(openingEnd..<closingStart)
-                    skips.append(closingStart..<end)
-                } else {
-                    literal.append(openingEnd..<end)
-                }
-            case .tag, .emphasis, .link, .autolink, .bareURL, .listItem, .taskBox, .blockquote, .tableRow,
-                .tableSeparator, .thematicBreak:
+            case .taskBox, .tableSeparator, .thematicBreak:
+                // A reader sees a control or a rule, not text: the whole token goes.
+                append(token.range, &sorted)
+            case .heading, .fencedCode, .emphasis, .link, .autolink, .listItem, .blockquote, .tableRow:
+                for marker in token.markers { append(marker, &sorted) }
+            case .tag, .inlineCode, .bareURL:
                 break
             }
         }
+        guard !skips.isEmpty else { return }
+        if !sorted { skips.sort { $0.lowerBound < $1.lowerBound } }
+        var last = 0
+        for index in 1..<skips.count {
+            if skips[index].lowerBound <= skips[last].upperBound {
+                skips[last] = skips[last].lowerBound..<max(skips[last].upperBound, skips[index].upperBound)
+            } else {
+                last += 1
+                skips[last] = skips[index]
+            }
+        }
+        skips.removeSubrange((last + 1)...)
+    }
+
+    private mutating func append(_ range: NSRange, _ sorted: inout Bool) {
+        append(range.location..<(range.location + range.length), &sorted)
+    }
+
+    private mutating func append(_ range: Range<Int>, _ sorted: inout Bool) {
+        guard !range.isEmpty else { return }
+        if let previous = skips.last, previous.lowerBound > range.lowerBound { sorted = false }
+        skips.append(range)
     }
 }
 
 private enum U {
     static let space: UInt16 = 0x20
-    static let tab: UInt16 = 0x09
-    static let newline: UInt16 = 0x0A
-    static let carriageReturn: UInt16 = 0x0D
-    static let hash: UInt16 = 0x23
-    static let asterisk: UInt16 = 0x2A
-    static let underscore: UInt16 = 0x5F
-    static let backtick: UInt16 = 0x60
-    static let tilde: UInt16 = 0x7E
     static let zeroWidthJoiner: UInt16 = 0x200D
-
-    static func isTerminator(_ u: UInt16) -> Bool { u == newline || u == carriageReturn }
 
     /// Unicode `White_Space` for a single UTF-16 unit, spelled out because the property lookup
     /// per unit over 20k bodies is a visible share of the build (PF-4). Surrogates are never
@@ -244,20 +235,6 @@ private enum U {
         switch u {
         case 0x85, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000: return true
         default: return false
-        }
-    }
-
-    /// Unicode punctuation or symbol for a single UTF-16 unit, CommonMark's notion of
-    /// punctuation for flanking. Surrogates are treated as letters.
-    static func isPunctuation(_ u: UInt16) -> Bool {
-        guard let scalar = Unicode.Scalar(UInt32(u)) else { return false }
-        switch scalar.properties.generalCategory {
-        case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
-            .initialPunctuation, .finalPunctuation, .otherPunctuation,
-            .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
-            return true
-        default:
-            return false
         }
     }
 }
@@ -299,72 +276,5 @@ private enum Cut {
         case .nonspacingMark, .spacingMark, .enclosingMark, .format: return true
         default: return false
         }
-    }
-}
-
-private enum Lines {
-    /// Start of the line after the one starting at `lineStart`, capped at `limit`; `\r\n` is
-    /// one terminator.
-    static func nextLineStart(after lineStart: Int, in units: [UInt16], limit: Int) -> Int {
-        var i = lineStart
-        while i < limit, !U.isTerminator(units[i]) { i += 1 }
-        guard i < limit else { return limit }
-        if units[i] == U.carriageReturn, i + 1 < limit, units[i + 1] == U.newline { return i + 2 }
-        return i + 1
-    }
-
-    /// Start of the last line whose content ends at or before `end` (ignoring a terminator
-    /// that `end` itself follows), never below `floor`.
-    static func lastLineStart(before end: Int, in units: [UInt16], floor: Int) -> Int {
-        var i = end
-        if i > floor, units[i - 1] == U.newline { i -= 1 }
-        if i > floor, units[i - 1] == U.carriageReturn { i -= 1 }
-        while i > floor, !U.isTerminator(units[i - 1]) { i -= 1 }
-        return i
-    }
-}
-
-private enum Fences {
-    /// Whether `[lineStart, end)` is a closing fence line: at most three spaces, three or more
-    /// of one fence character, then only spaces and tabs and a terminator.
-    static func isClosingLine(_ lineStart: Int, _ end: Int, in units: [UInt16]) -> Bool {
-        var i = lineStart
-        while i < end, i - lineStart < 3, units[i] == U.space { i += 1 }
-        guard i < end, units[i] == U.backtick || units[i] == U.tilde else { return false }
-        let character = units[i]
-        var length = 0
-        while i < end, units[i] == character {
-            length += 1
-            i += 1
-        }
-        guard length >= 3 else { return false }
-        while i < end, !U.isTerminator(units[i]) {
-            if units[i] != U.space, units[i] != U.tab { return false }
-            i += 1
-        }
-        return true
-    }
-}
-
-private enum Emphasis {
-    /// CommonMark's flanking rules: whether the run of `character` at `run` could open or close
-    /// emphasis, in which case a reader never sees it.
-    static func isDelimiterRun(_ character: UInt16, _ run: Range<Int>, in units: [UInt16]) -> Bool {
-        let before = run.lowerBound > 0 ? units[run.lowerBound - 1] : nil
-        let after = run.upperBound < units.count ? units[run.upperBound] : nil
-        let beforeWhitespace = before.map(U.isWhitespace) ?? true
-        let afterWhitespace = after.map(U.isWhitespace) ?? true
-        let beforePunctuation = before.map(U.isPunctuation) ?? false
-        let afterPunctuation = after.map(U.isPunctuation) ?? false
-
-        let leftFlanking =
-            !afterWhitespace && (!afterPunctuation || beforeWhitespace || beforePunctuation)
-        let rightFlanking =
-            !beforeWhitespace && (!beforePunctuation || afterWhitespace || afterPunctuation)
-
-        if character == U.asterisk { return leftFlanking || rightFlanking }
-        let canOpen = leftFlanking && (!rightFlanking || beforePunctuation)
-        let canClose = rightFlanking && (!leftFlanking || afterPunctuation)
-        return canOpen || canClose
     }
 }

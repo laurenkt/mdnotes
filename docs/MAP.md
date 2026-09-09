@@ -13,7 +13,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Sources/MDNotesCore/NoteID.swift` — note identity as root-relative `/`-separated path incl. `.md`. `NoteID`, `.relativePath`, `.title`.
 - `Sources/MDNotesCore/CaseFolding.swift` — the one case fold used by every case-insensitive comparison. `CaseFolding.fold`, `areEqual`.
 - `Sources/MDNotesCore/WordSplitter.swift` — splits query text into whitespace-delimited words (S-2). `WordSplitter.words`, `foldedWords`.
-- `Sources/MDNotesCore/BodySnippet.swift` — one-line list-row snippet from a body, markdown stripped via `MarkdownScanner` tokens plus CommonMark-flanking emphasis runs (S-6). `BodySnippet.make`, `maxCharacters`, `scanCharacters`.
+- `Sources/MDNotesCore/BodySnippet.swift` — one-line list-row snippet from a body (S-6): every marker `MarkdownScanner` yields is dropped (headings, wikilink brackets, fences, emphasis, links, images, autolinks, list markers, blockquote prefixes, table pipes) and embeds, task boxes, separator rows and rules go whole; no syntax is read here (ADR-0019). `BodySnippet.make`, `maxCharacters`, `scanCharacters`.
 - `Sources/MDNotesCore/LibraryScanner.swift` — walks the root for `.md` files, skipping `Trash`/`templates`. `ScannedNote`, `LibraryScanner.scan`, `noteID(forRelativePath:)`.
 - `Sources/MDNotesCore/NoteStore.swift` — reads/writes one library root; iCloud availability and dataless detection (L-7/L-8). `NoteBody`, `NoteStore.read`, `url(for:)`, `requestDownload`, `isDownloaded`, `modificationDate(atExactly:)`.
 - `Sources/MDNotesCore/AtomicWriter.swift` — temp-file-plus-rename writes so readers never see a mix (E-5). `AtomicWriter.write(_:to:)`, `Interruption` hook for tests.
@@ -79,7 +79,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesCoreTests/NoteIDTests.swift` — note id path/title round-trips.
 - `Tests/MDNotesCoreTests/CaseFoldingTests.swift` — folding and equality across scripts and diacritics.
 - `Tests/MDNotesCoreTests/WordSplitterTests.swift` — query word splitting, Unicode whitespace, punctuation staying in words.
-- `Tests/MDNotesCoreTests/BodySnippetTests.swift` — one-line snippet generation, one test per stripped construct, stripping done at build time not read time, survival inside the index (S-6, PF-2).
+- `Tests/MDNotesCoreTests/BodySnippetTests.swift` — one-line snippet generation, one test per stripped construct (headings, wikilinks, embeds, fences, emphasis, links/images/autolinks, lists and task boxes, blockquotes, tables, rules; markers nested in a link, item or cell), stripping done at build time not read time, survival inside the index (S-6, PF-2).
 - `Tests/MDNotesCoreTests/LibraryScannerTests.swift` — root walking, `.md` filtering, skipped folders, relative-path ids.
 - `Tests/MDNotesCoreTests/NoteStoreTests.swift` — reading bodies, availability probe, dataless and unwritable cases.
 - `Tests/MDNotesCoreTests/AtomicWriterTests.swift` — temp-then-rename semantics, interrupted commits, no torn reads (E-5).
