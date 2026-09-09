@@ -190,9 +190,10 @@ private struct Stripper {
             let end = start + token.range.length
             switch token.kind {
             case .heading:
-                var i = start
-                while i < end, units[i] == U.hash { i += 1 }
-                skips.append(start..<i)
+                // The `#` run of an ATX heading, or the underline of a setext one (ED-9).
+                for marker in token.markers {
+                    skips.append(marker.location..<(marker.location + marker.length))
+                }
             case .wikilink(let target, let label, let isEmbed):
                 if isEmbed {
                     skips.append(start..<end)
@@ -213,7 +214,8 @@ private struct Stripper {
                 } else {
                     literal.append(openingEnd..<end)
                 }
-            case .tag:
+            case .tag, .emphasis, .link, .autolink, .bareURL, .listItem, .taskBox, .blockquote, .tableRow,
+                .tableSeparator, .thematicBreak:
                 break
             }
         }

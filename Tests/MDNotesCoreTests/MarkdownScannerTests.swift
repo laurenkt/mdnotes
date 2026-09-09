@@ -288,6 +288,9 @@ final class MarkdownScannerTests: XCTestCase {
             case .tag: "tag"
             case .inlineCode: "code"
             case .fencedCode: "fence"
+            case .emphasis, .link, .autolink, .bareURL, .listItem, .taskBox, .blockquote, .tableRow,
+                .tableSeparator, .thematicBreak:
+                "other"
             }
         }
         XCTAssertEqual(kinds, ["h1", "tag", "link", "code", "embed", "fence", "tag"])
@@ -328,17 +331,35 @@ final class MarkdownScannerTests: XCTestCase {
         XCTAssertEqual(paragraph(text, text.utf16.count), "five", "edit at the very end")
     }
 
-    func testE3_editOnABlankLineIsScopedToThatLine() {
+    func testE3_editOnABlankLineCoversTheParagraphsEitherSide() {
+        // A blank line's presence splits or joins its neighbours and decides ED-8 and ED-9 for
+        // the line under it, so an edit that leaves a line blank re-scans both sides.
         let text = "one\n\ntwo"
-        XCTAssertEqual(paragraph(text, 4), "\n")
-        XCTAssertEqual(paragraph("one\n  \ntwo", 4), "  \n", "whitespace-only lines are blank")
+        XCTAssertEqual(paragraph(text, 4), text)
+        XCTAssertEqual(paragraph("one\n  \ntwo", 4), "one\n  \ntwo", "whitespace-only lines are blank")
+        XCTAssertEqual(paragraph("a\n\n\n---", 2), "a\n\n", "two blank lines: only the neighbour that touches")
+        XCTAssertEqual(paragraph("a\n\n\n---", 3), "\n---")
+        XCTAssertEqual(paragraph("one\n\n", 4), "one\n\n", "nothing after")
+        XCTAssertEqual(paragraph("\ntwo", 0), "\ntwo", "nothing before")
+        XCTAssertEqual(paragraph("\n\ntwo", 0), "\n", "another blank line between: nothing touches")
+    }
+
+    func testED8_paragraphScopeReachesARuleWhoseBlankLineChanged() {
+        // Deleting the text of the line before `---` leaves a blank line: the rule below is
+        // now a break (ED-8) and the line above is no longer a heading's text (ED-9).
+        let text = "a\n\n---"
+        XCTAssertEqual(paragraph(text, 2), text)
+        let tokens = MarkdownScanner.scan(
+            text, in: MarkdownScanner.paragraphRange(in: text, editedRange: NSRange(location: 2, length: 0)))
+        XCTAssertEqual(tokens.map(\.kind), [.thematicBreak])
     }
 
     func testE3_editSpanningParagraphsCoversThemAll() {
         let text = "one\n\ntwo\n\nthree"
-        XCTAssertEqual(paragraph(text, 2, 7), "one\n\ntwo\n\n", "ends on the blank line: no join forward")
+        XCTAssertEqual(paragraph(text, 2, 7), text, "ends on a blank line: the paragraph after it too")
         XCTAssertEqual(paragraph(text, 2, 8), text, "ends at the start of a line: that line is included")
         XCTAssertEqual(paragraph(text, 0, text.utf16.count), text)
+        XCTAssertEqual(paragraph("one\ntwo\n\nthree", 0, 3), "one\ntwo\n", "no blank line edited: no join forward")
     }
 
     func testE3_insertedNewlineCoversBothHalves() {
@@ -377,6 +398,19 @@ final class MarkdownScannerTests: XCTestCase {
             tail #t2 ![[i.png]]
 
             last `y` #t3
+
+            Setext **bold** _it_
+            ===
+            - item [link](u) <a:b> https://x.y
+              - [ ] nested ~~gone~~
+            > quote
+            > ---
+
+            | a | b |
+            |---|---|
+            | 1 | 2 |
+
+            ***
             """
         let full = MarkdownScanner.scan(text)
         var offset = 0
@@ -395,5 +429,399 @@ final class MarkdownScannerTests: XCTestCase {
         let text = "abc"
         XCTAssertEqual(paragraph(text, 10, 5), "abc")
         XCTAssertEqual(paragraph("", 0), "")
+    }
+
+    // MARK: ED-1 helpers
+
+    /// A token as `kind` plus the texts of its markers and content, for one-line assertions.
+    private struct Shape: Equatable {
+        let kind: Kind
+        let text: String
+        let markers: [String]
+        let content: String
+    }
+
+    private func shapes(in text: String, where predicate: (Kind) -> Bool = { _ in true }) -> [Shape] {
+        MarkdownScanner.scan(text).filter { predicate($0.kind) }.map { token in
+            Shape(
+                kind: token.kind, text: slice(text, token.range), markers: token.markers.map { slice(text, $0) },
+                content: slice(text, token.content))
+        }
+    }
+
+    private func emphasis(in text: String) -> [(trait: MarkdownScanner.Emphasis, text: String, content: String)] {
+        MarkdownScanner.scan(text).compactMap { token in
+            guard case .emphasis(let trait) = token.kind else { return nil }
+            return (trait, slice(text, token.range), slice(text, token.content))
+        }
+    }
+
+    private func kinds(in text: String) -> [Kind] {
+        MarkdownScanner.scan(text).map(\.kind)
+    }
+
+    // MARK: ED-1 emphasis
+
+    func testED1_boldWithAsterisksAndUnderscores() {
+        let text = "**b** and __c__"
+        let found = shapes(in: text)
+        XCTAssertEqual(
+            found,
+            [
+                Shape(kind: .emphasis(.bold), text: "**b**", markers: ["**", "**"], content: "b"),
+                Shape(kind: .emphasis(.bold), text: "__c__", markers: ["__", "__"], content: "c"),
+            ])
+    }
+
+    func testED1_italicWithAsterisksAndUnderscores() {
+        let text = "*i* and _j_"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(kind: .emphasis(.italic), text: "*i*", markers: ["*", "*"], content: "i"),
+                Shape(kind: .emphasis(.italic), text: "_j_", markers: ["_", "_"], content: "j"),
+            ])
+        XCTAssertEqual(emphasis(in: "*a*b").map(\.content), ["a"], "asterisks work inside a word")
+        XCTAssertEqual(emphasis(in: "a*b*c").map(\.content), ["b"])
+    }
+
+    func testED1_underscoreEmphasisOnlyAtWordBoundaries() {
+        XCTAssertEqual(emphasis(in: "snake_case_name").count, 0)
+        XCTAssertEqual(emphasis(in: "a_b_").count, 0)
+        XCTAssertEqual(emphasis(in: "_foo_bar").count, 0)
+        XCTAssertEqual(emphasis(in: "foo_bar_").count, 0)
+        XCTAssertEqual(emphasis(in: "__init__ method").map(\.content), ["init"])
+        XCTAssertEqual(emphasis(in: "(_x_)").map(\.content), ["x"], "punctuation around is a boundary")
+        XCTAssertEqual(emphasis(in: "_x_, then").map(\.content), ["x"])
+    }
+
+    func testED1_strikethrough() {
+        let text = "a ~~gone~~ b"
+        XCTAssertEqual(
+            shapes(in: text),
+            [Shape(kind: .emphasis(.strikethrough), text: "~~gone~~", markers: ["~~", "~~"], content: "gone")])
+        XCTAssertEqual(emphasis(in: "a ~one~ b").count, 0, "a single tilde is not strikethrough")
+        XCTAssertEqual(emphasis(in: "a ~~~x~~~ b").count, 0, "nor a run of three")
+        XCTAssertEqual(emphasis(in: "~~a~~b").map(\.content), ["a"])
+    }
+
+    func testED1_spacedDelimitersAreNotEmphasis() {
+        XCTAssertEqual(emphasis(in: "2 * 3 * 4").count, 0)
+        XCTAssertEqual(emphasis(in: "a ** b ** c").count, 0)
+        XCTAssertEqual(emphasis(in: "*unclosed").count, 0)
+        XCTAssertEqual(emphasis(in: "**a*").map(\.content), ["a"], "one of the two pairs")
+        XCTAssertEqual(emphasis(in: "**a*").map(\.text), ["*a*"])
+    }
+
+    func testED1_nestedEmphasisYieldsNestedTokensEnclosingFirst() {
+        XCTAssertEqual(
+            shapes(in: "***a***"),
+            [
+                Shape(kind: .emphasis(.italic), text: "***a***", markers: ["*", "*"], content: "**a**"),
+                Shape(kind: .emphasis(.bold), text: "**a**", markers: ["**", "**"], content: "a"),
+            ])
+        XCTAssertEqual(
+            shapes(in: "**bold *it* bold**"),
+            [
+                Shape(
+                    kind: .emphasis(.bold), text: "**bold *it* bold**", markers: ["**", "**"], content: "bold *it* bold"
+                ),
+                Shape(kind: .emphasis(.italic), text: "*it*", markers: ["*", "*"], content: "it"),
+            ])
+        XCTAssertEqual(emphasis(in: "*foo**bar*").map(\.text), ["*foo**bar*"], "the rule of three")
+        XCTAssertEqual(emphasis(in: "_a **b** c_").map(\.text), ["_a **b** c_", "**b**"])
+    }
+
+    func testED1_backslashEscapesPunctuation() {
+        XCTAssertEqual(kinds(in: "\\*not\\* \\[a](b) \\<c:d> \\#t"), [])
+        XCTAssertEqual(emphasis(in: "*a\\*").count, 0, "an escaped closer does not close")
+    }
+
+    // MARK: ED-1 links
+
+    func testED1_standardLink() {
+        let text = "see [text](https://x.com \"T\") now"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(
+                    kind: .link(url: NSRange(location: 11, length: 13), isImage: false),
+                    text: "[text](https://x.com \"T\")", markers: ["[", "](https://x.com \"T\")"], content: "text")
+            ])
+        XCTAssertEqual(shapes(in: "[a](<u v>)").map(\.content), ["a"])
+        if case .link(let url, _) = MarkdownScanner.scan("[a](<u v>)").first?.kind {
+            XCTAssertEqual(slice("[a](<u v>)", url), "u v")
+        } else {
+            XCTFail("expected a link")
+        }
+        if case .link(let url, _) = MarkdownScanner.scan("[a](b(c))").first?.kind {
+            XCTAssertEqual(slice("[a](b(c))", url), "b(c)", "balanced parentheses stay in the URL")
+        } else {
+            XCTFail("expected a link")
+        }
+        XCTAssertEqual(shapes(in: "[a](b (c))").map(\.markers), [["[", "](b (c))"]], "a title in parentheses")
+        XCTAssertEqual(shapes(in: "[a [b] c](d)").map(\.content), ["a [b] c"], "balanced brackets stay in the text")
+        XCTAssertEqual(shapes(in: "[a]()").map(\.text), ["[a]()"], "an empty destination is allowed")
+        XCTAssertEqual(kinds(in: "[a](b"), [])
+        XCTAssertEqual(kinds(in: "[a] (b)"), [])
+        XCTAssertEqual(kinds(in: "[a](b c)"), [])
+        XCTAssertEqual(kinds(in: "[a]\n(b)"), [])
+        XCTAssertEqual(kinds(in: "[not a link]"), [])
+    }
+
+    func testED1_image() {
+        let text = "![alt text](i.png)"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(
+                    kind: .link(url: NSRange(location: 12, length: 5), isImage: true), text: text,
+                    markers: ["![", "](i.png)"], content: "alt text")
+            ])
+        XCTAssertEqual(kinds(in: "wow! [a](b)"), [.link(url: NSRange(location: 9, length: 1), isImage: false)])
+    }
+
+    func testED1_linkTextHasItsOwnTokens() {
+        let text = "*[**b** #t](u)* [[w]]"
+        XCTAssertEqual(
+            kinds(in: text),
+            [
+                .emphasis(.italic),
+                .link(url: NSRange(location: 12, length: 1), isImage: false),
+                .emphasis(.bold),
+                .tag(name: NSRange(location: 9, length: 1)),
+                .wikilink(target: NSRange(location: 18, length: 1), label: nil, isEmbed: false),
+            ])
+        XCTAssertEqual(emphasis(in: "*a [b*](c) d").count, 0, "emphasis never straddles a link's text")
+    }
+
+    func testED1_autolink() {
+        let text = "at <https://x.com/a?b=c> or <mailto:a@b.c>"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(
+                    kind: .autolink(url: NSRange(location: 4, length: 19)), text: "<https://x.com/a?b=c>",
+                    markers: ["<", ">"], content: "https://x.com/a?b=c"),
+                Shape(
+                    kind: .autolink(url: NSRange(location: 29, length: 12)), text: "<mailto:a@b.c>",
+                    markers: ["<", ">"],
+                    content: "mailto:a@b.c"),
+            ])
+        XCTAssertEqual(kinds(in: "<not a link> <a> <x:> <http://a b>"), [], "a scheme and no spaces")
+        XCTAssertEqual(kinds(in: "<https://x.com"), [])
+    }
+
+    func testED1_bareURL() {
+        let text = "go to https://x.com/a_b. now"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(
+                    kind: .bareURL(url: NSRange(location: 6, length: 17)), text: "https://x.com/a_b", markers: [],
+                    content: "https://x.com/a_b")
+            ])
+        XCTAssertEqual(shapes(in: "(http://a.b)").map(\.text), ["http://a.b"], "an unbalanced paren is left out")
+        XCTAssertEqual(shapes(in: "http://a.b/(c)").map(\.text), ["http://a.b/(c)"], "a balanced one stays")
+        XCTAssertEqual(shapes(in: "HTTP://A.B,").map(\.text), ["HTTP://A.B"], "any case, trailing comma out")
+        XCTAssertEqual(shapes(in: "*http://a.b*").map(\.text), ["*http://a.b*", "http://a.b"])
+        XCTAssertEqual(kinds(in: "xhttp://a.b"), [], "must start a word")
+        XCTAssertEqual(kinds(in: "http:// nothing"), [])
+        XCTAssertEqual(kinds(in: "ftp://a.b"), [], "http and https only")
+        XCTAssertEqual(kinds(in: "<https://a.b>").count, 1, "an autolink is not also a bare URL")
+    }
+
+    // MARK: ED-1 lists
+
+    func testED1_bulletListItems() {
+        let text = "- a\n* b\n+ c"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(kind: .listItem(level: 0, ordered: false), text: "- a", markers: ["- "], content: "a"),
+                Shape(kind: .listItem(level: 0, ordered: false), text: "* b", markers: ["* "], content: "b"),
+                Shape(kind: .listItem(level: 0, ordered: false), text: "+ c", markers: ["+ "], content: "c"),
+            ])
+        XCTAssertEqual(kinds(in: "-a"), [], "a space must follow the marker")
+        XCTAssertEqual(kinds(in: "-"), [])
+        XCTAssertEqual(kinds(in: "- "), [.listItem(level: 0, ordered: false)], "an empty item is one")
+        XCTAssertEqual(shapes(in: "-   spaced").map(\.markers), [["-   "]], "the spaces after belong to the marker")
+        XCTAssertEqual(
+            kinds(in: "- **b** #t"),
+            [.listItem(level: 0, ordered: false), .emphasis(.bold), .tag(name: NSRange(location: 9, length: 1))])
+    }
+
+    func testED1_orderedListItems() {
+        let text = "1. a\n12. b\n1234567890. c\n1) d\n1.e"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(kind: .listItem(level: 0, ordered: true), text: "1. a", markers: ["1. "], content: "a"),
+                Shape(kind: .listItem(level: 0, ordered: true), text: "12. b", markers: ["12. "], content: "b"),
+            ])
+    }
+
+    func testED1_taskItems() {
+        let text = "- [ ] todo\n- [x] done\n- [X] DONE\n- [y] no\n- [ ]\n- [ ]x"
+        let items = shapes(in: text) {
+            guard case .listItem = $0 else { return false }
+            return true
+        }
+        XCTAssertEqual(items.map(\.content), ["todo", "done", "DONE", "[y] no", "", "[ ]x"])
+        XCTAssertEqual(
+            shapes(in: text) {
+                guard case .taskBox = $0 else { return false }
+                return true
+            },
+            [
+                Shape(kind: .taskBox(isDone: false), text: "[ ]", markers: ["[", "]"], content: " "),
+                Shape(kind: .taskBox(isDone: true), text: "[x]", markers: ["[", "]"], content: "x"),
+                Shape(kind: .taskBox(isDone: true), text: "[X]", markers: ["[", "]"], content: "X"),
+                Shape(kind: .taskBox(isDone: false), text: "[ ]", markers: ["[", "]"], content: " "),
+            ])
+        XCTAssertEqual(kinds(in: "[ ] not in a list"), [])
+    }
+
+    func testED1_listNestingDepthIsTwoSpacesPerLevel() {
+        let text = "- a\n  - b\n    - c\n   - d\n      1. e\n\t- f"
+        let levels = MarkdownScanner.scan(text).compactMap { token -> Int? in
+            guard case .listItem(let level, _) = token.kind else { return nil }
+            return level
+        }
+        XCTAssertEqual(levels, [0, 1, 2, 1, 3])
+        XCTAssertEqual(shapes(in: "    - c").map(\.text), ["- c"], "the indent is outside the token")
+    }
+
+    // MARK: ED-1 blockquotes
+
+    func testED1_blockquotePrefixes() {
+        let text = "> a\n> > b\n>c\n>"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(kind: .blockquote(level: 1), text: "> a", markers: [">"], content: "a"),
+                Shape(kind: .blockquote(level: 2), text: "> > b", markers: [">", ">"], content: "b"),
+                Shape(kind: .blockquote(level: 1), text: ">c", markers: [">"], content: "c"),
+                Shape(kind: .blockquote(level: 1), text: ">", markers: [">"], content: ""),
+            ])
+        XCTAssertEqual(kinds(in: "> **b**"), [.blockquote(level: 1), .emphasis(.bold)])
+        XCTAssertEqual(kinds(in: "> # H"), [.blockquote(level: 1), .heading(level: 1)])
+        XCTAssertEqual(
+            kinds(in: ">  - [ ] x"),
+            [.blockquote(level: 1), .listItem(level: 0, ordered: false), .taskBox(isDone: false)])
+        XCTAssertEqual(kinds(in: "a > b"), [], "only at the line start")
+    }
+
+    // MARK: ED-1 tables
+
+    func testED1_pipeTableRowsAndSeparatorRow() {
+        let text = "| a | b |\n|---|:-:|\n| 1 | 2 |\nplain\n\n| x |"
+        XCTAssertEqual(
+            shapes(in: text),
+            [
+                Shape(kind: .tableRow, text: "| a | b |", markers: ["|", "|", "|"], content: "| a | b |"),
+                Shape(kind: .tableSeparator, text: "|---|:-:|", markers: ["|", "|", "|"], content: "|---|:-:|"),
+                Shape(kind: .tableRow, text: "| 1 | 2 |", markers: ["|", "|", "|"], content: "| 1 | 2 |"),
+            ])
+        XCTAssertEqual(kinds(in: "a | b\n-|-\n1 | 2"), [.tableRow, .tableSeparator, .tableRow], "outer pipes optional")
+        XCTAssertEqual(kinds(in: "| **a** |\n|-|"), [.tableRow, .emphasis(.bold), .tableSeparator])
+        XCTAssertEqual(shapes(in: "| a \\| b |\n|-|").first?.markers, ["|", "|"], "an escaped pipe is text")
+        XCTAssertEqual(kinds(in: "|-|"), [], "a separator needs a header row")
+        XCTAssertEqual(kinds(in: "a | b\n\n-|-"), [], "directly above it")
+        XCTAssertEqual(kinds(in: "a\n---"), [.heading(level: 2)], "no pipe: a setext underline")
+    }
+
+    // MARK: ED-8 thematic breaks
+
+    func testED8_thematicBreakNeedsABlankLineBeforeOrTheDocumentStart() {
+        XCTAssertEqual(
+            shapes(in: "---"), [Shape(kind: .thematicBreak, text: "---", markers: ["---"], content: "")])
+        XCTAssertEqual(kinds(in: "* * *"), [.thematicBreak])
+        XCTAssertEqual(kinds(in: "___"), [.thematicBreak])
+        XCTAssertEqual(kinds(in: "   -  -  -  "), [.thematicBreak])
+        XCTAssertEqual(kinds(in: "-----"), [.thematicBreak])
+        XCTAssertEqual(kinds(in: "text\n\n***"), [.thematicBreak])
+        XCTAssertEqual(kinds(in: "text\n***"), [], "no blank line before: not a break")
+        XCTAssertEqual(kinds(in: "text\n---"), [.heading(level: 2)], "a setext underline instead")
+        XCTAssertEqual(kinds(in: "# h\n---"), [.heading(level: 1)], "a heading is not a paragraph line")
+        XCTAssertEqual(kinds(in: "---\n---"), [.thematicBreak], "a break is not a blank line")
+        XCTAssertEqual(kinds(in: "--"), [], "three or more")
+        XCTAssertEqual(kinds(in: "-*-"), [], "one character")
+        XCTAssertEqual(kinds(in: "--- a"), [], "nothing else on the line")
+        XCTAssertEqual(kinds(in: "    ---"), [], "at most three spaces of indent")
+        XCTAssertEqual(
+            kinds(in: "> a\n>\n> ***"),
+            [.blockquote(level: 1), .blockquote(level: 1), .blockquote(level: 1), .thematicBreak])
+    }
+
+    // MARK: ED-9 setext headings
+
+    func testED9_setextHeadingUnderText() {
+        let text = "Title\n==="
+        XCTAssertEqual(
+            shapes(in: text), [Shape(kind: .heading(level: 1), text: text, markers: ["==="], content: "Title")])
+        XCTAssertEqual(shapes(in: "Sub\n---").map(\.kind), [.heading(level: 2)])
+        XCTAssertEqual(shapes(in: "Sub\n-").map(\.kind), [.heading(level: 2)], "one character is enough")
+        XCTAssertEqual(shapes(in: "Two\nlines\n---").map(\.content), ["lines"], "the line directly above")
+        XCTAssertEqual(shapes(in: "a \n  === ").map(\.content), ["a"], "trimmed")
+        XCTAssertEqual(kinds(in: "a\n\n==="), [], "a blank line between: neither heading nor break")
+        XCTAssertEqual(kinds(in: "a\n=-="), [], "one character only")
+        XCTAssertEqual(
+            kinds(in: "- item\n---"), [.listItem(level: 0, ordered: false)], "a list item is not a paragraph line")
+        XCTAssertEqual(kinds(in: "> q\n> ---"), [.blockquote(level: 1), .heading(level: 2), .blockquote(level: 1)])
+        XCTAssertEqual(kinds(in: "> q\n---"), [.blockquote(level: 1)], "quote levels must match")
+        XCTAssertEqual(
+            kinds(in: "Title #t\n==="), [.heading(level: 1), .tag(name: NSRange(location: 7, length: 1))],
+            "the heading comes before the tokens on its text line")
+        XCTAssertEqual(MarkdownScanner.scan("Title\n===\nbody").first?.range, NSRange(location: 0, length: 9))
+    }
+
+    // MARK: ED-1 exclusion in code
+
+    func testED1_constructsInsideCodeSpansAreExcluded() {
+        let text = "`**a** [b](c) <d:e> https://f.g ~~h~~ - > |`"
+        XCTAssertEqual(kinds(in: text), [.inlineCode])
+        XCTAssertEqual(shapes(in: "**`a**`**").map(\.kind), [.emphasis(.bold), .inlineCode], "code binds first")
+        XCTAssertEqual(shapes(in: "**`a**`**").map(\.content), ["`a**`", "a**"])
+    }
+
+    func testED1_constructsInsideFencedBlocksAreExcluded() {
+        let text = "```\n**a** [b](c) <d:e>\n- item\n> q\n\n---\n| a |\n|-|\nTitle\n===\nhttps://f.g\n```\n"
+        XCTAssertEqual(kinds(in: text), [.fencedCode])
+    }
+
+    // MARK: ED-1 markers and content
+
+    func testED1_everyKindCarriesMarkersAndContentSeparately() {
+        XCTAssertEqual(
+            shapes(in: "## Title  "),
+            [Shape(kind: .heading(level: 2), text: "## Title  ", markers: ["##"], content: "Title")])
+        XCTAssertEqual(
+            shapes(in: "``a``"), [Shape(kind: .inlineCode, text: "``a``", markers: ["``", "``"], content: "a")])
+        XCTAssertEqual(
+            shapes(in: "```swift\nx\n```\n"),
+            [Shape(kind: .fencedCode, text: "```swift\nx\n```\n", markers: ["```swift", "```"], content: "x\n")])
+        XCTAssertEqual(shapes(in: "```\nx").first?.markers, ["```"], "an unclosed fence has no closing marker")
+        XCTAssertEqual(shapes(in: "```\nx").first?.content, "x")
+        XCTAssertEqual(
+            shapes(in: "![[a|b]]").map { ($0.markers, $0.content) }.first.map { "\($0.0) \($0.1)" },
+            "[\"![[\", \"]]\"] a|b")
+        XCTAssertEqual(shapes(in: "#t").first?.markers, ["#"])
+        XCTAssertEqual(shapes(in: "#t").first?.content, "t")
+    }
+
+    func testED1_tokensAreInDocumentOrderEnclosingFirst() {
+        let text = "> - **a *b* c** [d](e)\n> ---"
+        let scanned = MarkdownScanner.scan(text)
+        XCTAssertEqual(
+            scanned.map(\.kind),
+            [
+                .blockquote(level: 1), .listItem(level: 0, ordered: false), .emphasis(.bold), .emphasis(.italic),
+                .link(url: NSRange(location: 20, length: 1), isImage: false), .blockquote(level: 1),
+            ])
+        for (a, b) in zip(scanned, scanned.dropFirst()) {
+            XCTAssertLessThanOrEqual(a.range.location, b.range.location)
+            if a.range.location == b.range.location { XCTAssertGreaterThanOrEqual(a.range.length, b.range.length) }
+        }
     }
 }

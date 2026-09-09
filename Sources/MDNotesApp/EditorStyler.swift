@@ -58,14 +58,19 @@ public final class EditorStyler {
         case fencedCode
 
         /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
-        /// `.ambiguousLink` only once its target has been resolved (K-2).
-        init(_ kind: MarkdownScanner.Kind) {
+        /// `.ambiguousLink` only once its target has been resolved (K-2). Nil for the kinds
+        /// the scanner yields that have no styling yet (ED-1's emphasis, links, lists, quotes,
+        /// tables and rules, styled by M10.2 onward).
+        init?(_ kind: MarkdownScanner.Kind) {
             switch kind {
             case .heading: self = .heading
             case .wikilink: self = .wikilink
             case .tag: self = .tag
             case .inlineCode: self = .inlineCode
             case .fencedCode: self = .fencedCode
+            case .emphasis, .link, .autolink, .bareURL, .listItem, .taskBox, .blockquote, .tableRow,
+                .tableSeparator, .thematicBreak:
+                return nil
             }
         }
     }
@@ -250,8 +255,10 @@ public final class EditorStyler {
             let style: TokenStyle
             if case .wikilink(let target, _, let isEmbed) = token.kind {
                 style = linkStyle(target: target, isEmbed: isEmbed, in: text, index: index)
+            } else if let styled = TokenStyle(token.kind) {
+                style = styled
             } else {
-                style = TokenStyle(token.kind)
+                continue
             }
             storage.addAttributes(attributes(for: style), range: text.storageRange(forFileRange: token.range))
         }

@@ -232,7 +232,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 
 ## M10: Halfway editor: in-place markdown styling, rich paste, rules and banding
 
-- [ ] M10.1 `MarkdownScanner` grows to the full block and inline set (ED-1): emphasis (`**`, `__`,
+- [x] M10.1 `MarkdownScanner` grows to the full block and inline set (ED-1): emphasis (`**`, `__`,
       `*`, `_` at word boundaries, `~~`), standard links `[t](u)`, images `![a](u)`,
       autolinks `<u>` and bare http(s) URLs, list items (bullet, ordered, task, nesting by
       two spaces), blockquote prefixes, pipe-table rows and separator rows, thematic breaks

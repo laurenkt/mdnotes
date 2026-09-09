@@ -56,7 +56,8 @@ public struct NoteReferences: Hashable, Sendable {
             case .tag(let name):
                 let tag = text.substring(with: name)
                 if seenTags.insert(tag).inserted { tags.append(tag) }
-            case .heading, .inlineCode, .fencedCode:
+            case .heading, .inlineCode, .fencedCode, .emphasis, .link, .autolink, .bareURL, .listItem, .taskBox,
+                .blockquote, .tableRow, .tableSeparator, .thematicBreak:
                 break
             }
         }
