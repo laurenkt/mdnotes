@@ -221,7 +221,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M9.3 Instantiation (TP-4): expand path, apply C-3 checks, open-if-exists, else create with
       folders and expanded body, caret at cursor. Tests: existing path opens without writing,
       new path creates, illegal path refused.
-- [ ] M9.4 Template mode in the search field (TP-5): `@` prefix, list shows templates with
+- [x] M9.4 Template mode in the search field (TP-5): `@` prefix, list shows templates with
       expanded path as snippet, Enter with remaining words as title, inline prompt when title
       is required, `@` alone lists all. Smoke tests for each rule and for Escape.
 - [ ] M9.5 `File > New from Template` submenu (TP-6) built from `TemplateStore`, prompting

@@ -21,9 +21,10 @@ import Synchronization
 /// is folded into the snapshot like `apply(_:)` does, and is then reported through
 /// `onExternalChanges`.
 ///
-/// The templates (TP-1) are listed by name once the root has been walked and again after
-/// every batch that names one, so `templateNames` follows `templates/` on disk the way the
-/// snapshot follows the notes (TP-7). A template is never in the snapshot.
+/// The templates (TP-1) are listed by name, and read and parsed (TP-2), once the root has
+/// been walked and again after every batch that names one, so `templateNames` and
+/// `parsedTemplates` follow `templates/` on disk the way the snapshot follows the notes
+/// (TP-7). A template is never in the snapshot.
 ///
 /// Evicted notes are asked for without anyone opening them (L-9, ADR-0009): after the scan
 /// `start()` makes, which is also the full rescan a restart makes, and after every watcher
@@ -131,9 +132,17 @@ public final class LibraryController {
     /// after `stop()`. Replaced on the main thread.
     public private(set) var templateNames: [String] = []
 
-    /// Called on the main thread after `templateNames` has been replaced, once per listing:
-    /// after a batch that only changed a template's contents too, with the same names, since
-    /// what the template would create may have changed (TP-2, TP-5).
+    /// The templates in `templateNames`, read and parsed in the same listing (TP-2), by name:
+    /// a usable template, or the rejection the list shows inline for one that does not parse.
+    /// A template whose file could not be read is absent. Template mode expands each one's
+    /// path for its row's snippet and checks whether it needs a title before Enter
+    /// instantiates it (TP-5). Replaced on the main thread together with `templateNames`.
+    public private(set) var parsedTemplates: [String: Result<TemplateParser.Template, TemplateParser.Rejection>] = [:]
+
+    /// Called on the main thread after `templateNames` and `parsedTemplates` have been
+    /// replaced, once per listing: after a batch that only changed a template's contents too,
+    /// with the same names, since what the template would create may have changed (TP-2,
+    /// TP-5).
     public var onTemplateNamesChange: (@MainActor ([String]) -> Void)?
 
     /// How many notes are dataless, with the boot volume's free space while any are (L-10).
@@ -288,9 +297,11 @@ public final class LibraryController {
 
     // MARK: - Templates (TP-1, TP-7)
 
-    /// Lists `templates/` on the calling queue and hands the names to the main thread, where
-    /// they are published unless `generation` is stale by then. A folder that cannot be listed
-    /// is reported on the log and leaves the names as they were.
+    /// Lists `templates/` on the calling queue, reads and parses each template (TP-2), and
+    /// hands the names and the parsed templates to the main thread, where they are published
+    /// unless `generation` is stale by then. A folder that cannot be listed is reported on the
+    /// log and leaves the names as they were; a template that cannot be read is reported and
+    /// listed by name alone.
     nonisolated private func listTemplates(generation: Int) {
         dispatchPrecondition(condition: .onQueue(queue))
         let names: [String]
@@ -300,23 +311,34 @@ public final class LibraryController {
             log("could not list \(templates.directory.path): \(error)")
             return
         }
+        var parsed: [String: Result<TemplateParser.Template, TemplateParser.Rejection>] = [:]
+        for name in names {
+            do {
+                parsed[name] = try templates.read(name)
+            } catch {
+                log("could not read \(templates.url(for: name).path): \(error)")
+            }
+        }
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
                 guard generation == self.generation else { return }
-                self.publishTemplateNames(names)
+                self.publishTemplateNames(names, parsed: parsed)
             }
         }
     }
 
-    private func publishTemplateNames(_ names: [String]) {
+    private func publishTemplateNames(
+        _ names: [String], parsed: [String: Result<TemplateParser.Template, TemplateParser.Rejection>]
+    ) {
         templateNames = names
+        parsedTemplates = parsed
         onTemplateNamesChange?(names)
     }
 
     /// `start()` and `stop()`: no templates are known until the next listing says otherwise.
     private func resetTemplateNames() {
         guard !templateNames.isEmpty else { return }
-        publishTemplateNames([])
+        publishTemplateNames([], parsed: [:])
     }
 
     // MARK: - Watching (X-1, E-6)

@@ -80,6 +80,18 @@ public final class NoteRowView: NSTableCellView {
         setDateText(dateText)
     }
 
+    /// Fills the row for a template in template mode (TP-5, ADR-0014's second row kind): the
+    /// template's name where a title goes and, as the snippet, the path it would create or
+    /// why it cannot be used. No date and no thumbnail: a template is not a note.
+    public func configure(templateName: String, snippet: String) {
+        titleLabel.stringValue = templateName
+        snippetLabel.stringValue = snippet
+        thumbnailPath = nil
+        thumbnailView.image = nil
+        thumbnailView.isHidden = true
+        setDateText("")
+    }
+
     /// S-11: shows `image`, cropped to its centre square, in the thumbnail view, but only while
     /// the row still shows the note whose image is at `path`: a completion for a row since
     /// recycled to another note is dropped. Nil empties the square: the file is gone or is no

@@ -80,6 +80,14 @@ import MDNotesCore
 /// titles the backlinks item for the strip's current state, and enables the size items while
 /// the size can still move their way (E-8).
 ///
+/// Template mode (TP-5, ADR-0014) is a query whose first character is `@`: `reloadList` then
+/// hands the list the templates the query's name word matches, each with the path it would
+/// create as its snippet, instead of notes, and re-hands them whenever the library re-lists
+/// `templates/` (TP-7). Enter in the field, or on a selected template row, instantiates the
+/// selected template, or the first, with the query's remaining words as the title
+/// (`instantiateTemplate`); a template whose path needs a title is refused inline when none
+/// was typed. Escape leaves the mode as it clears any query (S-7).
+///
 /// The window floats (W-5, ADR-0011): its level is `.floating`, so it stays above other apps'
 /// windows whenever it is visible, and its collection behaviour is `moveToActiveSpace`, so it
 /// follows the user between Spaces. Anything that must appear above it (the completion panel,
@@ -116,8 +124,17 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
 
     /// Called on the main thread once `instantiateTemplate(named:title:in:)` has settled
     /// (TP-4): with the note that was created or opened, or nil when the template was refused
-    /// or the write failed.
+    /// or the write failed. Enter in template mode (TP-5) reports here too, with nil when
+    /// nothing was instantiated because no template was listed or a title was missing.
     public var onInstantiateTemplate: (@MainActor (NoteID?) -> Void)?
+
+    /// What the date tokens of a template see in template mode (TP-3, TP-5): for the paths
+    /// the rows show and for the template Enter instantiates. Now, in the local time zone, by
+    /// default; tests pin it. Asked each time, so a row made after midnight shows that day.
+    public var templateEnvironment: @MainActor () -> TemplateParser.Environment = { .init() }
+
+    /// True while the query is in template mode (TP-5): its first character is `@`.
+    public var isInTemplateMode: Bool { TemplateQuery.isTemplateMode(query) }
 
     /// Called on the main thread once opening a link (K-3) has settled: with the link's target
     /// and the note that was opened or created for it, or nil when the target could not name a
@@ -191,7 +208,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.searchField.action = #selector(searchFieldDidSendAction(_:))
         // S-7 and S-8 keyboard flow between the field, the list and the editor.
         view.tableView.onMoveUpFromFirstRow = { [weak self] in self?.focusSearchField(nil) }
-        view.tableView.onActivateSelectedRow = { [weak self] in self?.focusEditor() }
+        view.tableView.onActivateSelectedRow = { [weak self] in self?.activateSelectedRow() }
         view.tableView.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         editorController.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         // L-7, L-8: the bar above the editor says why a loaded body is read-only.
@@ -239,6 +256,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         library.onSnapshotChange = { [weak self] snapshot in self?.libraryDidPublish(snapshot) }
         library.onExternalChanges = { [weak self] changes in self?.libraryDidChangeExternally(changes) }
         library.onEvictionStatusChange = { [weak self] _ in self?.refreshEvictionBar() }
+        // TP-7 into TP-5: a re-listed `templates/` changes the rows template mode shows.
+        library.onTemplateNamesChange = { [weak self] _ in self?.templatesDidChange() }
         libraryDidPublish(library.snapshot)
     }
 
@@ -253,6 +272,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         library.onSnapshotChange = nil
         library.onExternalChanges = nil
         library.onEvictionStatusChange = nil
+        library.onTemplateNamesChange = nil
         self.library = nil
         listController.imageRoot = nil
         pendingRenames = [:]
@@ -260,7 +280,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         refreshEvictionBar()
         listController.cancelEditingTitle()
         editorController.clear()
-        listController.show(SearchIndex.empty.query(query))
+        showList()
         refreshBacklinks()
     }
 
@@ -318,11 +338,17 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// under the field and nothing is written (C-3). Creation is asynchronous: the file is
     /// written off the main thread, and once the snapshot lists the note it is selected and
     /// the empty editor focused, with the query left in the field (C-4). `onCommitQuery`
-    /// reports the outcome.
+    /// reports the outcome. A query in template mode instantiates a template instead
+    /// (`commitTemplateQuery`, TP-5), and reports through `onInstantiateTemplate`.
     @discardableResult
     public func commitQuery() -> Bool {
+        guard let library else { return false }
+        if let templateQuery = TemplateQuery(mainView.searchField.stringValue) {
+            commitTemplateQuery(templateQuery, in: library)
+            return true
+        }
         let text = mainView.searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let library else { return false }
+        guard !text.isEmpty else { return false }
         hideInlineMessage()
         if let existing = existingNote(matching: text, in: library.snapshot) {
             open(existing)
@@ -363,6 +389,66 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             if titleMatch == nil, CaseFolding.areEqual(entry.id.title, text) { titleMatch = entry.id }
         }
         return titleMatch
+    }
+
+    // MARK: - Template mode (TP-5)
+
+    /// Enter with the query in template mode (TP-5): instantiates the selected template row,
+    /// or the first row when none is selected, with the query's title words as `{{title}}`
+    /// (`instantiateTemplate`). With no row listed, because the name word matches no template
+    /// or there are none, the reason is shown under the field. A template whose path needs
+    /// `{{title}}` is refused inline when the query has no title words, and nothing is
+    /// created; a template that could not be read or parsed is left to `instantiateTemplate`
+    /// to refuse with its own reason (TP-2). `onInstantiateTemplate` reports every outcome.
+    private func commitTemplateQuery(_ templateQuery: TemplateQuery, in library: LibraryController) {
+        hideInlineMessage()
+        guard let name = listController.selectedTemplate?.name ?? listController.templateRows?.first?.name else {
+            showInlineMessage(
+                templateQuery.filter.isEmpty
+                    ? "There are no templates: put one in \(TemplateStore.folderName)/."
+                    : "No template is called \u{201C}\(templateQuery.filter)\u{201D}.")
+            onInstantiateTemplate?(nil)
+            return
+        }
+        if templateQuery.title.isEmpty, case .success(let template)? = library.parsedTemplates[name],
+            template.pathNeedsTitle
+        {
+            showInlineMessage(
+                "\u{201C}\(name)\u{201D} needs a title: type it after the name, as in @\(name) My title.")
+            onInstantiateTemplate?(nil)
+            return
+        }
+        instantiateTemplate(named: name, title: templateQuery.title, in: templateEnvironment())
+    }
+
+    /// The rows template mode shows for `templateQuery` (TP-5): the library's templates whose
+    /// names the query's filter matches, in the library's order, each with the path it would
+    /// create for the query's title as its snippet (TP-3). With no title typed, `{{title}}`
+    /// is left as it is in the path, so the row shows where the title would go; a template
+    /// that does not parse shows its rejection instead (TP-2), and one that could not be read
+    /// shows nothing.
+    private func templateRows(for templateQuery: TemplateQuery) -> [NoteListController.TemplateRow] {
+        guard let library else { return [] }
+        let environment = templateEnvironment()
+        let title = templateQuery.title.isEmpty ? "{{title}}" : templateQuery.title
+        return templateQuery.names(matching: library.templateNames).map { name in
+            let snippet: String
+            switch library.parsedTemplates[name] {
+            case .success(let template)?:
+                snippet = template.expandedPath(title: title, in: environment)
+            case .failure(let rejection)?:
+                snippet = rejection.message
+            case nil:
+                snippet = ""
+            }
+            return NoteListController.TemplateRow(name: name, snippet: snippet)
+        }
+    }
+
+    /// The library re-listed `templates/` (TP-7): rows on show in template mode follow it.
+    private func templatesDidChange() {
+        guard isInTemplateMode else { return }
+        reloadList()
     }
 
     // MARK: - Templates: instantiation (TP-4)
@@ -827,6 +913,16 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         window?.makeFirstResponder(mainView.textView)
     }
 
+    /// Tab or Enter on a selected row: in note mode the editor is focused (S-8); in template
+    /// mode the selected template is instantiated, as Enter in the field would (TP-5).
+    public func activateSelectedRow() {
+        if listController.isShowingTemplates {
+            commitQuery()
+        } else {
+            focusEditor()
+        }
+    }
+
     private func libraryDidPublish(_ snapshot: SearchIndex) {
         // R-2, D-2: a rename of ours has landed. The note is the same; only its id changed.
         for (oldID, newID) in pendingRenames
@@ -854,15 +950,26 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
 
     /// Queries the current snapshot with `query` and hands the results to the list. The
     /// snapshot is immutable and already on the main thread, so this is the whole PF-2 path.
+    /// In template mode the list gets the templates the query names instead (TP-5).
     private func reloadList() {
-        let snapshot = library?.snapshot ?? .empty
-        listController.show(snapshot.query(query))
+        showList()
         // The editor shows a note that is listed but not selected: it was opened while the
         // query did not list it, or X-4 held its edits until typing recreated the file. The
         // list catches up so the two agree (S-8); the editor is not reloaded for it.
         if listController.selectedID == nil, let id = editorController.noteID, !editorController.holdsEditsOfDeletedNote
         {
             listController.select(id)
+        }
+    }
+
+    /// Hands the list what `query` shows: the templates it names in template mode (TP-5), the
+    /// current snapshot's results otherwise, with `fallbackRow` as `NoteListController.show`
+    /// takes it. No library shows no notes and no templates.
+    private func showList(fallbackRow: Int? = nil) {
+        if let templateQuery = TemplateQuery(query) {
+            listController.show(templates: templateRows(for: templateQuery))
+        } else {
+            listController.show((library?.snapshot ?? .empty).query(query), fallbackRow: fallbackRow)
         }
     }
 
@@ -878,7 +985,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         let row = listController.selectedID == id ? mainView.tableView.selectedRow : -1
         editorController.noteWasDeleted()
         let fallbackRow = row >= 0 && !editorController.holdsEditsOfDeletedNote ? row : nil
-        listController.show(snapshot.query(query), fallbackRow: fallbackRow)
+        showList(fallbackRow: fallbackRow)
         refreshBacklinks()
     }
 

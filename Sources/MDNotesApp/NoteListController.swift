@@ -21,6 +21,14 @@ import MDNotesCore
 /// snapshot are root-relative, so `imageRoot` is needed before any thumbnail is looked up.
 /// An image file that changes on disk without its note changing reaches the rows through
 /// `imagesDidChange` (X-1), since a cached image is shown without asking the file.
+///
+/// TP-5: in template mode the list shows templates instead of notes, ADR-0014's second row
+/// kind: `show(templates:)` replaces the rows with one per `TemplateRow`, name on the title
+/// line and the path it would create as the snippet, and `results` is empty until the next
+/// `show(_:fallbackRow:)`. A template row can be selected (Down from the field, S-7) and
+/// `selectedTemplate` names it, but it is not a note: `selectedEntry` and `selectedID` are
+/// nil, so `onSelectionChange` reports the note selection gone when the mode is entered and
+/// stays quiet while template rows are chosen, and a title cannot be edited.
 @MainActor
 public final class NoteListController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     /// Every row is this tall (S-6).
@@ -35,8 +43,27 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     /// shows a thumbnail; the owner sets it when a library is attached and clears it after.
     public var imageRoot: URL?
 
-    /// What the list is showing, in row order.
+    /// One row of template mode (TP-5): a template's name and, as its snippet, the path it
+    /// would create for the query's title, or why it cannot be used (TP-2).
+    public struct TemplateRow: Hashable, Sendable {
+        public let name: String
+        public let snippet: String
+
+        public init(name: String, snippet: String) {
+            self.name = name
+            self.snippet = snippet
+        }
+    }
+
+    /// The notes the list is showing, in row order; empty in template mode.
     public private(set) var results: SearchIndex.Results
+
+    /// The templates the list is showing instead of notes (TP-5), in row order, or nil in
+    /// note mode.
+    public private(set) var templateRows: [TemplateRow]?
+
+    /// True while the list shows templates (TP-5).
+    public var isShowingTemplates: Bool { templateRows != nil }
 
     /// The id of the selected row's note, kept across reloads.
     public private(set) var selectedID: NoteID?
@@ -56,7 +83,7 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     public private(set) var editingTitleOfID: NoteID?
     private var editingRowView: NoteRowView?
     /// The last `show` made while a title was being edited, applied once the edit ends.
-    private var deferredShow: (results: SearchIndex.Results, fallbackRow: Int?)?
+    private var deferredShow: (@MainActor () -> Void)?
     /// True while `endEditingTitle` itself moves focus off the field, so the field editor's
     /// end-of-editing notification is not taken for the user leaving the field.
     private var isEndingTitleEdit = false
@@ -106,11 +133,18 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
         }
     }
 
-    /// The entry on the selected row, if any.
+    /// The entry on the selected row, if any. Nil in template mode.
     public var selectedEntry: SearchIndex.Entry? {
         let row = tableView.selectedRow
         guard row >= 0, row < results.count else { return nil }
         return results[row]
+    }
+
+    /// The template on the selected row (TP-5), if any. Nil in note mode.
+    public var selectedTemplate: TemplateRow? {
+        let row = tableView.selectedRow
+        guard let templateRows, row >= 0, row < templateRows.count else { return nil }
+        return templateRows[row]
     }
 
     /// The modified date as a row shows it (S-9), seen from `now`.
@@ -138,9 +172,10 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     public func show(_ results: SearchIndex.Results, fallbackRow: Int? = nil) {
         // R-1: a reload would remake the row whose title is being edited, ending the edit.
         if editingTitleOfID != nil {
-            deferredShow = (results, fallbackRow)
+            deferredShow = { [weak self] in self?.show(results, fallbackRow: fallbackRow) }
             return
         }
+        templateRows = nil
         self.results = results
         tableView.reloadData()
         if let selectedID, let row = results.firstIndex(where: { $0.id == selectedID }) {
@@ -157,8 +192,31 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
         syncSelection()
     }
 
+    /// TP-5: replaces the list's contents with template rows, one per element of `rows`, in
+    /// that order, and empties `results`. The selected template stays selected by name if it
+    /// is still listed; otherwise nothing is selected. A note that was selected is no longer:
+    /// `onSelectionChange` reports nil, as it does for a query that stops listing the note.
+    public func show(templates rows: [TemplateRow]) {
+        if editingTitleOfID != nil {
+            deferredShow = { [weak self] in self?.show(templates: rows) }
+            return
+        }
+        let selectedName = selectedTemplate?.name
+        templateRows = rows
+        results = SearchIndex.empty.query("")
+        tableView.reloadData()
+        if let selectedName, let row = rows.firstIndex(where: { $0.name == selectedName }) {
+            if tableView.selectedRow != row {
+                tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            }
+        } else if tableView.selectedRow >= 0 {
+            tableView.deselectAll(nil)
+        }
+        syncSelection()
+    }
+
     /// Selects the row showing `id` and scrolls it into view. Returns false, changing nothing,
-    /// when the note is not listed.
+    /// when the note is not listed, as none is in template mode.
     @discardableResult
     public func select(_ id: NoteID) -> Bool {
         guard let row = results.firstIndex(where: { $0.id == id }) else { return false }
@@ -282,14 +340,14 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
         view.endEditingTitle(showing: id.title)
         if let deferred = deferredShow {
             deferredShow = nil
-            show(deferred.results, fallbackRow: deferred.fallbackRow)
+            deferred()
         }
     }
 
     // MARK: - NSTableViewDataSource
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        results.count
+        templateRows?.count ?? results.count
     }
 
     // MARK: - NSTableViewDelegate
@@ -297,6 +355,12 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let view =
             tableView.makeView(withIdentifier: NoteRowView.identifier, owner: nil) as? NoteRowView ?? NoteRowView()
+        if let templateRows {
+            // TP-5: the second row kind.
+            let template = templateRows[row]
+            view.configure(templateName: template.name, snippet: template.snippet)
+            return view
+        }
         let entry = results[row]
         view.configure(entry: entry, dateText: dateText(for: entry.modifiedAt))
         showThumbnail(in: view, for: entry)
