@@ -226,7 +226,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       is required, `@` alone lists all. Smoke tests for each rule and for Escape.
 - [x] M9.5 `File > New from Template` submenu (TP-6) built from `TemplateStore`, prompting
       inline when a title is needed. Smoke test on menu contents and action.
-- [ ] M9.6 Manual acceptance pass for M9 and the whole of v2 against `docs/ACCEPTANCE.md`;
+- [x] M9.6 Manual acceptance pass for M9 and the whole of v2 against `docs/ACCEPTANCE.md`;
       discrepancies become tasks above this line.
 - [ ] M9.7 Tag `v0.2.0`.
 

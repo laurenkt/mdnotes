@@ -7,6 +7,94 @@ release tag; the setup and the driving scripts it needs are described at the end
 Result key: **pass**, **fail** (task named), **gate** (enforced by `scripts/check.sh full`,
 not checkable by hand), **n/a by hand** (why), **blocked** (question in `QUESTIONS.md`).
 
+## Pass of 2026-09-09 (M9.6, v5)
+
+Build: debug `swift test` via `scripts/check.sh quick` at commit 1be6a68 (code as of a6afbc5,
+M9.5), macOS 26.2: 744 tests green, the 8 perf gates skipped in the debug run and run by the full
+gate at commit. No app was launched: the human's instance was running on the real library, so
+template mode's window was inspected through the V-1 snapshot `TemplateModeSmokeTests` writes
+(`build/snapshots/template-list-{light,dark}.png`, opened and compared against W-6 and direction
+B on the ADR-0013 canvas), the menu through `MenuSmokeTests` over a real `AppDelegate` launch, and
+the parser, the store, the query grammar and instantiation both through their 86 tests
+(`TemplateParserTests`, `TemplateStoreTests`, `TemplateQueryTests`, `TemplateInstantiationTests`,
+`TemplateListSmokeTests`, `TemplateInstantiateSmokeTests`, `TemplateModeSmokeTests`, the `testTP*`
+in `MenuSmokeTests` and `FSEventsWatcherTests`) and by hand, from a probe compiled against the
+`MDNotesCore` sources (`swiftc Sources/MDNotesCore/*.swift probe.swift`) over a temp library in
+the local time zone (Europe/London, en_GB, 05:26 BST on Wednesday 9 September 2026). Scope: the
+eleven IDs M9.1 to M9.5 cite, plus L-3 and TP-8, which TP-1 and ADR-0014 name. Every other ID
+stands as recorded in the M8.6, M7.6, M6.9, v0.1.0 and M5.6 passes and is re-checked in the
+roll-up below.
+
+Summary: 13 IDs; 12 pass, 0 fail, 1 pass on the mechanism and blocked on Q3 for the spec's own
+example (TP-8, non-blocking). No task was added; one observation on the V-1 helper is recorded as
+I-9 (see V-1).
+
+| ID   | Result | Notes |
+|------|--------|-------|
+| TP-1 | pass | Probe: a `templates/` holding `colon.md`, `Daily.md`, `existing.md`, `headless.md`, `meeting.md`, `trash.md`, `notes.txt`, `.hidden.md` and `sub/nested.md` lists `colon, Daily, existing, headless, meeting, trash`: names are the file names without `.md`, sorted case-insensitively, the `.txt`, the hidden file and the nested one left out. `LibraryScanner.scan` of the same root lists `Alpha.md` and `daily/Beta.md` only, so no template is a note (L-3), and `TemplateStore.name(forRelativePath:)` names `templates/meeting.md` and nothing under `templates/sub/` or outside the folder. `testTP1_templatesAreListedByNameAfterStartAndAreNotNotes` shows the same through `LibraryController.templateNames` and the snapshot. |
+| TP-2 | pass | Probe: a header with `path` and an `other:` key parses to the path and the body after the closing fence; `no header`, an unclosed header and a header without `path` are refused with `This template has no header: it must start with a “---” line.`, `This template's header is not closed with a “---” line.` and `This template's header has no “path”.` The `template-list` snapshot lists `headless` with the first of those as its snippet, and Enter on it (`testTP2_enterOnATemplateThatDoesNotParseIsRefusedWithItsOwnReason`) or choosing it from the menu (`testTP2_choosingATemplateThatDoesNotParseIsRefusedInlineAndCreatesNothing`) puts the same line under the field and creates nothing. |
+| TP-3 | pass | Probe in the local zone: `{{date:yyyy-MM-dd}}` gives `2026-09-09`, `MMMM` `September`, `EEEE` `Wednesday`, `HH` `05` (local, not UTC's 04), `mm` `26`; `{{title}}` is the title in path and body; `{{cursor}}` is removed from the body and marks the caret (`# Standup 05:26\n\ntail\n`, offset 17) and is literal text in a path; `{{nope}}` and `{{date}}` are left as written. The letters TP-3 lists as examples are not all what a Unicode pattern means by them: `YYYY` gives `2026` today but is the week-based year, `DD` gives `252` (day of the year) and `dddd` `0009`; Q3 (non-blocking) asks which the spec should say and is left to the human, not resolved here. |
+| TP-4 | pass | Probe: `meeting` with the title `Standup` creates `meetings/2026-09-09/Standup.md`, both folders made, body `# Standup\n\n\n`, caret offset 11 where `{{cursor}}` was; the same again reports the note found, no cursor, and the file is unchanged; `Daily` with no title creates `daily/2026-09-09.md` holding `# Wednesday\n`; `existing`, whose path is `daily/Beta`, opens the existing `daily/Beta.md` and leaves `beta\n` in it. The write goes through the same `NoteStore.create` as C-2 (atomic, E-5). `TemplateInstantiateSmokeTests`: the note is listed and opened with the editor focused and the caret at the cursor or, without one, at the end; instantiating twice writes nothing the second time. |
+| C-3  | pass | Probe: `colon` with the title `Plan` (`Plan: notes`) is refused with `“:” cannot be used in a note name.`, `meeting` with no title (an empty last segment) with `A folder or note name cannot be empty.`, the title `a/../b` with `“..” is not a folder name.`, and `trash` (`Trash/x`) with `“Trash” is reserved and cannot hold notes.`; nothing was created in any case (the root held exactly the four expected notes afterwards). `testC3_everyRuleRefusesTheExpandedPathAndNamesIt` covers every rule; `testC3_enterOnATemplateWhoseExpandedPathIsIllegalIsRefusedInline` shows the line under the field. |
+| TP-5 | pass | `template-list` snapshot, light and dark, 800 × 600 pt: `@` in the field lists the five templates in place of the notes, the name in the row's semibold title face and the expanded path as the secondary snippet (`daily/2026-09-09`, `daily/Beta`, `meetings/2026-09-09/{{title}}` with the token left where the title will go, `{{title}}: notes`, and the TP-2 reason for `headless`), no date and no thumbnail square, the editor below empty. Probe of the grammar: `@` and `@ ` give an empty filter and every name; `@Meet` filters to `meeting` and `Weekly-meeting` (S-2: case-folded substring, order kept); `@meeting Standup with  two   spaces` gives the title `Standup with two spaces`; `hello @x` and an empty query are not template mode. `TemplateModeSmokeTests` (19) drive the rest through the real field editor: every keystroke reloads the rows, Enter acts on the first row or the selected one with the remaining words as the title (`meetings/2026-09-09/Standup.md`), an existing path is opened without a write, `“meeting” needs a title: type it after the name, as in @meeting My title.` is shown with nothing created, `No template is called “…”.` with no match, and Escape from the field or the list clears the query and leaves the mode (S-7). |
+| TP-6 | pass | `MenuSmokeTests` over a real `AppDelegate` launch: File › `New from Template` is a submenu without a shortcut holding a disabled `No Templates` row over a library with none; opened over one with templates (`TemplateMenuDelegate.menuNeedsUpdate`) it holds one row per name in the library's order, each sending `newFromTemplate(_:)` down the responder chain with the name as `representedObject`, enabled only with a library open; a template written to disk (`weekly`) is a row the next time it opens and a removed one (`headless`) is gone, through the real watcher (TP-7). Choosing `daily` with focus in the editor creates and opens `daily/2026-09-09.md` (`# Wednesday\n`), editor focused, query left as it was; again opens the same note and writes nothing. Choosing `meeting` writes nothing and puts `@meeting ` in the field with the caret after the space, the `meeting` row selected and the title ask under the field; typing `Standup` clears the ask and Enter creates `meetings/2026-09-09/Standup.md`. `MainWindowController.newFromTemplate` ends in the same `instantiateTemplate` as TP-5. |
+| TP-7 | pass | `FSEventsWatcherTests` report templates by name as they are added, changed, renamed and removed, and every template in a `templates/` folder that arrives or goes; `TemplateListSmokeTests` (real watcher): each of those reaches `LibraryController.templateNames` with no snapshot publish; `testTP7_relistedTemplatesReachTheRowsOnShow` shows rows in template mode following, and the TP-6 test the submenu. A batch naming only templates leaves the index alone (`LibraryChanges.affectsIndex`), so the note path of X-1 is untouched. |
+| TP-8 | pass (mechanism), **blocked** Q3 (example) | `@daily` with `path: daily/{{date:yyyy-MM-dd}}` creates today's note once and opens it every time after (TP-4, `testTP4_instantiatingTwiceOpensTheNoteMadeTheFirstTimeAndWritesNothing`), which is the daily note ADR-0014 wanted. The path as TP-8 spells it expands today to `daily/2026/09-September/252-0009` rather than `…/09-Wednesday`; the Unicode spelling `daily/{{date:yyyy}}/{{date:MM-MMMM}}/{{date:dd-EEEE}}` gives the intended path. Q3 is the human's to answer. |
+| S-2  | pass | Template names filter by the same rule as notes: `TemplateQuery.names(matching:)` folds case and matches a substring, keeping the given order (`testS2_filterMatchesNamesByCaseInsensitiveSubstring`, `testS2_orderIsKeptAsGiven`; `@Meet` above). Note search is untouched: `SearchIndexTests`, `WordSplitterTests` and `SearchSmokeTests` green. |
+| S-7  | pass | `testTP5_escapeInTheFieldLeavesTemplateModeAndClearsTheQuery` and `testTP5_escapeInTheListLeavesTemplateModeAndReturnsToTheField`; Down from the field selects a template row and Enter on it instantiates it (`testTP5_enterActsOnTheSelectedTemplate`); the note-mode flow is as before (`KeyboardFlowSmokeTests`, `testS7_searchItemFocusesTheSearchFieldWithCommandL` green). |
+| L-3  | pass | See TP-1: `templates/` is skipped by the scanner and never indexed, a note-mode query never lists a template (`testTP1_templatesAreNeverNotes`), and a first segment of `templates` is refused on creation (C-3). |
+| V-1  | pass | `writeWindowSnapshots` wrote `template-list` at 1600 × 1200 px for an 800 × 600 pt content view, light and dark differing, on `windowBackgroundColor`; twenty files in all this run. Against W-6 and direction B: the same inset field, hairline, 46 pt rows, semibold title and secondary snippet as the note list; a template row simply has no date and no square, and nothing is custom-drawn. Observation: the test selects row 4 (`meeting`) on the same run-loop turn as the capture, and the light file shows no highlight on that row while the dark one, captured second, shows the inactive grey band; recorded as I-9 against the helper. The rows themselves are laid out alike in both. |
+
+## Roll-up of 2026-09-09 (M9.6, whole of v2)
+
+Same build as the v5 pass. Every ID the v2, v3, v4 and v5 sections list, re-checked on the
+current code: the snapshots of the run above were all opened again (`main-window`, `note-list`,
+`note-list-thumbnails`, `editor-fonts`, `editor-thumbnails`, `eviction-bar`, `settings`,
+`template-list`, light and dark), the tests each earlier pass leaned on ran green in the same
+run, and `git diff --stat` from each pass's commit says which files behind an ID have changed
+since it was checked. Summary: 43 IDs; 33 pass, 0 fail, 5 gate, 4 n/a by hand, 1 blocked (TP-8,
+Q3). Nothing has regressed; two edges have closed since they were recorded (S-11, E-9 via I-8).
+
+| ID   | Result | Notes |
+|------|--------|-------|
+| L-3  | pass | v5. |
+| L-7  | n/a by hand | Still needs an evicted iCloud file; `NoteStoreTests`, `ReadOnlyNoticeSmokeTests` green, `ReadOnlyNoticeBar.swift` unchanged since M6.9. |
+| L-9  | n/a by hand | `DownloadRequester.swift` unchanged since M6.9; `DownloadRequesterTests`, `DownloadRequestSmokeTests` green. |
+| L-10 | n/a by hand | `eviction-bar` snapshot, light and dark, reads as in M6.9 (`2 notes not downloaded from iCloud. Search is incomplete. · 985 MB free`, Open Storage Settings) between the strip and the hairline; `EvictionBar.swift` unchanged; `EvictionBarSmokeTests` green. |
+| S-2  | pass | v5. |
+| S-6  | pass | `note-list` snapshot: title, right-aligned date, one secondary snippet line, 46 pt rows; `BodySnippet.swift` unchanged since M7.6; `BodySnippetTests`, `NoteListSmokeTests` green. |
+| S-7  | pass | v5. |
+| S-9  | pass | `RelativeDateText.swift` unchanged since M6.9; `Today 04:23` and `14 Nov 2023` in the `note-list` snapshot; `NoteListSmokeTests` day-change and key-window tests green. |
+| S-10 | pass | `note-list` and `note-list-thumbnails` snapshots: the sixty-character title ends in an ellipsis with the date whole, and before the square where there is one. `NoteRowView` has changed since M8.6 (template rows, I-8); `NoteListSmokeTests` width tests green. |
+| S-11 | pass | `note-list-thumbnails` snapshot as M8.6 saw it (square on `A sixty…` and `Photo`, none on `Missing` and `Plain`, an empty one on `Broken`). Since M8.6, I-8 makes an image that arrives, changes or goes under `i/` on its own fill, refresh and empty the square through the real watcher (`ImageChangeSmokeTests`, `testS11_*`), closing the edge the v4 pass recorded. |
+| C-3  | pass | v5; `CreateSmokeTests`, `NoteCreationTests` green. |
+| E-2  | pass | `editor-fonts` snapshot: heading semibold, link blue, tag purple, code secondary and monospaced, prose in the base font; `EditorStyler.swift` unchanged since M8.6; `EditorStylingSmokeTests`, `EditorAttachmentSmokeTests` green. |
+| E-3  | gate | `EditorPerfTests` under the full gate at commit; the scope tests in `EditorStylingSmokeTests` and `EditorAttachmentSmokeTests` green. |
+| E-4  | pass | `AutosaveSmokeTests`, `testE9_saveWithAttachmentsWritesOnlyTheFilesText` green. `EditorController` changed since M8.6 only by `placeCaret` (TP-4), which moves the selection and is no edit: `TemplateInstantiateSmokeTests` see the created file equal to the editor's text. |
+| E-5  | pass | `AtomicWriter.swift` unchanged; `AtomicWriterTests`, `AutosaveSmokeTests` green; TP-4 creation is the same atomic write as C-2. |
+| E-8  | pass | `editor-fonts` snapshot: system font 13 pt, monospaced code at the same size; `EditorFontPreference.swift` unchanged since M6.9; `EditorFontSmokeTests` (clamping, persistence, stale family key) green; no font control in the `settings` snapshot. |
+| E-9  | pass | `editor-thumbnails` snapshot, light and dark, as M8.6 described it (240 × 160 pt below `![[one.png]]`, nothing for `missing.png`, `tiny` at 19 pt and `tall` at the 160 pt cap stacked, none for the code-span embed). Since M8.6, I-8 replaces or drops a thumbnail whose file changes or goes on disk and adds one whose file arrives (`ImageChangeSmokeTests`, `testE9_*`), closing the other v4 edge; `EditorThumbnailSmokeTests` green. |
+| K-1  | pass | `FirstImageTests`, `LinkIndexTests`, `MarkdownScannerTests` green; the `Pics` row's snippet keeps the code-span embed as text. |
+| K-3  | pass | `LinkOpeningSmokeTests`, `testE9_linkAndTagLookupsTakeStorageIndicesPastAttachments` green; `linkTarget(at:)` unchanged since M8.6. |
+| I-2  | pass | `testE9_aClickOnAThumbnailOpensTheImageWithTheDefaultApplication` green; `openThumbnail` unchanged since M8.6. |
+| I-3  | pass | `EditorThumbnails.swift:329` is still the one caller of `addAttachment` in `Sources/` (grep); `testE9_anAttachmentThatIsNotAThumbnailIsLeftAlone` green. |
+| T-4  | pass | `TagCompletionSmokeTests` (click searches the tag) and the storage-index test green; `clickInEditor` unchanged since M8.6. |
+| W-2  | pass | `main-window`, `editor-fonts`, `eviction-bar` and `template-list` snapshots: strip, bar when shown, hairline, list, divider, editor, top to bottom; `MainView.swift` unchanged since M7.6; `LayoutSmokeTests` green. |
+| W-3  | pass | `HotKey.swift`, `GlobalHotKey.swift`, `HotKeyRecorder.swift` unchanged since M6.9; `AppDelegate` changed only to hand the template submenu its delegate; `HotKeySmokeTests` (default ⌃⌘N, registration, toggle) green. |
+| W-4  | pass | File › Close is still the one `performClose` item (grep), ⌘W; the five `testW4_*` (close, close button, Dock reopen, hotkey reopen, quit writes edits) green. |
+| W-5  | pass | `WindowLevelSmokeTests` (`.floating`, `moveToActiveSpace`, panel and Settings above) green; `windowLevel` and `overlayLevel` unchanged. |
+| W-6  | pass | `main-window` snapshot matches the M7.6 description: field spanning x 10 to 470 on the window-background strip, 8 pt above and below, one-pixel hairline, then the list; the only `NSColor`s in `Sources/` are still `windowBackgroundColor`, `secondaryLabelColor`, `linkColor` and `systemPurple` (grep); `testW6_titleBarShowsTheWindowTitle` green. |
+| P-2  | pass | `testP2_launchInstallsTheMenuBarWithTheStandardMenusAndNoSaveItem` green over the whole table; the M9.5 rows are built in code by `MainMenu.fillTemplatesMenu`; no `.storyboard`, `.xib` or SwiftUI import under `Sources/`. |
+| PR-1 | pass | `settings` snapshot, light and dark: `Notes folder:` and `Global shortcut:` right-aligned, the path middle-truncated with `Choose…`, the recorder at ⌃⌘N, 20 pt margins, nothing else; `PreferencesWindowController.swift` unchanged since M7.6; `PreferencesSmokeTests` green. |
+| PF-2 | gate | `ListPerfTests`, `IndexPerfTests` under the full gate at commit, thumbnails on. |
+| PF-3 | gate | `EditorPerfTests` under the full gate at commit, 50 thumbnails on show. |
+| PF-4 | gate | `IndexPerfTests` under the full gate at commit; `BodySnippet.scanCharacters` still caps the read. |
+| PF-6 | pass | Template listing, parsing, expansion and the instantiation write all run on the library queue with completions on main (`LibraryController.instantiate`, `listTemplates`; `TemplateInstantiateSmokeTests` show the write lands asynchronously); `ThumbnailCache` and `locateEmbed` as in M8.6. |
+| PF-8 | gate | `ThumbnailCacheTests`, `testPF8_thumbnailsAreDecodedOffTheMainThreadOnceAndSharedWithTheList` green; `ThumbnailCache.swift` unchanged since M8.6; the 50 MB bound asserted by `ListPerfTests` under the full gate. |
+| TP-1 to TP-7 | pass | v5. |
+| TP-8 | pass (mechanism), **blocked** Q3 | v5. |
+| V-1  | pass | v5; every snapshot re-inspected this run, light and dark pairs differing, on `windowBackgroundColor` (I-7). |
+
 ## Pass of 2026-09-08 (M8.6, v4)
 
 Build: debug `swift test` at commit 5482186 (code as of 152a506, M8.5), macOS 26.2. No app was
@@ -311,3 +399,9 @@ which passes.
    by pid instead, give it its own hotkey in the argument domain (`-GlobalHotKeyKeyCode`,
    `-GlobalHotKeyModifiers`) so the two do not fight over one combination, and export the
    defaults domain first (`defaults export`) so it can be put back afterwards instead of deleted.
+5. When no app can be launched (the M7.6 to M9.6 passes), inspect windows through the V-1
+   snapshots the smoke tests write (`scripts/check.sh quick`, then `build/snapshots/*.png`),
+   and check pure logic by hand with a probe compiled straight against the core sources:
+   `swiftc -swift-version 6 Sources/MDNotesCore/*.swift probe.swift -o probe` puts the probe in
+   the same module, so nothing need be public, and it can run `TemplateParser`, `TemplateStore`,
+   `NoteStore.instantiate`, `BodySnippet` and the rest over a temp library in the real time zone.
