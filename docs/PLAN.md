@@ -259,7 +259,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.7 Horizontal rule extension (ED-8): a custom `NSLayoutManager` draws faded hyphens from the
       end of the typed rule to the trailing edge, unselectable, visible rect only. Tests: rule
       token ranges; drawn extension excluded from selection and copy; snapshot per V-1.
-- [ ] M10.8 Section banding (ED-10): the layout manager fills alternate sections between rules with
+- [x] M10.8 Section banding (ED-10): the layout manager fills alternate sections between rules with
       a subtle system fill across the full editor width, the rule line first in its band,
       visible rect only, recomputed from the scanner's rule list. Tests: band ranges for
       0, 1, 3 rules and for a rule at document start; snapshot per V-1 in light and dark.

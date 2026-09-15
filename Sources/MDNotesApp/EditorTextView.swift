@@ -19,7 +19,7 @@ import AppKit
 /// `NSTextView` writes it.
 ///
 /// The view is built on TextKit 1 with an `EditorLayoutManager` (ED-8, ED-10), which is what
-/// draws the rule extensions and, later, the section bands over the text: the storage, the
+/// draws the rule extensions and the section bands over the text: the storage, the
 /// layout manager and the text container are made here and the view keeps the storage alive,
 /// as the owner of a text system built by hand must.
 @MainActor
