@@ -275,7 +275,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       links, lists with nesting, task items, code, blockquotes, pipe tables, remote images,
       paragraphs and line breaks; everything else as plain text. Fixtures: Mail, Safari,
       Notes, Google Docs exports. Tests: one per fixture, byte-exact expected markdown.
-- [ ] M10.12 `RTFToMarkdown` fallback (ED-13): attributed-string traits, links and list markers to
+- [x] M10.12 `RTFToMarkdown` fallback (ED-13): attributed-string traits, links and list markers to
       markdown when no HTML is present. Fixture: Pages and TextEdit RTF.
 - [ ] M10.13 Rich paste wiring (ED-14): `EditorTextView` converts HTML, else RTF, else plain;
       Cmd-Shift-V (Paste and Match Style) pastes plain; image data still goes to `i/` (I-1).
