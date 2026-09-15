@@ -7,10 +7,24 @@ import MDNotesCore
 /// fenced code in the system monospaced font (E-8) and their own colour, emphasis content with
 /// the bold, italic or strikethrough trait (ED-3), and every markdown marker the scanner yields
 /// (`#`, emphasis delimiters, list markers, `>`, link brackets and URLs, table pipes, setext
-/// underlines, rules) in tertiary label colour at the surrounding size (ED-2). Only `.font`,
-/// `.foregroundColor` and `.strikethroughStyle` are ever set: headings change weight and size,
-/// emphasis changes weight or slant, code tokens change family (ADR-0010), nothing else changes
-/// either. Nothing here reaches the file, whose content is the text view's plain string (E-1).
+/// underlines, rules) in tertiary label colour at the surrounding size (ED-2), and list items
+/// with a hanging indent so their wrapped lines align under the item text (ED-5). Only `.font`,
+/// `.foregroundColor`, `.strikethroughStyle` and `.paragraphStyle` are ever set: headings
+/// change weight and size, emphasis changes weight or slant, code tokens change family
+/// (ADR-0010), list items change the paragraph's head indent, nothing else changes either.
+/// Nothing here reaches the file, whose content is the text view's plain string (E-1).
+///
+/// A list item's paragraph gets a `headIndent` of the marker's width plus `nestingIndent` per
+/// nesting level (ED-5): the marker (`- `, `1. `, with the spaces after it) is measured in
+/// `baseFont`, and one nesting indent is two spaces in it, which is what the two leading spaces
+/// per level the scanner counts (ED-1) take on the first line. The first line keeps a zero
+/// indent, since its spaces and marker are drawn as typed, so a wrapped line starts exactly
+/// where the item text does. The style goes on the whole paragraph, leading spaces and line
+/// break included, because the layout manager reads a paragraph's style from its first
+/// character. Ordered markers measure wider than bullets, so `10. ` items indent further than
+/// `1. ` ones, each under its own text. Both widths follow the Cmd-plus size (E-8) and are
+/// cached per marker string until the base font changes. Markers are dimmed like every other
+/// (ED-2); the task box after one is ED-6's.
 ///
 /// A heading's content and markers are set at `headingScales[level]` times the base size, bold
 /// (ED-4): 1.4, 1.25 and 1.1 for levels 1 to 3 and the base size from level 4 on, following
@@ -87,11 +101,14 @@ public final class EditorStyler {
         case italic
         /// ED-3: the content of `~~x~~`, struck through.
         case strikethrough
+        /// ED-5: a bullet, ordered or task list item, from its marker to the end of the line;
+        /// its paragraph carries the hanging indent.
+        case listItem
 
         /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
         /// `.ambiguousLink` only once its target has been resolved (K-2). Nil for the kinds
-        /// the scanner yields that have no styling of their own yet (ED-1's links, lists,
-        /// quotes, tables and rules, styled by M10.3 onward); their markers are dimmed all the
+        /// the scanner yields that have no styling of their own yet (ED-1's links, task boxes,
+        /// quotes, tables and rules, styled by M10.5 onward); their markers are dimmed all the
         /// same (ED-2).
         init?(_ kind: MarkdownScanner.Kind) {
             switch kind {
@@ -103,8 +120,8 @@ public final class EditorStyler {
             case .emphasis(.bold): self = .bold
             case .emphasis(.italic): self = .italic
             case .emphasis(.strikethrough): self = .strikethrough
-            case .link, .autolink, .bareURL, .listItem, .taskBox, .blockquote, .tableRow, .tableSeparator,
-                .thematicBreak:
+            case .listItem: self = .listItem
+            case .link, .autolink, .bareURL, .taskBox, .blockquote, .tableRow, .tableSeparator, .thematicBreak:
                 return nil
             }
         }
@@ -114,7 +131,7 @@ public final class EditorStyler {
         var isEmphasis: Bool {
             switch self {
             case .bold, .italic, .strikethrough: true
-            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode: false
+            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode, .listItem: false
             }
         }
     }
@@ -139,6 +156,9 @@ public final class EditorStyler {
             guard baseFont != oldValue else { return }
             headingFonts = Self.headingFonts(for: baseFont)
             codeFont = EditorFontPreference.codeFont(ofSize: baseFont.pointSize)
+            nestingIndent = Self.width(of: Self.nestingIndentText, in: baseFont)
+            markerWidths.removeAll()
+            listParagraphStyles.removeAll()
             restyleAll()
         }
     }
@@ -183,6 +203,19 @@ public final class EditorStyler {
     /// The system monospaced font at `baseFont`'s size, for inline and fenced code (E-8).
     public private(set) var codeFont: NSFont
 
+    /// ED-5: the text one nesting indent is the width of: the two leading spaces per level the
+    /// scanner counts (ED-1).
+    nonisolated public static let nestingIndentText = "  "
+
+    /// ED-5: the width of one nesting level, `nestingIndentText` in `baseFont`.
+    public private(set) var nestingIndent: CGFloat
+
+    /// ED-5: the width in `baseFont` of each list marker seen since the base font last changed.
+    private var markerWidths: [String: CGFloat] = [:]
+
+    /// ED-5: the paragraph style for each head indent seen since the base font last changed.
+    private var listParagraphStyles: [CGFloat: NSParagraphStyle] = [:]
+
     /// Guards against re-entering while attributes are being applied.
     private var isRestyling = false
 
@@ -191,11 +224,44 @@ public final class EditorStyler {
         self.baseFont = baseFont
         headingFonts = Self.headingFonts(for: baseFont)
         codeFont = EditorFontPreference.codeFont(ofSize: baseFont.pointSize)
+        nestingIndent = Self.width(of: Self.nestingIndentText, in: baseFont)
     }
 
     /// One bold font per entry of `headingScales`, each `base` at that multiple of its size.
     private static func headingFonts(for base: NSFont) -> [NSFont] {
         headingScales.map { bold(base.withSize(base.pointSize * $0)) }
+    }
+
+    /// The width `text` takes set in `font`, as the layout manager will set it.
+    private static func width(of text: String, in font: NSFont) -> CGFloat {
+        NSAttributedString(string: text, attributes: [.font: font]).size().width
+    }
+
+    /// ED-5: the width of `marker` (a list marker with the spaces after it, `- ` or `12. `) in
+    /// `baseFont`, which is what it takes on the item's first line.
+    public func markerWidth(_ marker: String) -> CGFloat {
+        if let width = markerWidths[marker] { return width }
+        let width = Self.width(of: marker, in: baseFont)
+        markerWidths[marker] = width
+        return width
+    }
+
+    /// ED-5: the head indent of a list item at nesting `level` whose marker is `marker`: the
+    /// marker's width plus one `nestingIndent` per level, so a wrapped line starts where the
+    /// item text does.
+    public func listHeadIndent(level: Int, marker: String) -> CGFloat {
+        markerWidth(marker) + CGFloat(max(level, 0)) * nestingIndent
+    }
+
+    /// The paragraph style hanging every line but the first at `headIndent` (ED-5).
+    private func listParagraphStyle(headIndent: CGFloat) -> NSParagraphStyle {
+        if let style = listParagraphStyles[headIndent] { return style }
+        let style = NSMutableParagraphStyle()
+        style.setParagraphStyle(.default)
+        style.firstLineHeadIndent = 0
+        style.headIndent = headIndent
+        listParagraphStyles[headIndent] = style
+        return style
     }
 
     // MARK: - Styles
@@ -209,7 +275,7 @@ public final class EditorStyler {
     public func attributes(for style: TokenStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [Self.tokenAttribute: style.rawValue]
         switch style {
-        case .heading, .bold, .italic: break
+        case .heading, .bold, .italic, .listItem: break
         case .wikilink: attributes[.foregroundColor] = NSColor.linkColor
         case .ambiguousLink: attributes[.foregroundColor] = Self.ambiguousLinkColor
         case .tag: attributes[.foregroundColor] = NSColor.systemPurple
@@ -350,6 +416,7 @@ public final class EditorStyler {
         defer { isRestyling = false }
         storage.removeAttribute(Self.tokenAttribute, range: range)
         storage.removeAttribute(.strikethroughStyle, range: range)
+        storage.removeAttribute(.paragraphStyle, range: range)
         storage.addAttributes([.font: baseFont, .foregroundColor: baseColor], range: range)
         let index = linkIndex()
         for token in tokens {
@@ -366,9 +433,10 @@ public final class EditorStyler {
     /// Styles one token: `style`'s attributes on its range, or on its content alone for
     /// emphasis, whose trait is added to the fonts already there; a heading takes the bold font
     /// of its level (ED-4); code takes the code font at the size of what encloses it and drops
-    /// any strikethrough an enclosing token left (ED-3); then the markers are recoloured (ED-2),
-    /// so they carry the token's attribute and font and the marker colour. Ranges are file
-    /// indices into `text`, mapped to the storage here.
+    /// any strikethrough an enclosing token left (ED-3); a list item puts the hanging indent on
+    /// its whole paragraph (ED-5); then the markers are recoloured (ED-2), so they carry the
+    /// token's attribute and font and the marker colour. Ranges are file indices into `text`,
+    /// mapped to the storage here.
     private func apply(
         _ style: TokenStyle?, to token: MarkdownScanner.Token, of text: EditorText, to storage: NSTextStorage
     ) {
@@ -388,6 +456,13 @@ public final class EditorStyler {
                 if enclosingSize != baseFont.pointSize {
                     storage.addAttribute(
                         .font, value: EditorFontPreference.codeFont(ofSize: enclosingSize), range: range)
+                }
+            case .listItem:
+                if case .listItem(let level, _) = token.kind, let marker = token.markers.first {
+                    let indent = listHeadIndent(level: level, marker: text.string(inFileRange: marker))
+                    storage.addAttribute(
+                        .paragraphStyle, value: listParagraphStyle(headIndent: indent),
+                        range: storage.mutableString.paragraphRange(for: range))
                 }
             case .wikilink, .ambiguousLink, .tag, .strikethrough: break
             }

@@ -247,7 +247,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       font size per level; a heading edit relays out only its paragraph.
       Start from `docs/patches/M10.3-heading-scale.patch` (finished, snapshot-checked work from
       the first attempt; apply with `git apply --exclude=docs/PLAN.md`, then delete the patch).
-- [ ] M10.4 Lists (ED-5): hanging indent via paragraph style so wrapped lines align under the item
+- [x] M10.4 Lists (ED-5): hanging indent via paragraph style so wrapped lines align under the item
       text, two spaces per nesting level, markers dimmed; ordered markers too. Tests: head
       indent per level; wrapped line x-origin equals text start.
 - [ ] M10.5 Task items (ED-6): `[ ]` / `[x]` set in the monospaced font at body size; done items in

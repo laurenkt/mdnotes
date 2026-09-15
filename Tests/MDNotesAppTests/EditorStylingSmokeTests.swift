@@ -210,7 +210,7 @@ final class EditorStylingSmokeTests: XCTestCase {
             switch style {
             case .inlineCode, .fencedCode: XCTAssertEqual(font, mono, "\(style)")
             case .heading: XCTAssertNil(font, "the heading font depends on the level (ED-4)")
-            case .wikilink, .ambiguousLink, .tag: XCTAssertNil(font, "\(style) keeps the base font")
+            case .wikilink, .ambiguousLink, .tag, .listItem: XCTAssertNil(font, "\(style) keeps the base font")
             case .bold, .italic, .strikethrough: XCTAssertNil(font, "\(style) adds a trait to the font in place")
             }
         }
@@ -1134,6 +1134,198 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(thirdAfter.height, thirdBefore.height, accuracy: 0.001)
     }
 
+    // MARK: - ED-5: list items hang under their text
+
+    /// The width `text` takes in `font`, measured the way the styler measures it.
+    private func width(of text: String, in font: NSFont) -> CGFloat {
+        NSAttributedString(string: text, attributes: [.font: font]).size().width
+    }
+
+    /// The head indent of the paragraph style at `location`, zero when there is none.
+    private func headIndent(_ fixture: Fixture, at location: Int) -> CGFloat {
+        (fixture.attributes(at: location)[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0
+    }
+
+    /// The x position, in the text container, of the glyph for the character at `location`.
+    private func glyphX(at location: Int, in layoutManager: NSLayoutManager) -> CGFloat {
+        let glyph = layoutManager.glyphIndexForCharacter(at: location)
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return fragment.minX + layoutManager.location(forGlyphAt: glyph).x
+    }
+
+    /// The x position of the first glyph on the line fragment after the one holding the
+    /// character at `location`: where the wrapped line starts.
+    private func wrappedLineX(after location: Int, in layoutManager: NSLayoutManager) throws -> CGFloat {
+        let glyph = layoutManager.glyphIndexForCharacter(at: location)
+        var fragmentGlyphs = NSRange()
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &fragmentGlyphs)
+        let next = NSMaxRange(fragmentGlyphs)
+        var nextGlyphs = NSRange()
+        let nextFragment = layoutManager.lineFragmentRect(forGlyphAt: next, effectiveRange: &nextGlyphs)
+        XCTAssertGreaterThan(nextFragment.minY, fragment.minY, "the line wrapped")
+        let character = layoutManager.characterIndexForGlyph(at: next)
+        XCTAssertNotEqual(
+            (layoutManager.textStorage?.string as NSString?)?.substring(
+                with: NSRange(location: character - 1, length: 1)),
+            "\n", "the next fragment is a wrapped line, not the next paragraph")
+        return nextFragment.minX + layoutManager.location(forGlyphAt: next).x
+    }
+
+    func testED5_headIndentPerLevelForBulletAndOrderedItems() throws {
+        let fixture = makeFixture()
+        let text = "- one\n  - two\n    - three\n1. first\n  2. second\n10. tenth\n- [ ] task\nplain\n"
+        fixture.show(text)
+        let styler = fixture.styler
+
+        XCTAssertEqual(EditorStyler.nestingIndentText, "  ", "one nesting level is two spaces (ED-1)")
+        XCTAssertEqual(styler.nestingIndent, width(of: "  ", in: base), accuracy: 0.001)
+        XCTAssertGreaterThan(styler.nestingIndent, 0)
+        let bullet = width(of: "- ", in: base)
+        XCTAssertEqual(styler.markerWidth("- "), bullet, accuracy: 0.001)
+        XCTAssertEqual(styler.listHeadIndent(level: 0, marker: "- "), bullet, accuracy: 0.001)
+        XCTAssertEqual(
+            styler.listHeadIndent(level: 2, marker: "- "), bullet + 2 * styler.nestingIndent, accuracy: 0.001)
+
+        let expected: [(line: String, indent: CGFloat)] = [
+            ("- one", bullet),
+            ("  - two", bullet + styler.nestingIndent),
+            ("    - three", bullet + 2 * styler.nestingIndent),
+            ("1. first", width(of: "1. ", in: base)),
+            ("  2. second", width(of: "2. ", in: base) + styler.nestingIndent),
+            ("10. tenth", width(of: "10. ", in: base)),
+            ("- [ ] task", bullet),
+        ]
+        for (line, indent) in expected {
+            let lineRange = range(of: line, in: text)
+            XCTAssertGreaterThan(indent, 0, line)
+            // The style covers the whole paragraph: leading spaces, marker, text and line break.
+            for offset in 0...lineRange.length {
+                let style = try XCTUnwrap(
+                    fixture.attributes(at: lineRange.location + offset)[.paragraphStyle] as? NSParagraphStyle,
+                    "\(line) at \(offset)")
+                XCTAssertEqual(style.headIndent, indent, accuracy: 0.001, "\(line) at \(offset)")
+                XCTAssertEqual(style.firstLineHeadIndent, 0, "\(line): the first line is drawn as typed")
+            }
+            let content = lineRange.location + lineRange.length - 1
+            XCTAssertEqual(fixture.style(at: content), .listItem, line)
+            XCTAssertEqual(fixture.color(at: content), styler.baseColor, line)
+            XCTAssertEqual(fixture.font(at: content), base, "\(line): list text is at the base size")
+        }
+        XCTAssertEqual(fixture.color(at: range(of: "- one", in: text).location), tertiary, "the bullet is dimmed")
+        XCTAssertEqual(fixture.colors(in: range(of: "10. ", in: text)), Array(repeating: tertiary, count: 4))
+        XCTAssertEqual(fixture.colors(in: range(of: "2. ", in: text)), Array(repeating: tertiary, count: 3))
+        XCTAssertGreaterThan(headIndent(fixture, at: range(of: "10. tenth", in: text).location), bullet)
+        XCTAssertGreaterThan(
+            headIndent(fixture, at: range(of: "10. tenth", in: text).location),
+            headIndent(fixture, at: range(of: "1. first", in: text).location), "a wider marker hangs further")
+
+        let plain = range(of: "plain", in: text)
+        XCTAssertEqual(headIndent(fixture, at: plain.location), 0)
+        XCTAssertNil(fixture.style(at: plain.location))
+        XCTAssertEqual(fixture.textView.string, text, "the text is exactly what went in (E-1)")
+    }
+
+    func testED5_wrappedLinesStartWhereTheItemTextDoes() throws {
+        let fixture = makeFixture()
+        let long = String(repeating: "words that wrap ", count: 20)
+        let text = "- \(long)\n    - \(long)\n10. \(long)\n- [ ] \(long)\nplain \(long)\n"
+        fixture.show(text)
+        let layoutManager = try XCTUnwrap(fixture.textView.layoutManager)
+        let container = try XCTUnwrap(fixture.textView.textContainer)
+        layoutManager.ensureLayout(for: container)
+
+        // Every line fragment starts after the container's own padding; indents add to that.
+        let leadingEdge = container.lineFragmentPadding
+        let plain = range(of: "plain", in: text)
+        let plainWrapped = try wrappedLineX(after: plain.location, in: layoutManager)
+        XCTAssertEqual(plainWrapped, glyphX(at: plain.location, in: layoutManager), accuracy: 0.5)
+        XCTAssertEqual(plainWrapped, leadingEdge, accuracy: 0.5, "a plain paragraph wraps to the leading edge")
+
+        // A task item hangs at its marker (ED-5), so its wrapped lines start under the box,
+        // whose own look is ED-6's.
+        for (line, textStart) in [("- ", "- "), ("    - ", "    - "), ("10. ", "10. "), ("- [ ] ", "- ")] {
+            let lineRange = range(of: line + "words", in: text)
+            let contentStart = lineRange.location + (textStart as NSString).length
+            let wrapped = try wrappedLineX(after: contentStart, in: layoutManager)
+            XCTAssertEqual(
+                wrapped, glyphX(at: contentStart, in: layoutManager), accuracy: 0.5,
+                "\(line.debugDescription): the wrapped line starts under the item text")
+            XCTAssertEqual(
+                wrapped, leadingEdge + headIndent(fixture, at: lineRange.location), accuracy: 0.5,
+                "\(line.debugDescription): at the paragraph's head indent")
+            XCTAssertGreaterThan(wrapped, leadingEdge)
+        }
+    }
+
+    func testED5_indentsFollowCmdPlusAndCmdMinus() throws {
+        let fixture = makeFixture()
+        let text = "- one\n  - two\n1. first\nplain\n"
+        fixture.show(text)
+        let two = range(of: "  - two", in: text)
+        let first = range(of: "1. first", in: text)
+        let before = headIndent(fixture, at: two.location)
+        XCTAssertEqual(before, width(of: "- ", in: base) + width(of: "  ", in: base), accuracy: 0.001)
+
+        fixture.controller.makeTextBigger(nil)
+        let bigger = NSFont.systemFont(ofSize: 14)
+        XCTAssertEqual(fixture.styler.baseFont, bigger)
+        XCTAssertEqual(fixture.styler.nestingIndent, width(of: "  ", in: bigger), accuracy: 0.001)
+        XCTAssertEqual(
+            headIndent(fixture, at: two.location), width(of: "- ", in: bigger) + width(of: "  ", in: bigger),
+            accuracy: 0.001)
+        XCTAssertGreaterThan(headIndent(fixture, at: two.location), before)
+        XCTAssertEqual(headIndent(fixture, at: first.location), width(of: "1. ", in: bigger), accuracy: 0.001)
+        XCTAssertEqual(headIndent(fixture, at: range(of: "plain", in: text).location), 0)
+
+        fixture.controller.makeTextSmaller(nil)
+        fixture.controller.makeTextSmaller(nil)
+        let smaller = NSFont.systemFont(ofSize: 12)
+        XCTAssertEqual(
+            headIndent(fixture, at: two.location), width(of: "- ", in: smaller) + width(of: "  ", in: smaller),
+            accuracy: 0.001)
+        XCTAssertLessThan(headIndent(fixture, at: two.location), before)
+
+        fixture.controller.makeTextActualSize(nil)
+        XCTAssertEqual(headIndent(fixture, at: two.location), before, accuracy: 0.001)
+    }
+
+    /// Typing a marker gives the line its indent, the line typed after an item has none, and
+    /// deleting the marker takes the indent away, all within the edited paragraph (E-3).
+    func testED5_typedMarkersGainTheIndentAndTheNextLineDoesNot() throws {
+        let fixture = makeFixture()
+        let text = "first\nsecond\n\n- item\n"
+        fixture.show(text)
+        let bullet = width(of: "- ", in: base)
+        XCTAssertEqual(headIndent(fixture, at: 0), 0)
+
+        fixture.type("- ", at: 0)
+        XCTAssertEqual(fixture.textView.string, "- first\nsecond\n\n- item\n")
+        XCTAssertEqual(headIndent(fixture, at: 0), bullet, accuracy: 0.001)
+        XCTAssertEqual(headIndent(fixture, at: 7), bullet, accuracy: 0.001, "the line break is in the paragraph")
+        XCTAssertEqual(fixture.color(at: 0), tertiary)
+        XCTAssertEqual(headIndent(fixture, at: 8), 0, "`second` is not an item")
+        XCTAssertEqual(headIndent(fixture, at: 16), bullet, accuracy: 0.001, "`- item` still is")
+
+        // Return at the end of the item, then a character on the new line: the new line is not
+        // an item, whatever the typing attributes carried over.
+        fixture.type("\n", at: 7)
+        fixture.type("x", at: 8)
+        XCTAssertEqual(fixture.textView.string, "- first\nx\nsecond\n\n- item\n")
+        XCTAssertEqual(headIndent(fixture, at: 0), bullet, accuracy: 0.001)
+        XCTAssertEqual(headIndent(fixture, at: 8), 0, "the new line hangs nowhere")
+        XCTAssertEqual(headIndent(fixture, at: 9), 0)
+        XCTAssertNil(fixture.style(at: 8))
+        XCTAssertEqual(headIndent(fixture, at: 18), bullet, accuracy: 0.001, "`- item` still hangs")
+
+        fixture.type("", at: 0, replacing: 2)
+        XCTAssertEqual(fixture.textView.string, "first\nx\nsecond\n\n- item\n")
+        for location in 0..<6 {
+            XCTAssertEqual(headIndent(fixture, at: location), 0, "at \(location): no marker, no indent")
+        }
+        XCTAssertNil(fixture.style(at: 0))
+        XCTAssertEqual(headIndent(fixture, at: 16), bullet, accuracy: 0.001, "the other item is untouched")
+    }
+
     // MARK: - V-1: the editor rendered with dimmed markers and emphasis
 
     func testV1_editorSnapshotShowsDimmedMarkersAndEmphasis() throws {
@@ -1196,6 +1388,37 @@ final class EditorStylingSmokeTests: XCTestCase {
         fixture.controller.mainView.layoutSubtreeIfNeeded()
         XCTAssertEqual(fixture.font(at: 2)?.pointSize ?? 0, 13 * 1.4, accuracy: 0.001)
         let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-headings")
+        XCTAssertEqual(written.count, 2)
+        for url in written {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
+    }
+
+    func testV1_editorSnapshotShowsListsHangingUnderTheirText() throws {
+        let fixture = makeFixture()
+        fixture.show(
+            """
+            # Lists
+
+            - A short bullet item
+            - A long bullet item whose text runs on past the edge of the editor so that it wraps onto a second line and shows the hanging indent aligning under the text
+              - A nested item, two spaces in, that is also long enough to wrap onto a second line under its own text rather than under the bullet
+                - Third level, short
+            - Back at the first level
+
+            1. First ordered item
+            2. Second ordered item that is long enough to wrap onto a second line so the wrapped text lines up under the first word
+            10. A two-digit marker hangs a little further, and this one wraps too so the alignment under its text can be seen
+
+            - [ ] A task item that is long enough to wrap onto a second line, hanging at the marker with the box on the first line
+            - [x] A done task
+
+            A plain paragraph after the lists, long enough to wrap onto a second line, to show it wraps to the leading edge.
+
+            """)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(headIndent(fixture, at: range(of: "- A short", in: fixture.textView.string).location), 0)
+        let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-lists")
         XCTAssertEqual(written.count, 2)
         for url in written {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
