@@ -1,4 +1,5 @@
 import AppKit
+import MDNotesCore
 
 /// The editor's text view. `NSTextView` gives a Cmd-click and a Cmd-Return no meaning that
 /// the editor wants, so the two are intercepted here before it sees them and handed to
@@ -11,7 +12,11 @@ import AppKit
 /// A paste or a drop that carries an image (I-1) is intercepted the same way: the image on the
 /// pasteboard is handed to `onInsertImage` and, if it takes it, the text view never sees the
 /// paste or drop. A plain text view would otherwise ignore image data and insert a dropped
-/// file's path. Text pastes and drops keep their `NSTextView` behaviour.
+/// file's path. A paste of rich text is converted to markdown before it is inserted (ED-13):
+/// HTML through `HTMLToMarkdown`, failing that RTF through `RTFToMarkdown`, and with neither
+/// the plain string; Paste and Match Style (Cmd-Shift-V, ED-14) inserts the plain string
+/// whatever else is there. Either lands as typed text would: one undoable edit, styled,
+/// autosaved. Text drops keep their `NSTextView` behaviour.
 ///
 /// A copy, cut or drag of a selection that covers a display-only thumbnail attachment (E-9)
 /// writes the text as the file holds it, through `EditorText`, so the attachment characters
@@ -77,8 +82,8 @@ public final class EditorTextView: NSTextView {
     /// when it took the image; false leaves the paste or drop to the text view.
     public var onInsertImage: (@MainActor (ImageSource) -> Bool)?
 
-    /// The pasteboard `paste(_:)` looks for an image on: the general one. Tests point it at a
-    /// private pasteboard so they leave the user's clipboard alone.
+    /// The pasteboard `paste(_:)` and `pasteAsPlainText(_:)` read: the general one. Tests point
+    /// it at a private pasteboard so they leave the user's clipboard alone.
     public var pasteboard: NSPasteboard = .general
 
     /// ED-12: the storage range of the link containing the character at the given storage
@@ -225,26 +230,88 @@ public final class EditorTextView: NSTextView {
         return pboard.setString(string, forType: .string)
     }
 
-    // MARK: - Image paste and drop (I-1)
+    // MARK: - Paste (ED-13, ED-14) and image paste and drop (I-1)
 
     /// `NSTextView` enables Paste only for the types it reads itself, which for a plain text
     /// view are text types: with an image and nothing else on the clipboard the menu item is
     /// disabled and Cmd-V, which goes through the same validation, is dead, so `paste(_:)` is
     /// never reached. Paste is enabled here whenever the pasteboard carries an image the
-    /// handler could take and the shown note is writable; every other item, and Paste over
-    /// anything else, is validated as `NSTextView` validates it.
+    /// handler could take, or HTML, RTF or a string to paste (ED-13), and the shown note is
+    /// writable; Paste and Match Style (ED-14) whenever it carries an image or a string. Every
+    /// other item, and either over anything else, is validated as `NSTextView` validates it.
+    /// Reads no data (PF-6): validation runs on every menu open and key press.
     public override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
-        if item.action == #selector(NSText.paste(_:)), acceptsImagePaste() { return true }
+        if item.action == #selector(NSText.paste(_:)), acceptsImagePaste() || acceptsTextPaste(Self.richTypes) {
+            return true
+        }
+        if item.action == #selector(NSTextView.pasteAsPlainText(_:)), acceptsImagePaste() || acceptsTextPaste([.string])
+        {
+            return true
+        }
         return super.validateUserInterfaceItem(item)
     }
 
-    /// Cmd-V and the menu item. An image on the pasteboard goes to `onInsertImage`; anything
-    /// else, or an image the handler declines, is pasted as `NSTextView` pastes it.
+    /// Cmd-V and the Paste item. What the pasteboard carries decides the paste, in this order:
+    /// an image goes to `onInsertImage` (I-1); HTML is converted to markdown, failing that RTF
+    /// (ED-13), and the markdown is inserted at the selection; with neither, the plain string
+    /// is. Anything else, or an image the handler declines, is pasted as `NSTextView` pastes it.
     public override func paste(_ sender: Any?) {
-        if isEditable, let onInsertImage, let image = ImagePasteboard.image(on: pasteboard), onInsertImage(image) {
+        if insertsImage() { return }
+        if isEditable, let markdown = Self.convertedMarkdown(on: pasteboard) {
+            insertText(markdown, replacementRange: selectedRange())
             return
         }
+        if insertsPlainString() { return }
         super.paste(sender)
+    }
+
+    /// Cmd-Shift-V and the Paste and Match Style item (ED-14): the pasteboard's plain-text
+    /// form, whatever else it carries. Image data is still an image (I-1); with no string and
+    /// no image the paste is `NSTextView`'s own.
+    public override func pasteAsPlainText(_ sender: Any?) {
+        if insertsImage() { return }
+        if insertsPlainString() { return }
+        super.pasteAsPlainText(sender)
+    }
+
+    /// The markdown for the richest text form `pasteboard` carries (ED-13): HTML, else RTF.
+    /// Nil when it carries neither, or when what it carries does not decode or holds no text,
+    /// so the paste falls through to the plain string. Runs on the main thread, bounded by
+    /// PF-9.
+    private static func convertedMarkdown(on pasteboard: NSPasteboard) -> String? {
+        if let html = pasteboard.string(forType: .html), let markdown = HTMLToMarkdown.markdown(fromHTML: html),
+            !markdown.isEmpty
+        {
+            return markdown
+        }
+        if let rtf = pasteboard.data(forType: .rtf), let markdown = RTFToMarkdown.markdown(fromRTF: rtf),
+            !markdown.isEmpty
+        {
+            return markdown
+        }
+        return nil
+    }
+
+    /// Hands an image on `pasteboard` to `onInsertImage` (I-1); true when it took it.
+    private func insertsImage() -> Bool {
+        guard isEditable, let onInsertImage, let image = ImagePasteboard.image(on: pasteboard) else { return false }
+        return onInsertImage(image)
+    }
+
+    /// Inserts the pasteboard's string at the selection as typed text (one undoable edit,
+    /// styled, autosaved); false when there is none to insert or no writable note.
+    private func insertsPlainString() -> Bool {
+        guard isEditable, let string = pasteboard.string(forType: .string), !string.isEmpty else { return false }
+        insertText(string, replacementRange: selectedRange())
+        return true
+    }
+
+    /// The text forms Paste converts or inserts, ED-13's order.
+    private static let richTypes: [NSPasteboard.PasteboardType] = [.html, .rtf, .string]
+
+    /// True when `pasteboard` offers one of `types` and there is an editable text to paste into.
+    private func acceptsTextPaste(_ types: [NSPasteboard.PasteboardType]) -> Bool {
+        isEditable && pasteboard.availableType(from: types) != nil
     }
 
     /// `NSTextView` registers for images and files once it is editable, but under the old type

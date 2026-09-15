@@ -37,6 +37,9 @@ public enum MainMenu {
     public static let noTemplatesItemTitle = "No Templates"
     public static let closeItemTitle = "Close"
 
+    /// ED-14: `Edit > Paste and Match Style`, Cmd-Shift-V: the plain-text form of the pasteboard.
+    public static let pasteAndMatchStyleItemTitle = "Paste and Match Style"
+
     public static let searchItemTitle = "Search"
     public static let renameItemTitle = "Rename Note"
     public static let deleteItemTitle = "Delete Note"
@@ -124,6 +127,9 @@ public enum MainMenu {
         menu.addItem(item("Cut", #selector(NSText.cut(_:)), "x"))
         menu.addItem(item("Copy", #selector(NSText.copy(_:)), "c"))
         menu.addItem(item("Paste", #selector(NSText.paste(_:)), "v"))
+        // ED-14: Cmd-Shift-V pastes the pasteboard's plain-text form, whatever else it carries.
+        menu.addItem(
+            item(pasteAndMatchStyleItemTitle, #selector(NSTextView.pasteAsPlainText(_:)), "v", [.command, .shift]))
         menu.addItem(item("Select All", #selector(NSText.selectAll(_:)), "a"))
         return menu
     }

@@ -295,7 +295,8 @@ final class MenuSmokeTests: XCTestCase {
             MainMenu.editMenuTitle,
             [
                 ("Undo", "z", .command), ("Redo", "z", [.command, .shift]), nil, ("Cut", "x", .command),
-                ("Copy", "c", .command), ("Paste", "v", .command), ("Select All", "a", .command),
+                ("Copy", "c", .command), ("Paste", "v", .command),
+                (MainMenu.pasteAndMatchStyleItemTitle, "v", [.command, .shift]), ("Select All", "a", .command),
             ]
         ),
         (
@@ -356,7 +357,7 @@ final class MenuSmokeTests: XCTestCase {
         }
         XCTAssertEqual(built.filter { $0.target != nil }.map(\.title), [])
         XCTAssertEqual(built.filter { $0.action == nil }.map(\.title), [MainMenu.noTemplatesItemTitle])
-        XCTAssertEqual(built.count, 24)
+        XCTAssertEqual(built.count, 25)
 
         // S-1 creates notes and E-4 saves them: no New item, no Save item.
         XCTAssertEqual(
@@ -544,7 +545,7 @@ final class MenuSmokeTests: XCTestCase {
         let edit = try submenu(titled: MainMenu.editMenuTitle, of: delegate.mainMenu)
         XCTAssertEqual(
             edit.items.filter { !$0.isSeparatorItem }.map(\.title),
-            ["Undo", "Redo", "Cut", "Copy", "Paste", "Select All"])
+            ["Undo", "Redo", "Cut", "Copy", "Paste", MainMenu.pasteAndMatchStyleItemTitle, "Select All"])
         let undo = try item(Selector(("undo:")), in: edit)
         let redo = try item(Selector(("redo:")), in: edit)
         assertShortcut(undo, "z")
@@ -552,6 +553,8 @@ final class MenuSmokeTests: XCTestCase {
         assertShortcut(try item(#selector(NSText.cut(_:)), in: edit), "x")
         assertShortcut(try item(#selector(NSText.copy(_:)), in: edit), "c")
         assertShortcut(try item(#selector(NSText.paste(_:)), in: edit), "v")
+        // ED-14: Paste and Match Style is Cmd-Shift-V and reaches the editor's pasteAsPlainText.
+        assertShortcut(try item(#selector(NSTextView.pasteAsPlainText(_:)), in: edit), "v", [.command, .shift])
         let selectAll = try item(#selector(NSText.selectAll(_:)), in: edit)
         assertShortcut(selectAll, "a")
 

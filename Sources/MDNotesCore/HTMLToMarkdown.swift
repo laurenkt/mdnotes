@@ -261,7 +261,10 @@ private struct Converter {
     private mutating func flushNewlines() {
         guard pendingNewlines > 0 else { return }
         while out.last == " " { out.removeLast() }
-        let blankLine = (blankPrefix ?? prefixes.joined()).replacing(/\s+$/, with: "")
+        // A trailing-whitespace trim by hand: a regex here ran on every line of a large paste and
+        // was most of its conversion time (PF-9).
+        var blankLine = blankPrefix ?? prefixes.joined()
+        while let last = blankLine.last, last.isWhitespace { blankLine.removeLast() }
         for index in 0..<pendingNewlines {
             out += "\n"
             if index < pendingNewlines - 1 { out += blankLine }
