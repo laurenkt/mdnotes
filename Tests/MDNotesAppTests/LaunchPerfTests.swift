@@ -24,7 +24,11 @@ final class LaunchPerfTests: XCTestCase {
     nonisolated private static let library: Result<URL, any Error> = Result {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mdnotes-launchperf-\(UUID().uuidString)", isDirectory: true)
-        try SyntheticLibrary.generate(at: root, options: .init(noteCount: PerfGate.referenceNoteCount))
+        // Writing 20k files leaves tens of thousands of autoreleased objects behind; drained
+        // here, not on the main thread's next turn, which is the first launch's (I-11).
+        _ = try autoreleasepool {
+            try SyntheticLibrary.generate(at: root, options: .init(noteCount: PerfGate.referenceNoteCount))
+        }
         return root
     }
 
@@ -144,9 +148,16 @@ final class LaunchPerfTests: XCTestCase {
         XCTAssertEqual(expected.count, PerfGate.referenceNoteCount)
         let newest = try XCTUnwrap(expected.max { $0.modifiedAt < $1.modifiedAt })
 
+        // The OS, not the app, is warmed before the clock (PF-1a, ADR-0020): on macOS 27.0 the
+        // first text field to become first responder in a process makes AppKit soft-link
+        // WritingToolsUI and 415 further images on the main thread, 170 to 250 ms once per
+        // process, ungated by `allowsWritingTools`. Reading this loads the same closure, so the
+        // cold launch below measures our own launch path. Test only; the app pre-loads nothing.
+        _ = NSWritingToolsCoordinator.isWritingToolsAvailable
+
         // Seven launches: the first is the cold one PF-1 names and is gated on its own; the
         // median over all seven is stable across runs on an idle machine (I-1). There is no
-        // warm-up, since a warm launch is not what PF-1 measures.
+        // warm launch of the app, since a warm launch is not what PF-1 measures.
         let iterations = 7
         var launches: [Launch] = []
         for _ in 0..<iterations {

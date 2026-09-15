@@ -61,6 +61,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // E-8, ADR-0010: v1's font family preference is gone for good.
         EditorFontPreference.deleteStaleFamily(in: .standard)
 
+        // PF-1, PF-7: the library's queue starts walking the root first, so the scan and the
+        // titles-only snapshot are built while the main thread is busy with the menu and the
+        // window. The snapshot cannot arrive before the window is up: it is published through
+        // the main queue, which this call holds until it returns. The window is then
+        // interactive the moment the delegate returns, and the list fills in behind it (I-11).
+        let library = LibraryController(root: libraryRoot)
+        library.start()
+        libraryController = library
+
         // The menu bar is up before the window is, so its key equivalents are live with it.
         let menus = MainMenu.make()
         NSApp.mainMenu = menus.mainMenu
@@ -72,8 +81,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menus.templatesMenu.delegate = templateMenuDelegate
         self.templateMenuDelegate = templateMenuDelegate
 
-        // The window comes first and the index fills in behind it (PF-1, PF-7).
         let controller = mainWindowController ?? MainWindowController()
+        controller.attach(library)
         controller.showWindow(nil)
         mainWindowController = controller
         // PR-1: Cmd-, and the menu item.
@@ -81,11 +90,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // W-4: closing the window (Cmd-W, the close button) only hides it. The window is not
         // released when closed (`MainWindowController`), so it is ordered out and stays whole,
         // ready for the hotkey or a Dock click to bring it back.
-
-        let library = LibraryController(root: libraryRoot)
-        controller.attach(library)
-        library.start()
-        libraryController = library
 
         // W-3: the hotkey is live from the first moment the window is.
         let hotKey = GlobalHotKey()

@@ -249,6 +249,15 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         fatalError("init(coder:) is not supported")
     }
 
+    /// Orders the window front and makes it key. `NSWindowController`'s own `showWindow(_:)`
+    /// first loads the window, which `init` already built, and then routes the ordering through
+    /// `NSDocumentController`'s seamless document opener, which soft-links QuickLookUI the
+    /// first time: 50 ms of a cold launch on the main thread for a window that is no document
+    /// (PF-1, I-11). This does the one thing the app needs of it.
+    public override func showWindow(_ sender: Any?) {
+        window?.makeKeyAndOrderFront(sender)
+    }
+
     /// Shows `library` in the window: every snapshot it publishes reloads the list, and the
     /// selected note is read from its store. A library attached before is let go of first, as
     /// `detachLibrary()` does.

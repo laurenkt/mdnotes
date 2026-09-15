@@ -247,8 +247,19 @@ public final class LibraryController {
             worker.replace(titlesOnly, phase: phase)
             publish(titlesOnly, phase: phase, generation: generation)
             listTemplates(generation: generation)
-            requestDownloads(for: notes, generation: generation)
-            enqueueBatch(of: notes, from: 0, generation: generation)
+            // PF-1 before PF-7 (I-11): the bodies and the download probes start only once the
+            // main thread has taken the titles snapshot, that is once the list is on screen.
+            // Both read every note through `URL`, on every core, and a cold launch's main
+            // thread is meanwhile loading frameworks under the Objective-C runtime lock they
+            // all need: started together, the list waited on the bodies. This block is queued
+            // behind the publish, so it runs right after `receive`.
+            DispatchQueue.main.async { [self] in
+                MainActor.assumeIsolated {
+                    guard generation == self.generation else { return }
+                    requestDownloads(for: notes, generation: generation)
+                    enqueueBatch(of: notes, from: 0, generation: generation)
+                }
+            }
         }
     }
 
