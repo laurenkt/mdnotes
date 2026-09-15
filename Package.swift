@@ -39,6 +39,7 @@ let package = Package(
         .testTarget(
             name: "MDNotesCoreTests",
             dependencies: ["MDNotesCore", "MDNotesTestSupport"],
+            resources: [.copy("Fixtures")],
             swiftSettings: strict
         ),
         .testTarget(

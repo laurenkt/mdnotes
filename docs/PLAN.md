@@ -271,7 +271,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       pointing-hand cursor and a solid underline; Cmd-click or Cmd-Enter on a standard link or
       URL opens it with `NSWorkspace`. Tests: cursor and underline after simulated
       flagsChanged over a link; open action receives the URL.
-- [ ] M10.11 `HTMLToMarkdown` in Core (ED-13): walks tidy-parsed HTML and emits headings, emphasis,
+- [x] M10.11 `HTMLToMarkdown` in Core (ED-13): walks tidy-parsed HTML and emits headings, emphasis,
       links, lists with nesting, task items, code, blockquotes, pipe tables, remote images,
       paragraphs and line breaks; everything else as plain text. Fixtures: Mail, Safari,
       Notes, Google Docs exports. Tests: one per fixture, byte-exact expected markdown.
