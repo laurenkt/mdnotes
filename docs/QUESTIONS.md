@@ -158,3 +158,6 @@ but the pre-commit gate refused them with PF-1 cold at 334 and 311 ms, so they a
 with their MAP edits, as `docs/patches/I-11-cold-launch.patch` (applies cleanly to main at
 0139109; `git apply` it, delete it, and commit as the I-11 fix once the ADR has landed); I-11 is
 marked `[?]` and PF-1's cold assertion stays as it is until then.
+Answer: Option 1 (the human, 2026-09-15). ADR-0020 and SPEC PF-1a record it. I-11 is reopened:
+apply docs/patches/I-11-cold-launch.patch, add the one-line warm-up to LaunchPerfTests before
+the first clock, delete the patch, and commit as the I-11 fix. Budgets untouched.

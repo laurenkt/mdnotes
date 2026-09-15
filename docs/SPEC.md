@@ -232,6 +232,11 @@ the commit. Constants live in `PerfGate.Budget`; change them here first, then th
   in-memory index snapshots.
 - **PF-7** The index is rebuilt from disk on launch; no on-disk cache. PF-1 therefore
   requires the list to become interactive before indexing completes, populated progressively.
+- **PF-1a** *(ADR-0020)* PF-1 measures the app's own launch path. `LaunchPerfTests` warms the
+  OS's Writing Tools soft-link (`NSWritingToolsCoordinator.isWritingToolsAvailable`) once
+  before the first clock starts, because macOS 27.0 charges every process 170 to 250 ms of
+  main-thread class registration the first time a text field takes focus (S-1). The user's
+  real first launch pays that on top of the PF-1 number.
 - **PF-8** *(v2)* Thumbnail generation (S-11, E-9) runs on a background queue with at most two
   concurrent jobs, uses `QLThumbnailGenerator` or `CGImageSource` downsampling, and caches
   results in memory keyed by path and modification date (bounded, LRU, 50 MB). The main thread
