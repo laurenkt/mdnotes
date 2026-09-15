@@ -9,7 +9,8 @@ deny() { echo "BLOCKED by .claude/hooks/guard-bash.sh: $1" >&2; exit 2; }
 
 case "$cmd" in
     *--no-verify*)            deny "git --no-verify bypasses the pre-commit gate. Fix the failure instead." ;;
-    *"git push"*)             deny "this repo is local-only; there is no remote to push to." ;;
+    *"git push --force"*|*"git push -f"*|*"git push --force-with-lease"*)
+                              deny "history is append-only; never force-push (docs/adr/0006)." ;;
     *"core.hooksPath"*)       deny "git hooks path must stay at .githooks." ;;
     *"MDNOTES_SKIP_PERF"*)    deny "perf gates may not be skipped from the shell; use scripts/check.sh quick during iteration and let pre-commit run the full gate." ;;
     *xcodebuild*|*xcodegen*|*"open "*.xcodeproj*|*"generate-xcodeproj"*)
