@@ -79,3 +79,33 @@ moment-style aliases (`YYYY`→`yyyy`, `DD`→`dd`, `dddd`→`EEEE`) on top of U
 which makes `YYYY` and `DD` unreachable in their Unicode meaning and mixes two grammars.
 Recommendation: option 1.
 Answer:
+
+## Q4: The PF-1 cold-launch assertion fails on this machine with the unchanged M10.2 tree; how does a finished task land while it does?   (task: M10.3, 2026-09-15)
+Context: M10.3 is implemented and green on every gate but one: `LaunchPerfTests
+.testPF1_finishLaunchingToListPopulatedAndWindowKeyUnder300msWith20kNotes` asserts the first
+(cold) launch in the process under 300 ms and measured 444 to 600 ms in more than twenty
+attempts across five pre-commit runs and two probe rounds between 10:00 and 11:10, with the
+1-minute load average between 2.3 and 6.7 (WindowServer at 45 % and the Claude and Codex
+apps busy; Spotlight workers present; no other build running). The median of the seven
+launches was 200 to 220 ms every time. The same tree with the M10.2 `EditorStyler` and its
+tests put back measured 530 and 552 ms cold, so the change is not the cause (I-11). The
+pre-commit hook cannot be bypassed and skips the gate only for commits with no build
+inputs, so the implementation could not be committed on the branch. It is preserved whole,
+with its MAP and PLAN edits and its snapshot-checked commit message, as
+`docs/patches/M10.3-heading-scale.patch` (`git apply docs/patches/M10.3-heading-scale.patch`
+from the repository root, then delete the patch and commit as
+"M10.3: headings scaled by level in EditorStyler (ED-4, ED-9, E-3, E-8)"); it applied
+cleanly forward and in reverse against this tree. The branch was cut from ef8b876, before
+M10.2 landed on main, so ec97c43 is cherry-picked on it as 6bbe239 and `land.sh` will refuse
+the branch for main having moved on build inputs; the patch applies to main at 500030e as
+well since it touches only files at their M10.2 state.
+Options: (1) a human applies the patch and commits when the machine is quiet (a run of the
+gate at 09:10 today passed with the same assertion); (2) make the cold-launch assertion
+load-aware or give it a budget of its own by an ADR, since a single cold sample on a busy
+desktop cannot tell load from a regression (I-6, I-11), then re-run the task from the patch;
+(3) drop the cold-sample assertion and gate PF-1 on the median only, by an ADR.
+Recommendation: option 1 now to land the work, and option 2 as the fix for the gate.
+Answer: None of the three. The gate is law (CLAUDE.md, Rules): when PF-1 fails, understand
+why cold launch regressed and make it faster, instead of re-running the gate or parking the
+work. Recorded as I-11 (bug), which the loop drains before M10.3; M10.3 then resumes from
+docs/patches/M10.3-heading-scale.patch. (Answered by the human, 2026-09-15.)
