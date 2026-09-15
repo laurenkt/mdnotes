@@ -2,12 +2,26 @@ import AppKit
 import Foundation
 import MDNotesCore
 
-/// Light syntax styling for the editor (E-2): ATX headings in the bold face of the editor font,
-/// `[[wikilinks]]` in the link colour, `#tags` in theirs, and inline or fenced code in the
-/// system monospaced font (E-8) and their own colour. Only `.font` and `.foregroundColor` are
-/// ever set, and the font keeps the base size everywhere: headings change weight, code tokens
-/// change family (the one exception E-2 allows, ADR-0010), nothing else changes either.
-/// Nothing here reaches the file, whose content is the text view's plain string (E-1).
+/// Syntax styling for the editor (E-2, ADR-0019): headings in the bold face of the editor font,
+/// `[[wikilinks]]` in the link colour, `#tags` in theirs, inline or fenced code in the system
+/// monospaced font (E-8) and their own colour, emphasis content with the bold, italic or
+/// strikethrough trait (ED-3), and every markdown marker the scanner yields (`#`, emphasis
+/// delimiters, list markers, `>`, link brackets and URLs, table pipes, setext underlines,
+/// rules) in tertiary label colour at the surrounding size (ED-2). Only `.font`,
+/// `.foregroundColor` and `.strikethroughStyle` are ever set, and the font keeps the base size
+/// everywhere: headings and emphasis change weight or slant, code tokens change family (the
+/// one exception E-2 allows, ADR-0010), nothing else changes either. Nothing here reaches the
+/// file, whose content is the text view's plain string (E-1).
+///
+/// A token's style goes on its whole range and its markers are then recoloured, so a marker
+/// keeps the weight of what surrounds it (a heading's `#` is bold and dimmed) and carries the
+/// token's `tokenAttribute`. Emphasis is the exception: its trait goes on the content only,
+/// added to whatever font each run there already has, so nested emphasis composes (bold in
+/// italic is bold italic) and emphasis on a heading line keeps the heading's weight. Tokens
+/// come enclosing first, so a code span inside emphasis is styled after it and takes the code
+/// font and colour back, with no strikethrough: nothing inside code is ever styled (ED-3).
+/// Code markers (backticks, fence lines) keep the code colour, a tag's `#` keeps the tag's
+/// colour (T-4), and a task box is left to ED-6.
 ///
 /// A wikilink whose bare title several notes share is styled as ambiguous instead (K-2), in a
 /// warning tint. Which links those are is the library's `LinkIndex`, read through `linkIndex`
@@ -46,7 +60,7 @@ public final class EditorStyler {
     /// styler, and tests, tell what a range was styled as without re-scanning.
     nonisolated public static let tokenAttribute = NSAttributedString.Key("MDNotesToken")
 
-    /// The kinds of styling E-2 and K-2 apply.
+    /// The kinds of styling E-2, K-2 and ED-3 apply.
     public enum TokenStyle: String, Sendable, CaseIterable {
         case heading
         /// A wikilink or embed that is not ambiguous: unique, unresolved, by path, or an embed.
@@ -56,11 +70,18 @@ public final class EditorStyler {
         case tag
         case inlineCode
         case fencedCode
+        /// ED-3: the content of `**x**` or `__x__`, in the bold trait.
+        case bold
+        /// ED-3: the content of `*x*` or `_x_`, in the italic trait.
+        case italic
+        /// ED-3: the content of `~~x~~`, struck through.
+        case strikethrough
 
         /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
         /// `.ambiguousLink` only once its target has been resolved (K-2). Nil for the kinds
-        /// the scanner yields that have no styling yet (ED-1's emphasis, links, lists, quotes,
-        /// tables and rules, styled by M10.2 onward).
+        /// the scanner yields that have no styling of their own yet (ED-1's links, lists,
+        /// quotes, tables and rules, styled by M10.3 onward); their markers are dimmed all the
+        /// same (ED-2).
         init?(_ kind: MarkdownScanner.Kind) {
             switch kind {
             case .heading: self = .heading
@@ -68,10 +89,34 @@ public final class EditorStyler {
             case .tag: self = .tag
             case .inlineCode: self = .inlineCode
             case .fencedCode: self = .fencedCode
-            case .emphasis, .link, .autolink, .bareURL, .listItem, .taskBox, .blockquote, .tableRow,
-                .tableSeparator, .thematicBreak:
+            case .emphasis(.bold): self = .bold
+            case .emphasis(.italic): self = .italic
+            case .emphasis(.strikethrough): self = .strikethrough
+            case .link, .autolink, .bareURL, .listItem, .taskBox, .blockquote, .tableRow, .tableSeparator,
+                .thematicBreak:
                 return nil
             }
+        }
+
+        /// The emphasis styles, whose attributes go on a token's content rather than its range
+        /// and whose font trait is added to what is there (ED-3).
+        var isEmphasis: Bool {
+            switch self {
+            case .bold, .italic, .strikethrough: true
+            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode: false
+            }
+        }
+    }
+
+    /// ED-2: whether a token's markers are dimmed. Every markdown marker is, except those of
+    /// code, which keep the code colour with the rest of the token, a tag's `#`, which keeps
+    /// the tag's colour (T-4), and a task box's brackets, whose look ED-6 decides.
+    static func dimsMarkers(_ kind: MarkdownScanner.Kind) -> Bool {
+        switch kind {
+        case .inlineCode, .fencedCode, .tag, .taskBox: false
+        case .heading, .wikilink, .emphasis, .link, .autolink, .bareURL, .listItem, .blockquote, .tableRow,
+            .tableSeparator, .thematicBreak:
+            true
         }
     }
 
@@ -92,6 +137,9 @@ public final class EditorStyler {
 
     /// The warning tint an ambiguous link is set in (K-2).
     public static let ambiguousLinkColor: NSColor = .systemOrange
+
+    /// The colour every markdown marker is set in (ED-2).
+    public static let markerColor: NSColor = .tertiaryLabelColor
 
     /// K-2: the link index wikilink targets are resolved against, read whenever links are
     /// styled. `EditorController` points it at the snapshot of the library the shown note
@@ -118,7 +166,9 @@ public final class EditorStyler {
     // MARK: - Styles
 
     /// The attributes `style` adds on top of the base: a weight for headings, the monospaced
-    /// font and a colour for code (E-8), a colour for the rest, and the marker.
+    /// font and a colour for code (E-8), a colour for links and tags, a strikethrough for
+    /// `~~x~~`, and the marker. The bold and italic traits of emphasis are not here: they are
+    /// added to the fonts already in place, run by run, by `addTrait(_:fallback:in:to:)`.
     public func attributes(for style: TokenStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [Self.tokenAttribute: style.rawValue]
         switch style {
@@ -129,19 +179,30 @@ public final class EditorStyler {
         case .inlineCode, .fencedCode:
             attributes[.font] = codeFont
             attributes[.foregroundColor] = NSColor.secondaryLabelColor
+        case .strikethrough: attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        case .bold, .italic: break
         }
         return attributes
     }
 
     private static func bold(_ font: NSFont) -> NSFont {
-        let traits = font.fontDescriptor.symbolicTraits.union(.bold)
+        adding(.bold, fallback: .boldFontMask, to: font)
+    }
+
+    /// `font` with `trait` added, at the same size, or `font` itself when its family has no
+    /// such face and the font manager cannot find one either.
+    private static func adding(
+        _ trait: NSFontDescriptor.SymbolicTraits, fallback: NSFontTraitMask, to font: NSFont
+    ) -> NSFont {
+        guard !font.fontDescriptor.symbolicTraits.contains(trait) else { return font }
+        let traits = font.fontDescriptor.symbolicTraits.union(trait)
         let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-        guard let bold = NSFont(descriptor: descriptor, size: font.pointSize),
-            bold.fontDescriptor.symbolicTraits.contains(.bold)
+        guard let added = NSFont(descriptor: descriptor, size: font.pointSize),
+            added.fontDescriptor.symbolicTraits.contains(trait)
         else {
-            return NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+            return NSFontManager.shared.convert(font, toHaveTrait: fallback)
         }
-        return bold
+        return added
     }
 
     // MARK: - Re-styling
@@ -213,20 +274,20 @@ public final class EditorStyler {
         let text = EditorText(storage: storage)
         let whole = NSRange(location: 0, length: text.units.count)
         let index = linkIndex()
-        var changes: [(range: NSRange, style: TokenStyle)] = []
+        var changes: [(token: MarkdownScanner.Token, style: TokenStyle)] = []
         for token in MarkdownScanner.scan(text.units, in: whole) {
             guard case .wikilink(let target, _, let isEmbed) = token.kind else { continue }
             let style = linkStyle(target: target, isEmbed: isEmbed, in: text, index: index)
             let range = text.storageRange(forFileRange: token.range)
             let current = storage.attribute(Self.tokenAttribute, at: range.location, effectiveRange: nil)
-            if current as? String != style.rawValue { changes.append((range, style)) }
+            if current as? String != style.rawValue { changes.append((token, style)) }
         }
         guard !changes.isEmpty else { return }
         isRestyling = true
         defer { isRestyling = false }
         storage.beginEditing()
         for change in changes {
-            storage.addAttributes(attributes(for: change.style), range: change.range)
+            apply(change.style, to: change.token, of: text, to: storage)
         }
         storage.endEditing()
     }
@@ -239,28 +300,71 @@ public final class EditorStyler {
         return index.resolve(text.string(inFileRange: target)).isAmbiguous ? .ambiguousLink : .wikilink
     }
 
-    /// Resets `range`, a storage range, to the base font and colour, then applies `tokens`,
-    /// whose ranges are file indices into `text` and are mapped back to the storage. A heading
-    /// line's links and tags are applied after the heading, so they take its weight and their
-    /// colour. Links are resolved against `linkIndex` as they are applied (K-2).
+    /// Resets `range`, a storage range, to the base font and colour with no strikethrough, then
+    /// applies `tokens`, whose ranges are file indices into `text` and are mapped back to the
+    /// storage. Tokens come enclosing first, so what a token encloses is styled after it: a
+    /// heading line's links and tags take its weight and their colour, emphasis inside emphasis
+    /// composes, and code inside emphasis takes the code style back (ED-3). Links are resolved
+    /// against `linkIndex` as they are applied (K-2). A token with no style of its own still
+    /// has its markers dimmed (ED-2).
     private func apply(
         _ tokens: [MarkdownScanner.Token], in range: NSRange, of text: EditorText, to storage: NSTextStorage
     ) {
         isRestyling = true
         defer { isRestyling = false }
         storage.removeAttribute(Self.tokenAttribute, range: range)
+        storage.removeAttribute(.strikethroughStyle, range: range)
         storage.addAttributes([.font: baseFont, .foregroundColor: baseColor], range: range)
         let index = linkIndex()
         for token in tokens {
-            let style: TokenStyle
+            let style: TokenStyle?
             if case .wikilink(let target, _, let isEmbed) = token.kind {
                 style = linkStyle(target: target, isEmbed: isEmbed, in: text, index: index)
-            } else if let styled = TokenStyle(token.kind) {
-                style = styled
             } else {
-                continue
+                style = TokenStyle(token.kind)
             }
-            storage.addAttributes(attributes(for: style), range: text.storageRange(forFileRange: token.range))
+            apply(style, to: token, of: text, to: storage)
+        }
+    }
+
+    /// Styles one token: `style`'s attributes on its range, or on its content alone for
+    /// emphasis, whose trait is added to the fonts already there; code drops any strikethrough
+    /// an enclosing token left (ED-3); then the markers are recoloured (ED-2), so they carry
+    /// the token's attribute and font and the marker colour. Ranges are file indices into
+    /// `text`, mapped to the storage here.
+    private func apply(
+        _ style: TokenStyle?, to token: MarkdownScanner.Token, of text: EditorText, to storage: NSTextStorage
+    ) {
+        if let style {
+            let range = text.storageRange(forFileRange: style.isEmphasis ? token.content : token.range)
+            storage.addAttributes(attributes(for: style), range: range)
+            switch style {
+            case .bold: addTrait(.bold, fallback: .boldFontMask, in: range, to: storage)
+            case .italic: addTrait(.italic, fallback: .italicFontMask, in: range, to: storage)
+            case .inlineCode, .fencedCode: storage.removeAttribute(.strikethroughStyle, range: range)
+            case .heading, .wikilink, .ambiguousLink, .tag, .strikethrough: break
+            }
+        }
+        guard Self.dimsMarkers(token.kind) else { return }
+        for marker in token.markers {
+            storage.addAttribute(
+                .foregroundColor, value: Self.markerColor, range: text.storageRange(forFileRange: marker))
+        }
+    }
+
+    /// Adds `trait` to the font of every run in `range` (a storage range), keeping each run's
+    /// size, so bold inside italic is bold italic and emphasis on a heading keeps its weight.
+    private func addTrait(
+        _ trait: NSFontDescriptor.SymbolicTraits, fallback: NSFontTraitMask, in range: NSRange,
+        to storage: NSTextStorage
+    ) {
+        var changes: [(range: NSRange, font: NSFont)] = []
+        storage.enumerateAttribute(.font, in: range, options: []) { value, run, _ in
+            let font = value as? NSFont ?? baseFont
+            changes.append((run, Self.adding(trait, fallback: fallback, to: font)))
+        }
+        for change in changes {
+            storage.addAttribute(.font, value: change.font, range: change.range)
         }
     }
 }

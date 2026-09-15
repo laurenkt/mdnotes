@@ -239,7 +239,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       per ED-8, setext headings per ED-9. Tokens carry marker ranges separately from content
       ranges. Tests: one test per construct, code-span and fenced-block exclusion, word-boundary
       underscore, nesting depth, blank-line-before rule, setext under text.
-- [ ] M10.2 Marker dimming and emphasis traits in `EditorStyler` (ED-2, ED-3): markers in tertiary
+- [x] M10.2 Marker dimming and emphasis traits in `EditorStyler` (ED-2, ED-3): markers in tertiary
       label colour; bold, italic and strikethrough traits on content; nothing inside code.
       Tests: attributes per token; markers and content styled separately.
 - [ ] M10.3 Heading scale (ED-4): 1.4 / 1.25 / 1.1 / 1.0 times the body size, bold; `#` and setext

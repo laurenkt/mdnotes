@@ -55,6 +55,12 @@ final class EditorStylingSmokeTests: XCTestCase {
 
         func color(at location: Int) -> NSColor? { attributes(at: location)[.foregroundColor] as? NSColor }
         func font(at location: Int) -> NSFont? { attributes(at: location)[.font] as? NSFont }
+        func strikethrough(at location: Int) -> Int? { attributes(at: location)[.strikethroughStyle] as? Int }
+
+        /// The colour of every character in `range`.
+        func colors(in range: NSRange) -> [NSColor?] {
+            (range.location..<(range.location + range.length)).map { color(at: $0) }
+        }
 
         /// The token style of every character in `range`, or nil where there is none.
         func styles(in range: NSRange) -> [EditorStyler.TokenStyle?] {
@@ -84,6 +90,16 @@ final class EditorStylingSmokeTests: XCTestCase {
     private func isBold(_ font: NSFont?) -> Bool {
         font?.fontDescriptor.symbolicTraits.contains(.bold) ?? false
     }
+
+    private func isItalic(_ font: NSFont?) -> Bool {
+        font?.fontDescriptor.symbolicTraits.contains(.italic) ?? false
+    }
+
+    /// The colour every markdown marker is dimmed to (ED-2).
+    private var tertiary: NSColor { EditorStyler.markerColor }
+
+    /// A character inside a wikilink's brackets: the last one before `]]`.
+    private func inside(_ link: NSRange) -> Int { link.location + link.length - 3 }
 
     /// The prose font: the system font at 13 pt (E-8).
     private var base: NSFont { NSFont.systemFont(ofSize: 13) }
@@ -122,7 +138,8 @@ final class EditorStylingSmokeTests: XCTestCase {
 
         let link = range(of: "[[Other|label]]", in: text)
         XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"])
-        XCTAssertEqual(fixture.color(at: link.location), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: link.location), tertiary, "the brackets are markers (ED-2)")
         XCTAssertEqual(fixture.font(at: link.location), base, "links keep the base weight")
 
         let tag = range(of: "#tag", in: text)
@@ -187,6 +204,7 @@ final class EditorStylingSmokeTests: XCTestCase {
             case .inlineCode, .fencedCode: XCTAssertEqual(font, mono, "\(style)")
             case .heading: XCTAssertEqual(font, fixture.styler.headingFont)
             case .wikilink, .ambiguousLink, .tag: XCTAssertNil(font, "\(style) keeps the base font")
+            case .bold, .italic, .strikethrough: XCTAssertNil(font, "\(style) adds a trait to the font in place")
             }
         }
 
@@ -205,7 +223,8 @@ final class EditorStylingSmokeTests: XCTestCase {
         fixture.show(text)
         let link = range(of: "[[link]]", in: text)
         XCTAssertTrue(isBold(fixture.font(at: link.location)))
-        XCTAssertEqual(fixture.color(at: link.location), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: link.location), tertiary, "the brackets are markers (ED-2)")
         let tag = range(of: "#tag", in: text)
         XCTAssertTrue(isBold(fixture.font(at: tag.location)))
         XCTAssertEqual(fixture.color(at: tag.location), NSColor.systemPurple)
@@ -213,14 +232,15 @@ final class EditorStylingSmokeTests: XCTestCase {
 
     func testE2_stylingChangesNeitherTheTextNorItsMetrics() {
         let fixture = makeFixture()
-        let text = "# Title\n\nsee [[Other]] and #tag `code`\n\n```swift\nlet x = 1\n```\n\nplain end"
+        let text =
+            "# Title\n\nsee [[Other]] and #tag `code` **bold** *it* ~~gone~~\n\n- item\n> quote\n\n```swift\nlet x = 1\n```\n\nplain end"
         fixture.show(text)
         XCTAssertEqual(fixture.textView.string, text, "the text is exactly what went in")
 
-        // Only the font weight and colour vary, run by run; the size is the base's everywhere
-        // and the family too, except on code, which is monospaced (E-8).
+        // Only the font traits, colour and strikethrough vary, run by run; the size is the
+        // base's everywhere and the family too, except on code, which is monospaced (E-8).
         let allowed: Set<NSAttributedString.Key> = [
-            .font, .foregroundColor, .paragraphStyle, EditorStyler.tokenAttribute,
+            .font, .foregroundColor, .paragraphStyle, .strikethroughStyle, EditorStyler.tokenAttribute,
         ]
         let codeStyles = [EditorStyler.TokenStyle.inlineCode.rawValue, EditorStyler.TokenStyle.fencedCode.rawValue]
         var runs = 0
@@ -274,7 +294,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertFalse(isBold(body))
         let code = try XCTUnwrap(fixture.font(at: range(of: "`code`", in: text).location))
         XCTAssertEqual(code, NSFont.monospacedSystemFont(ofSize: 15, weight: .regular), "code follows the size")
-        XCTAssertEqual(fixture.color(at: range(of: "[[link]]", in: text).location), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: inside(range(of: "[[link]]", in: text))), NSColor.linkColor)
         XCTAssertEqual(fixture.styler.baseFont, NSFont.systemFont(ofSize: 15))
         XCTAssertEqual(fixture.styler.codeFont, NSFont.monospacedSystemFont(ofSize: 15, weight: .regular))
 
@@ -501,19 +521,21 @@ final class EditorStylingSmokeTests: XCTestCase {
         for needle in ["[[foo]]", "[[Foo|label]]", "[[ foo ]]"] {
             let link = range(of: needle, in: text)
             XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["ambiguousLink"], needle)
-            XCTAssertEqual(fixture.color(at: link.location), EditorStyler.ambiguousLinkColor, needle)
+            XCTAssertEqual(fixture.color(at: inside(link)), EditorStyler.ambiguousLinkColor, needle)
+            XCTAssertEqual(fixture.color(at: link.location), tertiary, "\(needle) brackets are dimmed (ED-2)")
             XCTAssertEqual(fixture.font(at: link.location), base, "\(needle) keeps the base weight")
         }
         for needle in ["[[daily/foo]]", "[[Bar]]", "[[none]]", "![[foo]]"] {
             let link = range(of: needle, in: text)
             XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"], needle)
-            XCTAssertEqual(fixture.color(at: link.location), NSColor.linkColor, needle)
+            XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor, needle)
+            XCTAssertEqual(fixture.color(at: link.location), tertiary, "\(needle) brackets are dimmed (ED-2)")
         }
         XCTAssertNil(fixture.style(at: range(of: "see", in: text).location))
 
         let heading = range(of: "[[foo]]", in: text, occurrence: 2)
         XCTAssertEqual(fixture.style(at: heading.location), .ambiguousLink)
-        XCTAssertEqual(fixture.color(at: heading.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.color(at: inside(heading)), EditorStyler.ambiguousLinkColor)
         XCTAssertTrue(isBold(fixture.font(at: heading.location)), "on a heading line it keeps the heading's weight")
         XCTAssertEqual(fixture.textView.string, text)
     }
@@ -540,10 +562,12 @@ final class EditorStylingSmokeTests: XCTestCase {
         box.index = twoFooIndex()
         fixture.styler.restyleLinks()
         XCTAssertEqual(Set(fixture.styles(in: first).map { $0?.rawValue }), ["ambiguousLink"])
-        XCTAssertEqual(fixture.color(at: first.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.color(at: inside(first)), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.color(at: first.location), tertiary, "its brackets stay dimmed (ED-2)")
         XCTAssertEqual(Set(fixture.styles(in: second).map { $0?.rawValue }), ["ambiguousLink"])
-        XCTAssertEqual(fixture.color(at: second.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.color(at: inside(second)), EditorStyler.ambiguousLinkColor)
         XCTAssertEqual(fixture.color(at: bar.location), mark, "a link whose resolution did not change is untouched")
+        XCTAssertEqual(fixture.color(at: inside(bar)), mark)
         XCTAssertEqual(fixture.style(at: bar.location), .wikilink)
         XCTAssertEqual(fixture.color(at: 0), mark, "plain text is untouched")
         XCTAssertEqual(fixture.color(at: range(of: "#tag", in: text).location), mark, "a tag is untouched")
@@ -554,7 +578,8 @@ final class EditorStylingSmokeTests: XCTestCase {
         box.index = oneFooIndex()
         fixture.styler.restyleLinks()
         XCTAssertEqual(fixture.style(at: first.location), .wikilink)
-        XCTAssertEqual(fixture.color(at: first.location), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: inside(first)), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: first.location), tertiary)
         XCTAssertEqual(fixture.style(at: second.location), .wikilink)
         XCTAssertEqual(fixture.color(at: bar.location), mark)
 
@@ -594,7 +619,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         let foo = range(of: "[[foo]]", in: body)
         let bar = range(of: "[[Bar]]", in: body)
         XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["wikilink"], "one foo is unique")
-        XCTAssertEqual(fixture.color(at: foo.location), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: inside(foo)), NSColor.linkColor)
 
         let second = NoteID(relativePath: "daily/foo.md")
         var created = false
@@ -609,7 +634,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertNotNil(library.snapshot.entry(for: second))
         XCTAssertTrue(library.snapshot.links.resolve("foo").isAmbiguous)
         XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["ambiguousLink"])
-        XCTAssertEqual(fixture.color(at: foo.location), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.color(at: inside(foo)), EditorStyler.ambiguousLinkColor)
         XCTAssertEqual(fixture.style(at: bar.location), .wikilink)
         XCTAssertEqual(fixture.textView.string, body, "the text is untouched")
         XCTAssertFalse(fixture.controller.editorController.hasUnsavedEdits, "re-styling is not an edit")
@@ -619,5 +644,297 @@ final class EditorStylingSmokeTests: XCTestCase {
         fixture.type("[[foo]]", at: end)
         XCTAssertEqual(fixture.style(at: end), .ambiguousLink)
         library.stop()
+    }
+
+    // MARK: - ED-2, ED-3: markers dimmed, emphasis traits on content
+
+    /// Each emphasis form: the content carries the trait, the token attribute and the base
+    /// colour; the markers carry the marker colour, the surrounding font and no trait. The
+    /// traits follow a size change (E-8).
+    func testED3_emphasisContentGetsItsTraitAndItsMarkersAreDimmed() throws {
+        let fixture = makeFixture()
+        let text = "**bold** *it* _under_ ~~gone~~ __b2__ plain\n"
+        fixture.show(text)
+
+        let cases: [(needle: String, marker: Int, style: EditorStyler.TokenStyle)] = [
+            ("**bold**", 2, .bold), ("*it*", 1, .italic), ("_under_", 1, .italic), ("~~gone~~", 2, .strikethrough),
+            ("__b2__", 2, .bold),
+        ]
+        for (needle, marker, style) in cases {
+            let token = range(of: needle, in: text)
+            let content = NSRange(location: token.location + marker, length: token.length - 2 * marker)
+            let markers = [
+                NSRange(location: token.location, length: marker),
+                NSRange(location: content.location + content.length, length: marker),
+            ]
+            for location in content.location..<(content.location + content.length) {
+                let font = try XCTUnwrap(fixture.font(at: location), needle)
+                XCTAssertEqual(fixture.style(at: location), style, needle)
+                XCTAssertEqual(
+                    fixture.color(at: location), fixture.styler.baseColor, "\(needle) content keeps its colour")
+                XCTAssertEqual(font.pointSize, base.pointSize, "\(needle) keeps the size (E-2)")
+                XCTAssertEqual(font.familyName, base.familyName, "\(needle) keeps the family")
+                XCTAssertEqual(isBold(font), style == .bold, "\(needle) bold")
+                XCTAssertEqual(isItalic(font), style == .italic, "\(needle) italic")
+                XCTAssertEqual(
+                    fixture.strikethrough(at: location),
+                    style == .strikethrough ? NSUnderlineStyle.single.rawValue : nil,
+                    "\(needle) strikethrough")
+            }
+            for run in markers {
+                for location in run.location..<(run.location + run.length) {
+                    XCTAssertEqual(fixture.color(at: location), tertiary, "\(needle) marker at \(location) is dimmed")
+                    XCTAssertEqual(fixture.font(at: location), base, "\(needle) marker keeps the surrounding font")
+                    XCTAssertNil(fixture.strikethrough(at: location), "\(needle) marker is not struck")
+                    XCTAssertNil(fixture.style(at: location), "\(needle) marker carries no emphasis style")
+                }
+            }
+        }
+        let plain = range(of: "plain", in: text)
+        XCTAssertEqual(fixture.font(at: plain.location), base)
+        XCTAssertEqual(fixture.color(at: plain.location), fixture.styler.baseColor)
+        XCTAssertNil(fixture.strikethrough(at: plain.location))
+        XCTAssertNil(fixture.style(at: plain.location))
+        XCTAssertEqual(fixture.textView.string, text)
+
+        UserDefaults.standard.set(15, forKey: EditorFontPreference.sizeDefaultsKey)
+        let bold = try XCTUnwrap(fixture.font(at: 2))
+        XCTAssertEqual(bold.pointSize, 15)
+        XCTAssertTrue(isBold(bold), "bold at the new size")
+        XCTAssertEqual(fixture.font(at: 0), NSFont.systemFont(ofSize: 15), "the marker at the new size")
+        XCTAssertEqual(fixture.color(at: 0), tertiary)
+        let italic = try XCTUnwrap(fixture.font(at: range(of: "it", in: text).location))
+        XCTAssertEqual(italic.pointSize, 15)
+        XCTAssertTrue(isItalic(italic))
+    }
+
+    /// Nested emphasis composes: the inner token's trait is added to the outer's, and the
+    /// inner markers, being in the outer content, carry the outer trait and the marker colour.
+    func testED3_nestedEmphasisComposesTraits() {
+        let fixture = makeFixture()
+        let text = "***a*** and **bold *it* bold** and _x **y** z_\n"
+        fixture.show(text)
+
+        let a = range(of: "a", in: text).location
+        XCTAssertTrue(isBold(fixture.font(at: a)) && isItalic(fixture.font(at: a)), "bold inside italic is both")
+        XCTAssertEqual(fixture.color(at: 0), tertiary, "the outer marker")
+        XCTAssertEqual(fixture.color(at: 6), tertiary)
+        XCTAssertFalse(isBold(fixture.font(at: 0)) || isItalic(fixture.font(at: 0)), "the outer marker has no trait")
+        for inner in [1, 2, 4, 5] {
+            XCTAssertEqual(fixture.color(at: inner), tertiary, "the inner marker at \(inner) is dimmed")
+            XCTAssertTrue(isItalic(fixture.font(at: inner)), "and is in the outer content, so italic")
+            XCTAssertFalse(isBold(fixture.font(at: inner)), "but not bold")
+        }
+
+        let bold = range(of: "bold", in: text)
+        XCTAssertTrue(isBold(fixture.font(at: bold.location)))
+        XCTAssertFalse(isItalic(fixture.font(at: bold.location)))
+        let it = range(of: "it", in: text)
+        XCTAssertTrue(isBold(fixture.font(at: it.location)) && isItalic(fixture.font(at: it.location)))
+        XCTAssertEqual(fixture.style(at: it.location), .italic, "the inner token's attribute wins")
+        XCTAssertEqual(fixture.color(at: it.location - 1), tertiary, "the inner * is dimmed")
+        XCTAssertTrue(isBold(fixture.font(at: it.location - 1)), "and bold, like its surroundings")
+
+        let x = range(of: "x", in: text).location
+        XCTAssertTrue(isItalic(fixture.font(at: x)) && !isBold(fixture.font(at: x)))
+        let y = range(of: "y", in: text).location
+        XCTAssertTrue(isItalic(fixture.font(at: y)) && isBold(fixture.font(at: y)))
+        XCTAssertEqual(fixture.style(at: y), .bold)
+    }
+
+    /// Code takes the code font and colour back from any emphasis around it, drops the
+    /// strikethrough, and delimiters inside code are neither markers nor emphasis.
+    func testED3_nothingInsideCodeIsStyled() throws {
+        let fixture = makeFixture()
+        let text = "**a `code` b** ~~s `c` t~~ `**not** *no* ~~x~~`\n```\n**no** _no_ ~~no~~\n```\n"
+        fixture.show(text)
+
+        XCTAssertTrue(isBold(fixture.font(at: range(of: "a", in: text).location)))
+        let code = range(of: "`code`", in: text)
+        for location in code.location..<(code.location + code.length) {
+            XCTAssertEqual(fixture.font(at: location), mono, "code inside bold is plain mono at \(location)")
+            XCTAssertEqual(fixture.color(at: location), NSColor.secondaryLabelColor)
+            XCTAssertEqual(fixture.style(at: location), .inlineCode)
+        }
+        XCTAssertTrue(isBold(fixture.font(at: range(of: "b", in: text).location)), "bold resumes after the code")
+
+        XCTAssertEqual(fixture.strikethrough(at: range(of: "s", in: text).location), NSUnderlineStyle.single.rawValue)
+        let c = range(of: "`c`", in: text)
+        for location in c.location..<(c.location + c.length) {
+            XCTAssertNil(fixture.strikethrough(at: location), "code inside strikethrough is not struck at \(location)")
+        }
+        XCTAssertEqual(fixture.strikethrough(at: range(of: "t", in: text).location), NSUnderlineStyle.single.rawValue)
+
+        let span = range(of: "`**not** *no* ~~x~~`", in: text)
+        let fence = range(of: "```\n**no** _no_ ~~no~~\n```\n", in: text)
+        for (run, style) in [(span, EditorStyler.TokenStyle.inlineCode), (fence, .fencedCode)] {
+            for location in run.location..<(run.location + run.length) {
+                let font = try XCTUnwrap(fixture.font(at: location))
+                XCTAssertEqual(font.familyName, mono.familyName, "\(style) at \(location)")
+                XCTAssertFalse(isBold(font) || isItalic(font), "\(style) at \(location) has no trait")
+                XCTAssertEqual(fixture.color(at: location), NSColor.secondaryLabelColor, "\(style) at \(location)")
+                XCTAssertNil(fixture.strikethrough(at: location), "\(style) at \(location)")
+                XCTAssertEqual(fixture.style(at: location), style)
+            }
+        }
+    }
+
+    /// Every markdown marker the scanner yields is in the marker colour and its content is
+    /// not: heading hashes and setext underlines, list markers, blockquote prefixes, link
+    /// brackets and URLs, autolink brackets, table pipes, wikilink brackets and rules. A tag's
+    /// `#` keeps the tag colour, code delimiters the code colour, and a task box its own.
+    func testED2_markersOfEveryConstructAreDimmedAndTheirContentIsNot() {
+        let fixture = makeFixture()
+        let text =
+            "# Head\nSetext\n===\n- item\n1. num\n- [ ] task\n> quote\n[t](u) ![a](u) <http://x.y> http://z.w\n"
+            + "| a | b |\n|---|---|\n| c | d |\n[[Link]] #tag `code`\n\n---\n"
+        fixture.show(text)
+        let base = fixture.styler.baseColor
+
+        func colors(of needle: String, occurrence: Int = 0) -> Set<NSColor?> {
+            Set(fixture.colors(in: range(of: needle, in: text, occurrence: occurrence)))
+        }
+
+        XCTAssertEqual(fixture.color(at: 0), tertiary, "the heading hash")
+        XCTAssertTrue(isBold(fixture.font(at: 0)), "at the heading's weight")
+        XCTAssertEqual(fixture.style(at: 0), .heading, "and carrying the heading's attribute")
+        XCTAssertEqual(colors(of: "Head"), [base])
+        XCTAssertEqual(colors(of: "==="), [tertiary], "the setext underline")
+        XCTAssertEqual(colors(of: "Setext"), [base])
+        XCTAssertTrue(isBold(fixture.font(at: range(of: "Setext", in: text).location)))
+
+        XCTAssertEqual(colors(of: "- item"), [tertiary, base])
+        XCTAssertEqual(colors(of: "- "), [tertiary], "the bullet and its space")
+        XCTAssertEqual(colors(of: "item"), [base])
+        XCTAssertEqual(colors(of: "1. "), [tertiary])
+        XCTAssertEqual(colors(of: "num"), [base])
+        XCTAssertEqual(colors(of: "- ", occurrence: 1), [tertiary])
+        XCTAssertEqual(colors(of: "[ ]"), [base], "a task box is ED-6's")
+        XCTAssertEqual(colors(of: "task"), [base])
+        XCTAssertEqual(colors(of: ">"), [tertiary])
+        XCTAssertEqual(colors(of: "quote"), [base])
+
+        XCTAssertEqual(colors(of: "[t"), [tertiary, base])
+        XCTAssertEqual(colors(of: "t](u)"), [base, tertiary], "the closing bracket and URL are markers")
+        XCTAssertEqual(colors(of: "!["), [tertiary])
+        XCTAssertEqual(colors(of: "a](u)"), [base, tertiary])
+        XCTAssertEqual(colors(of: "<"), [tertiary])
+        XCTAssertEqual(colors(of: "http://x.y"), [base])
+        XCTAssertEqual(colors(of: ">", occurrence: 1), [tertiary])
+        XCTAssertEqual(colors(of: "http://z.w"), [base], "a bare URL has no markers")
+
+        XCTAssertEqual(colors(of: "| a | b |"), [tertiary, base])
+        XCTAssertEqual(colors(of: "|", occurrence: 0), [tertiary])
+        XCTAssertEqual(colors(of: " a "), [base])
+        XCTAssertEqual(colors(of: "|---|---|"), [tertiary, base], "the separator's pipes")
+        XCTAssertEqual(colors(of: " d "), [base])
+
+        let link = range(of: "[[Link]]", in: text)
+        XCTAssertEqual(colors(of: "[["), [tertiary])
+        XCTAssertEqual(colors(of: "]]"), [tertiary])
+        XCTAssertEqual(colors(of: "Link"), [NSColor.linkColor])
+        XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"])
+        XCTAssertEqual(colors(of: "#tag"), [NSColor.systemPurple], "a tag's hash keeps the tag colour (T-4)")
+        XCTAssertEqual(colors(of: "`code`"), [NSColor.secondaryLabelColor], "code delimiters keep the code colour")
+        XCTAssertEqual(colors(of: "---\n"), [tertiary, base], "the rule")
+        XCTAssertEqual(colors(of: "---", occurrence: 2), [tertiary])
+        XCTAssertEqual(fixture.textView.string, text)
+    }
+
+    /// On a heading line the markers keep the heading's weight, emphasis adds to it, and a
+    /// link re-style for K-2 leaves the brackets dimmed.
+    func testED2_markersKeepTheSurroundingWeightAndALinkRestyleKeepsThemDimmed() {
+        let fixture = makeFixture()
+        let box = IndexBox(oneFooIndex())
+        fixture.styler.linkIndex = { box.index }
+        let text = "# Head **b** [[foo]]\n"
+        fixture.show(text)
+
+        let b = range(of: "**b**", in: text)
+        XCTAssertEqual(fixture.color(at: b.location), tertiary)
+        XCTAssertEqual(
+            fixture.font(at: b.location), fixture.styler.headingFont, "the marker is at the heading's weight")
+        XCTAssertTrue(isBold(fixture.font(at: b.location + 2)))
+        XCTAssertEqual(fixture.style(at: b.location + 2), .bold)
+        XCTAssertEqual(fixture.color(at: b.location + 2), fixture.styler.baseColor)
+
+        let link = range(of: "[[foo]]", in: text)
+        XCTAssertEqual(fixture.color(at: link.location), tertiary)
+        XCTAssertTrue(isBold(fixture.font(at: link.location)))
+        XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
+        XCTAssertTrue(isBold(fixture.font(at: inside(link))))
+
+        box.index = twoFooIndex()
+        fixture.styler.restyleLinks()
+        XCTAssertEqual(fixture.color(at: inside(link)), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(fixture.color(at: link.location), tertiary, "the brackets stay dimmed")
+        XCTAssertEqual(fixture.color(at: link.location + link.length - 1), tertiary)
+        XCTAssertEqual(fixture.style(at: link.location), .ambiguousLink)
+        box.index = oneFooIndex()
+        fixture.styler.restyleLinks()
+        XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: link.location), tertiary)
+    }
+
+    /// Emphasis typed a character at a time is styled as it arrives, and losing a delimiter
+    /// takes the trait and the dimming away with the paragraph's re-style (E-3).
+    func testED3_typedEmphasisIsStyledAsItArrivesAndUnstyledWhenAMarkerGoes() {
+        let fixture = makeFixture()
+        fixture.show("plain\n")
+        let end = 6
+        fixture.type("**x**", at: end)
+        XCTAssertTrue(isBold(fixture.font(at: end + 2)))
+        XCTAssertEqual(fixture.style(at: end + 2), .bold)
+        XCTAssertEqual(fixture.color(at: end), tertiary)
+        XCTAssertEqual(fixture.color(at: end + 4), tertiary)
+
+        fixture.type("", at: end + 4, replacing: 1)
+        XCTAssertEqual(fixture.textView.string, "plain\n**x*")
+        XCTAssertFalse(isBold(fixture.font(at: end + 2)), "one pair left: italic, not bold")
+        XCTAssertTrue(isItalic(fixture.font(at: end + 2)))
+        XCTAssertEqual(fixture.color(at: end), fixture.styler.baseColor, "the unmatched * is plain")
+        XCTAssertEqual(fixture.color(at: end + 1), tertiary)
+        XCTAssertEqual(fixture.color(at: end + 3), tertiary)
+
+        fixture.type("", at: end + 3, replacing: 1)
+        XCTAssertEqual(fixture.textView.string, "plain\n**x")
+        XCTAssertEqual(fixture.font(at: end + 2), base, "no emphasis left")
+        XCTAssertNil(fixture.style(at: end + 2))
+        XCTAssertEqual(fixture.color(at: end), fixture.styler.baseColor)
+        XCTAssertEqual(fixture.color(at: end + 1), fixture.styler.baseColor)
+    }
+
+    // MARK: - V-1: the editor rendered with dimmed markers and emphasis
+
+    func testV1_editorSnapshotShowsDimmedMarkersAndEmphasis() throws {
+        let fixture = makeFixture()
+        fixture.show(
+            """
+            # Meeting notes
+
+            Prose with **bold**, *italic* and ~~struck~~ words, a [[Wikilink]], a #tag, `code` and a [link](https://example.com).
+
+            - first item with **emphasis**
+            - [ ] a task
+            1. numbered
+
+            > a quoted line
+
+            | col | val |
+            |-----|-----|
+            | a   | 1   |
+
+            ---
+
+            After the rule.
+
+            """)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(fixture.color(at: 0), tertiary)
+        let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-markers")
+        XCTAssertEqual(written.count, 2)
+        for url in written {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
     }
 }
