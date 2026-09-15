@@ -13,12 +13,13 @@ import MDNotesCore
 /// blockquote lines with a hanging indent under the quoted text and pipe-table lines in the
 /// monospaced font with the separator row dimmed (ED-7), and a thematic break's typed
 /// characters dimmed and marked `.rule` so `EditorLayoutManager` draws the extension to the
-/// trailing edge after them (ED-8). Only `.font`, `.foregroundColor`,
-/// `.strikethroughStyle` and `.paragraphStyle` are ever set: headings change weight and size,
-/// emphasis changes weight or slant, code tokens, task boxes and table lines change family
-/// (ADR-0010), list items and blockquotes change the paragraph's head indent, nothing else
-/// changes either. Nothing here reaches the file, whose content is the text view's plain
-/// string (E-1).
+/// trailing edge after them (ED-8), and every link in a state of its own (ED-11). Only
+/// `.font`, `.foregroundColor`, `.strikethroughStyle`, `.underlineStyle`, `.toolTip` and
+/// `.paragraphStyle` are ever set: headings change weight and size, emphasis changes weight
+/// or slant, code tokens, task boxes and table lines change family (ADR-0010), list items and
+/// blockquotes change the paragraph's head indent, a missing link's target is underlined and
+/// carries a tooltip, nothing else changes either. Nothing here reaches the file, whose
+/// content is the text view's plain string (E-1).
 ///
 /// A list item's paragraph gets a `headIndent` of the marker's width plus `nestingIndent` per
 /// nesting level (ED-5): the marker (`- `, `1. `, with the spaces after it) is measured in
@@ -73,12 +74,20 @@ import MDNotesCore
 /// lines) keep the code colour, a tag's `#` keeps the tag's colour (T-4), and a task box is
 /// left to ED-6.
 ///
-/// A wikilink whose bare title several notes share is styled as ambiguous instead (K-2), in a
-/// warning tint. Which links those are is the library's `LinkIndex`, read through `linkIndex`
-/// every time links are styled, so a load or a keystroke sees the current snapshot. A new
-/// snapshot can change a link's resolution without the text changing (a note created, renamed
-/// or deleted), so `restyleLinks()` re-checks every link against the index then and re-styles
-/// only those whose style changed.
+/// A wikilink is styled by what its target resolves to (ED-11, K-2): a target one note has, a
+/// path to a note, or an embed (which names a file, never a note, K-1) is in link colour; a
+/// target no note has keeps link colour and gets a dotted underline under the target text
+/// (not the brackets, which are dimmed markers) and the tooltip `missingLinkToolTip` over the
+/// whole link, since Cmd-click on it creates the note (K-3); a bare title several notes share
+/// is ambiguous, in a warning tint. Which is which is the library's `LinkIndex`, read through
+/// `linkIndex` every time links are styled, so a load or a keystroke sees the current
+/// snapshot. A new snapshot can change a link's resolution without the text changing (a note
+/// created, renamed or deleted), so `restyleLinks()` re-checks every link against the index
+/// then and re-styles only those whose style changed, taking a former missing link's
+/// underline and tooltip away or giving them to a link whose target has gone. A standard
+/// link, an autolink and a bare URL are in link colour too, their brackets and URL dimmed
+/// like every marker (ED-2); they never depend on the index. An image `![alt](url)` is not a
+/// link and stays unstyled but for its markers.
 ///
 /// Re-styling after an edit is scoped (E-3): once the storage has processed an edit to its
 /// characters, the delegate hands the edited range over, `MarkdownScanner.paragraphRange(in:
@@ -114,13 +123,20 @@ public final class EditorStyler {
     /// styler, and tests, tell what a range was styled as without re-scanning.
     nonisolated public static let tokenAttribute = NSAttributedString.Key("MDNotesToken")
 
-    /// The kinds of styling E-2, K-2 and ED-3 apply.
+    /// The kinds of styling E-2, K-2, ED-3 and ED-11 apply.
     public enum TokenStyle: String, Sendable, CaseIterable {
         case heading
-        /// A wikilink or embed that is not ambiguous: unique, unresolved, by path, or an embed.
+        /// ED-11: a wikilink whose target resolves (a unique title or a path), or an embed,
+        /// which names a file rather than a note (K-1). Link colour.
         case wikilink
+        /// ED-11: a wikilink whose target no note has. Link colour, a dotted underline under
+        /// the target and the tooltip `missingLinkToolTip`, since Cmd-click creates it (K-3).
+        case missingLink
         /// K-2: a wikilink whose bare title several notes share.
         case ambiguousLink
+        /// ED-11: a standard link `[text](url)`, an autolink `<url>` or a bare URL, in link
+        /// colour; the brackets and URL are dimmed markers (ED-2).
+        case link
         case tag
         case inlineCode
         case fencedCode
@@ -148,10 +164,10 @@ public final class EditorStyler {
         case rule
 
         /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
-        /// `.ambiguousLink` only once its target has been resolved (K-2); a task box is
+        /// `.missingLink` or `.ambiguousLink` only once its target has been resolved (ED-11,
+        /// K-2); a standard link, autolink or bare URL is `.link` (ED-11); a task box is
         /// `.taskBox`, and `.doneItem` goes on a ticked one's item content structurally (ED-6).
-        /// Nil for the kinds the scanner yields that have no styling of their own yet (ED-1's
-        /// links, styled by M10.9 onward); their markers are dimmed all the same (ED-2).
+        /// Nil for an image, which is not a link; its markers are dimmed all the same (ED-2).
         init?(_ kind: MarkdownScanner.Kind) {
             switch kind {
             case .heading: self = .heading
@@ -162,14 +178,14 @@ public final class EditorStyler {
             case .emphasis(.bold): self = .bold
             case .emphasis(.italic): self = .italic
             case .emphasis(.strikethrough): self = .strikethrough
+            case .link(_, isImage: false), .autolink, .bareURL: self = .link
+            case .link(_, isImage: true): return nil
             case .listItem: self = .listItem
             case .taskBox: self = .taskBox
             case .blockquote: self = .blockquote
             case .tableRow: self = .tableRow
             case .tableSeparator: self = .tableSeparator
             case .thematicBreak: self = .rule
-            case .link, .autolink, .bareURL:
-                return nil
             }
         }
 
@@ -178,8 +194,19 @@ public final class EditorStyler {
         var isEmphasis: Bool {
             switch self {
             case .bold, .italic, .strikethrough: true
-            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode, .listItem, .taskBox, .doneItem,
-                .blockquote, .tableRow, .tableSeparator, .rule:
+            case .heading, .wikilink, .missingLink, .ambiguousLink, .link, .tag, .inlineCode, .fencedCode, .listItem,
+                .taskBox, .doneItem, .blockquote, .tableRow, .tableSeparator, .rule:
+                false
+            }
+        }
+
+        /// The wikilink states ED-11 and K-2 tell apart by resolving the target, which
+        /// `restyleLinks()` moves a link between when the index changes under the text.
+        var isWikilink: Bool {
+            switch self {
+            case .wikilink, .missingLink, .ambiguousLink: true
+            case .heading, .link, .tag, .inlineCode, .fencedCode, .bold, .italic, .strikethrough, .listItem, .taskBox,
+                .doneItem, .blockquote, .tableRow, .tableSeparator, .rule:
                 false
             }
         }
@@ -217,6 +244,13 @@ public final class EditorStyler {
 
     /// The warning tint an ambiguous link is set in (K-2).
     public static let ambiguousLinkColor: NSColor = .systemOrange
+
+    /// ED-11: the tooltip a wikilink whose target no note has shows, over its whole range.
+    nonisolated public static let missingLinkToolTip = "Cmd-click to create"
+
+    /// ED-11: the underline under a missing wikilink's target: a single dotted line, in the
+    /// text's own colour (link colour).
+    nonisolated public static let missingLinkUnderline: NSUnderlineStyle = [.single, .patternDot]
 
     /// The colour every markdown marker is set in (ED-2), and of a rule's drawn extension
     /// (ED-8, `EditorLayoutManager.extensionColor`).
@@ -332,17 +366,22 @@ public final class EditorStyler {
     /// The attributes `style` adds on top of the base: the monospaced font and a colour for code
     /// (E-8), the monospaced font alone for a task box and a colour alone for a done item's
     /// content (ED-6), the monospaced font for a table row and that plus the marker colour for
-    /// a separator row (ED-7), a colour for links and tags, a strikethrough for `~~x~~`, and the
-    /// marker. Fonts that depend on what is already there are not here: a heading's font depends
-    /// on its level and is set by `apply(_:to:of:to:)` from `headingFont(forLevel:)`, and the
-    /// bold and italic traits of emphasis are added to the fonts already in place, run by run,
-    /// by `addTrait(_:fallback:in:to:)`. Nor are paragraph styles: a list item's and a
-    /// blockquote's hanging indents depend on their marker and prefix (ED-5, ED-7).
+    /// a separator row (ED-7), a colour for links and tags, the tooltip too for a missing link
+    /// (ED-11), a strikethrough for `~~x~~`, and the marker. Fonts that depend on what is
+    /// already there are not here: a heading's font depends on its level and is set by
+    /// `apply(_:to:of:to:)` from `headingFont(forLevel:)`, and the bold and italic traits of
+    /// emphasis are added to the fonts already in place, run by run, by
+    /// `addTrait(_:fallback:in:to:)`. Nor are paragraph styles: a list item's and a
+    /// blockquote's hanging indents depend on their marker and prefix (ED-5, ED-7). Nor is a
+    /// missing link's underline, which goes under its target alone, not its brackets (ED-11).
     public func attributes(for style: TokenStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [Self.tokenAttribute: style.rawValue]
         switch style {
         case .heading, .bold, .italic, .listItem, .blockquote, .rule: break
-        case .wikilink: attributes[.foregroundColor] = NSColor.linkColor
+        case .wikilink, .link: attributes[.foregroundColor] = NSColor.linkColor
+        case .missingLink:
+            attributes[.foregroundColor] = NSColor.linkColor
+            attributes[.toolTip] = Self.missingLinkToolTip
         case .ambiguousLink: attributes[.foregroundColor] = Self.ambiguousLinkColor
         case .tag: attributes[.foregroundColor] = NSColor.systemPurple
         case .inlineCode, .fencedCode:
@@ -438,10 +477,11 @@ public final class EditorStyler {
         inner.location >= outer.location && inner.location + inner.length <= outer.location + outer.length
     }
 
-    /// K-2: the snapshot changed, so a link may now be ambiguous that was not, or the other
-    /// way round. Every link in the text is resolved against `linkIndex` again and only the
-    /// links whose style differs from what they carry are re-styled, in one attributes-only
-    /// pass; the text and every other run are untouched. Nothing happens when no link changed.
+    /// ED-11, K-2: the snapshot changed, so a link's target may have appeared or gone, or its
+    /// title become ambiguous or unique again. Every wikilink in the text is resolved against
+    /// `linkIndex` again and only the links whose style differs from what they carry are
+    /// re-styled, in one attributes-only pass; the text and every other run are untouched.
+    /// Nothing happens when no link changed.
     public func restyleLinks() {
         guard let storage = textView.textStorage, !isRestyling else { return }
         let text = EditorText(storage: storage)
@@ -465,24 +505,30 @@ public final class EditorStyler {
         storage.endEditing()
     }
 
-    /// The style of a link token (K-2): an embed links to a non-note file and is never
-    /// ambiguous; any other target is ambiguous when the index says several notes share it.
-    /// `target` is a range of file indices into `text`.
+    /// The style of a wikilink token (ED-11, K-2): an embed links to a non-note file and is
+    /// never missing or ambiguous; any other target is missing when no note has it and
+    /// ambiguous when the index says several share it. `target` is a range of file indices
+    /// into `text`.
     private func linkStyle(target: NSRange, isEmbed: Bool, in text: EditorText, index: LinkIndex) -> TokenStyle {
         guard !isEmbed else { return .wikilink }
-        return index.resolve(text.string(inFileRange: target)).isAmbiguous ? .ambiguousLink : .wikilink
+        switch index.resolve(text.string(inFileRange: target)) {
+        case .unique: return .wikilink
+        case .ambiguous: return .ambiguousLink
+        case .unresolved: return .missingLink
+        }
     }
 
-    /// Resets `range`, a storage range, to the base font and colour with no strikethrough, then
-    /// applies `tokens`, whose ranges are file indices into `text` and are mapped back to the
-    /// storage. Tokens come enclosing first, so what a token encloses is styled after it: a
-    /// heading line's links and tags take its weight and their colour, emphasis inside emphasis
-    /// composes, and code inside emphasis takes the code style back (ED-3). Links are resolved
-    /// against `linkIndex` as they are applied (K-2). A token with no style of its own still
-    /// has its markers dimmed (ED-2). A ticked task box follows its list item, and its item's
-    /// content takes `.doneItem` right after the box, before the content's inline tokens (ED-6).
-    /// A blockquote token covers its whole line and comes before the line's other tokens, so a
-    /// list item on that line adds the quote's indent to its own (ED-7).
+    /// Resets `range`, a storage range, to the base font and colour with no strikethrough,
+    /// underline or tooltip, then applies `tokens`, whose ranges are file indices into `text`
+    /// and are mapped back to the storage. Tokens come enclosing first, so what a token
+    /// encloses is styled after it: a heading line's links and tags take its weight and their
+    /// colour, emphasis inside emphasis composes, and code inside emphasis takes the code style
+    /// back (ED-3). Wikilinks are resolved against `linkIndex` as they are applied (ED-11,
+    /// K-2). A token with no style of its own still has its markers dimmed (ED-2). A ticked
+    /// task box follows its list item, and its item's content takes `.doneItem` right after
+    /// the box, before the content's inline tokens (ED-6). A blockquote token covers its whole
+    /// line and comes before the line's other tokens, so a list item on that line adds the
+    /// quote's indent to its own (ED-7).
     private func apply(
         _ tokens: [MarkdownScanner.Token], in range: NSRange, of text: EditorText, to storage: NSTextStorage
     ) {
@@ -490,6 +536,8 @@ public final class EditorStyler {
         defer { isRestyling = false }
         storage.removeAttribute(Self.tokenAttribute, range: range)
         storage.removeAttribute(.strikethroughStyle, range: range)
+        storage.removeAttribute(.underlineStyle, range: range)
+        storage.removeAttribute(.toolTip, range: range)
         storage.removeAttribute(.paragraphStyle, range: range)
         storage.addAttributes([.font: baseFont, .foregroundColor: baseColor], range: range)
         let index = linkIndex()
@@ -530,9 +578,11 @@ public final class EditorStyler {
     /// its whole paragraph, `quoteIndent` further along on a quoted line (ED-5, ED-7); a task
     /// box takes the monospaced font from its attributes (ED-6); a blockquote puts its own
     /// hanging indent on its paragraph and a table line takes the monospaced font from its
-    /// attributes (ED-7); then the markers are recoloured (ED-2), so they carry the token's
-    /// attribute and font and the marker colour. Ranges are file indices into `text`, mapped to
-    /// the storage here.
+    /// attributes (ED-7); a missing wikilink takes the dotted underline under its target, and
+    /// any other wikilink state drops the underline and tooltip a `restyleLinks()` pass may
+    /// find left from that state (ED-11); then the markers are recoloured (ED-2), so they carry
+    /// the token's attribute and font and the marker colour. Ranges are file indices into
+    /// `text`, mapped to the storage here.
     private func apply(
         _ style: TokenStyle?, to token: MarkdownScanner.Token, of text: EditorText, to storage: NSTextStorage,
         quoteIndent: CGFloat = 0
@@ -540,12 +590,20 @@ public final class EditorStyler {
         if let style {
             let range = text.storageRange(forFileRange: style.isEmphasis ? token.content : token.range)
             let enclosingSize = enclosingFontSize(at: range, in: storage)
+            if style.isWikilink {
+                storage.removeAttribute(.underlineStyle, range: range)
+                storage.removeAttribute(.toolTip, range: range)
+            }
             storage.addAttributes(attributes(for: style), range: range)
             switch style {
             case .heading:
                 if case .heading(let level) = token.kind {
                     storage.addAttribute(.font, value: headingFont(forLevel: level), range: range)
                 }
+            case .missingLink:
+                storage.addAttribute(
+                    .underlineStyle, value: Self.missingLinkUnderline.rawValue,
+                    range: text.storageRange(forFileRange: token.content))
             case .bold: addTrait(.bold, fallback: .boldFontMask, in: range, to: storage)
             case .italic: addTrait(.italic, fallback: .italicFontMask, in: range, to: storage)
             case .inlineCode, .fencedCode:
@@ -565,8 +623,8 @@ public final class EditorStyler {
                 storage.addAttribute(
                     .paragraphStyle, value: hangingParagraphStyle(headIndent: quoteIndent),
                     range: storage.mutableString.paragraphRange(for: range))
-            case .wikilink, .ambiguousLink, .tag, .strikethrough, .taskBox, .doneItem, .tableRow, .tableSeparator,
-                .rule:
+            case .wikilink, .ambiguousLink, .link, .tag, .strikethrough, .taskBox, .doneItem, .tableRow,
+                .tableSeparator, .rule:
                 break
             }
         }

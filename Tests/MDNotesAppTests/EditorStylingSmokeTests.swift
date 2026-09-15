@@ -56,6 +56,18 @@ final class EditorStylingSmokeTests: XCTestCase {
         func color(at location: Int) -> NSColor? { attributes(at: location)[.foregroundColor] as? NSColor }
         func font(at location: Int) -> NSFont? { attributes(at: location)[.font] as? NSFont }
         func strikethrough(at location: Int) -> Int? { attributes(at: location)[.strikethroughStyle] as? Int }
+        func underline(at location: Int) -> Int? { attributes(at: location)[.underlineStyle] as? Int }
+        func toolTip(at location: Int) -> String? { attributes(at: location)[.toolTip] as? String }
+
+        /// The underline style of every character in `range`, nil where there is none (ED-11).
+        func underlines(in range: NSRange) -> [Int?] {
+            (range.location..<(range.location + range.length)).map { underline(at: $0) }
+        }
+
+        /// The tooltip of every character in `range`, nil where there is none (ED-11).
+        func toolTips(in range: NSRange) -> [String?] {
+            (range.location..<(range.location + range.length)).map { toolTip(at: $0) }
+        }
 
         /// The colour of every character in `range`.
         func colors(in range: NSRange) -> [NSColor?] {
@@ -137,7 +149,9 @@ final class EditorStylingSmokeTests: XCTestCase {
         fixture.show(text)
 
         let link = range(of: "[[Other|label]]", in: text)
-        XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"])
+        XCTAssertEqual(
+            Set(fixture.styles(in: link).map { $0?.rawValue }), ["missingLink"], "no library, so no note has it (ED-11)"
+        )
         XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
         XCTAssertEqual(fixture.color(at: link.location), tertiary, "the brackets are markers (ED-2)")
         XCTAssertEqual(fixture.font(at: link.location), base, "links keep the base weight")
@@ -201,7 +215,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         }
         XCTAssertEqual(fixture.style(at: range(of: "`in heading`", in: text).location), .inlineCode)
         XCTAssertEqual(fixture.style(at: range(of: "fenced", in: text).location), .fencedCode)
-        XCTAssertEqual(fixture.style(at: range(of: "[[link]]", in: text).location), .wikilink)
+        XCTAssertEqual(fixture.style(at: range(of: "[[link]]", in: text).location), .missingLink)
         XCTAssertEqual(fixture.style(at: range(of: "#tag", in: text).location), .tag)
         XCTAssertTrue(isBold(fixture.font(at: 0)), "the heading keeps its weight")
 
@@ -213,7 +227,7 @@ final class EditorStylingSmokeTests: XCTestCase {
             case .inlineCode, .fencedCode, .taskBox, .tableRow, .tableSeparator:
                 XCTAssertEqual(font, mono, "\(style)")
             case .heading: XCTAssertNil(font, "the heading font depends on the level (ED-4)")
-            case .wikilink, .ambiguousLink, .tag, .listItem, .doneItem, .blockquote, .rule:
+            case .wikilink, .missingLink, .ambiguousLink, .link, .tag, .listItem, .doneItem, .blockquote, .rule:
                 XCTAssertNil(font, "\(style) keeps the base font")
             case .bold, .italic, .strikethrough: XCTAssertNil(font, "\(style) adds a trait to the font in place")
             }
@@ -252,7 +266,8 @@ final class EditorStylingSmokeTests: XCTestCase {
         // base's everywhere but the heading line, which is scaled (ED-4), and the family too,
         // except on code, which is monospaced (E-8).
         let allowed: Set<NSAttributedString.Key> = [
-            .font, .foregroundColor, .paragraphStyle, .strikethroughStyle, EditorStyler.tokenAttribute,
+            .font, .foregroundColor, .paragraphStyle, .strikethroughStyle, .underlineStyle, .toolTip,
+            EditorStyler.tokenAttribute,
         ]
         let codeStyles = [EditorStyler.TokenStyle.inlineCode.rawValue, EditorStyler.TokenStyle.fencedCode.rawValue]
         let heading = range(of: "# Title", in: text)
@@ -286,7 +301,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.style(at: end), .tag, "and stops being one as soon as a tag character follows")
         XCTAssertEqual(fixture.style(at: end + 1), .tag)
         fixture.type(" [[x]]", at: end + 2)
-        XCTAssertEqual(fixture.style(at: end + 3), .wikilink)
+        XCTAssertEqual(fixture.style(at: end + 3), .missingLink)
         XCTAssertNil(fixture.style(at: end + 2), "the space between is plain")
         XCTAssertEqual(fixture.textView.string, "plain\n#t [[x]]")
     }
@@ -369,7 +384,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(
             fixture.textView.string,
             "first\n\nsecond paragraph # [[x]] with #tag and more words\nand a second line\n\nthird\n")
-        XCTAssertEqual(fixture.style(at: start + 2), .wikilink)
+        XCTAssertEqual(fixture.style(at: start + 2), .missingLink)
         XCTAssertEqual(fixture.style(at: range(of: "#tag", in: fixture.textView.string).location), .tag)
     }
 
@@ -431,7 +446,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertNil(fixture.style(at: 0))
         XCTAssertEqual(fixture.color(at: 0), fixture.styler.baseColor)
         XCTAssertEqual(fixture.style(at: range(of: "#x", in: newText).location), .tag)
-        XCTAssertEqual(fixture.style(at: range(of: "[[link]]", in: newText).location), .wikilink)
+        XCTAssertEqual(fixture.style(at: range(of: "[[link]]", in: newText).location), .missingLink)
         let tail = range(of: "```\n\nafter #tag\n", in: newText)
         XCTAssertEqual(Set(fixture.styles(in: tail).map { $0?.rawValue }), ["fencedCode"])
     }
@@ -492,7 +507,9 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.textView.string, body)
         XCTAssertTrue(isBold(fixture.font(at: 0)))
         XCTAssertEqual(fixture.style(at: 0), .heading)
-        XCTAssertEqual(fixture.style(at: range(of: "[[Other]]", in: body).location), .wikilink)
+        XCTAssertEqual(
+            fixture.style(at: range(of: "[[Other]]", in: body).location), .missingLink,
+            "the library has no note titled Other (ED-11)")
         XCTAssertEqual(fixture.style(at: range(of: "#tag", in: body).location), .tag)
         XCTAssertTrue(fixture.textView.isEditable)
         library.stop()
@@ -523,8 +540,8 @@ final class EditorStylingSmokeTests: XCTestCase {
     }
 
     /// Two notes titled `foo`: a bare `[[foo]]`, however cased or labelled, is styled as
-    /// ambiguous in the warning tint; a path to one of them, a unique title, an unresolved
-    /// title and an embed keep the link style.
+    /// ambiguous in the warning tint; a path to one of them, a unique title and an embed keep
+    /// the link style, and an unresolved title is a missing link (ED-11).
     func testK2_ambiguousLinksAreStyledAsAmbiguous() throws {
         let fixture = makeFixture()
         let index = twoFooIndex()
@@ -539,12 +556,16 @@ final class EditorStylingSmokeTests: XCTestCase {
             XCTAssertEqual(fixture.color(at: link.location), tertiary, "\(needle) brackets are dimmed (ED-2)")
             XCTAssertEqual(fixture.font(at: link.location), base, "\(needle) keeps the base weight")
         }
-        for needle in ["[[daily/foo]]", "[[Bar]]", "[[none]]", "![[foo]]"] {
+        for needle in ["[[daily/foo]]", "[[Bar]]", "![[foo]]"] {
             let link = range(of: needle, in: text)
             XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"], needle)
             XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor, needle)
             XCTAssertEqual(fixture.color(at: link.location), tertiary, "\(needle) brackets are dimmed (ED-2)")
         }
+        let none = range(of: "[[none]]", in: text)
+        XCTAssertEqual(Set(fixture.styles(in: none).map { $0?.rawValue }), ["missingLink"])
+        XCTAssertEqual(fixture.color(at: inside(none)), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: none.location), tertiary)
         XCTAssertNil(fixture.style(at: range(of: "see", in: text).location))
 
         let heading = range(of: "[[foo]]", in: text, occurrence: 2)
@@ -560,13 +581,14 @@ final class EditorStylingSmokeTests: XCTestCase {
         let fixture = makeFixture()
         let box = IndexBox(oneFooIndex())
         fixture.styler.linkIndex = { box.index }
-        let text = "one [[foo]] and [[Bar]] #tag\n\ntwo [[foo]]\n"
+        let text = "one [[foo]] and [[none]] #tag\n\ntwo [[foo]]\n"
         fixture.show(text)
         let first = range(of: "[[foo]]", in: text)
         let second = range(of: "[[foo]]", in: text, occurrence: 1)
-        let bar = range(of: "[[Bar]]", in: text)
+        let bar = range(of: "[[none]]", in: text)
         XCTAssertEqual(fixture.style(at: first.location), .wikilink, "one note titled foo is unique")
         XCTAssertEqual(fixture.style(at: second.location), .wikilink)
+        XCTAssertEqual(fixture.style(at: bar.location), .missingLink, "no note is titled none, in either index")
 
         // Mark everything with a colour the styler never uses, so what it touched is visible.
         let mark = NSColor.systemRed
@@ -582,7 +604,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.color(at: inside(second)), EditorStyler.ambiguousLinkColor)
         XCTAssertEqual(fixture.color(at: bar.location), mark, "a link whose resolution did not change is untouched")
         XCTAssertEqual(fixture.color(at: inside(bar)), mark)
-        XCTAssertEqual(fixture.style(at: bar.location), .wikilink)
+        XCTAssertEqual(fixture.style(at: bar.location), .missingLink)
         XCTAssertEqual(fixture.color(at: 0), mark, "plain text is untouched")
         XCTAssertEqual(fixture.color(at: range(of: "#tag", in: text).location), mark, "a tag is untouched")
         XCTAssertEqual(fixture.style(at: range(of: "#tag", in: text).location), .tag)
@@ -649,7 +671,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertTrue(library.snapshot.links.resolve("foo").isAmbiguous)
         XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["ambiguousLink"])
         XCTAssertEqual(fixture.color(at: inside(foo)), EditorStyler.ambiguousLinkColor)
-        XCTAssertEqual(fixture.style(at: bar.location), .wikilink)
+        XCTAssertEqual(fixture.style(at: bar.location), .missingLink, "no note is titled Bar (ED-11)")
         XCTAssertEqual(fixture.textView.string, body, "the text is untouched")
         XCTAssertFalse(fixture.controller.editorController.hasUnsavedEdits, "re-styling is not an edit")
 
@@ -657,6 +679,290 @@ final class EditorStylingSmokeTests: XCTestCase {
         let end = (body as NSString).length
         fixture.type("[[foo]]", at: end)
         XCTAssertEqual(fixture.style(at: end), .ambiguousLink)
+        library.stop()
+    }
+
+    // MARK: - ED-11: link state
+
+    /// Every wikilink state against one index: a unique title, a path and an embed are plain
+    /// links in link colour with no underline or tooltip; a title no note has keeps link
+    /// colour, has a dotted underline under the target alone and the tooltip over the whole
+    /// link, brackets included; a shared bare title stays ambiguous (K-2), with neither. On a
+    /// heading line a missing link keeps the heading's weight.
+    func testED11_wikilinkStateFollowsWhatTheTargetResolvesTo() throws {
+        let fixture = makeFixture()
+        let index = twoFooIndex()
+        fixture.styler.linkIndex = { index }
+        let text = "see [[Bar]] [[daily/foo]] ![[none.png]] [[none]] [[none|label]] [[foo]]\n# Head [[none]]\n"
+        fixture.show(text)
+        let dotted = EditorStyler.missingLinkUnderline.rawValue
+        XCTAssertTrue(EditorStyler.missingLinkUnderline.contains(.patternDot), "the underline is dotted")
+        XCTAssertEqual(EditorStyler.missingLinkToolTip, "Cmd-click to create")
+
+        for needle in ["[[Bar]]", "[[daily/foo]]", "![[none.png]]"] {
+            let link = range(of: needle, in: text)
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"], needle)
+            XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor, needle)
+            XCTAssertEqual(Set(fixture.underlines(in: link)), [nil], "\(needle) has no underline")
+            XCTAssertEqual(Set(fixture.toolTips(in: link)), [nil], "\(needle) has no tooltip")
+        }
+        for needle in ["[[none]]", "[[none|label]]"] {
+            let link = range(of: needle, in: text)
+            let target = NSRange(location: link.location + 2, length: link.length - 4)
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["missingLink"], needle)
+            XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor, "\(needle) keeps link colour")
+            XCTAssertEqual(fixture.color(at: link.location), tertiary, "\(needle) brackets are dimmed (ED-2)")
+            XCTAssertEqual(Set(fixture.underlines(in: target)), [dotted], "\(needle) target is underlined")
+            XCTAssertNil(fixture.underline(at: link.location), "\(needle) opening brackets are not")
+            XCTAssertNil(fixture.underline(at: link.location + 1))
+            XCTAssertNil(fixture.underline(at: link.location + link.length - 2), "\(needle) closing brackets are not")
+            XCTAssertNil(fixture.underline(at: link.location + link.length - 1))
+            XCTAssertEqual(
+                Set(fixture.toolTips(in: link)), ["Cmd-click to create"], "\(needle) tooltip covers the brackets too")
+            XCTAssertEqual(fixture.font(at: link.location), base)
+        }
+        let foo = range(of: "[[foo]]", in: text)
+        XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["ambiguousLink"])
+        XCTAssertEqual(fixture.color(at: inside(foo)), EditorStyler.ambiguousLinkColor)
+        XCTAssertEqual(Set(fixture.underlines(in: foo)), [nil], "an ambiguous link is unchanged (K-2)")
+        XCTAssertEqual(Set(fixture.toolTips(in: foo)), [nil])
+        XCTAssertNil(fixture.underline(at: 0))
+        XCTAssertNil(fixture.toolTip(at: 0))
+
+        let heading = range(of: "[[none]]", in: text, occurrence: 1)
+        XCTAssertEqual(Set(fixture.styles(in: heading).map { $0?.rawValue }), ["missingLink"])
+        XCTAssertTrue(isBold(fixture.font(at: inside(heading))), "on a heading line it keeps the heading's weight")
+        XCTAssertEqual(fixture.underline(at: inside(heading)), dotted)
+        XCTAssertEqual(fixture.toolTip(at: heading.location), EditorStyler.missingLinkToolTip)
+        XCTAssertEqual(fixture.textView.string, text)
+    }
+
+    /// A standard link, an autolink and a bare URL are links: their text (or URL) in link
+    /// colour carrying `.link`, the brackets and URL dimmed as markers (ED-2), no underline or
+    /// tooltip anywhere, and none of it depending on the index; an image is not a link. On a
+    /// heading line a link keeps the heading's weight. A URL typed is a link as it arrives.
+    func testED11_standardLinksAutolinksAndBareURLsAreStyledAsLinks() throws {
+        let fixture = makeFixture()
+        let text =
+            "a [text](https://x.y \"title\") and <https://a.b> then https://c.d/e?f=1 but ![alt](i.png)\n# Head [h](u)\n"
+        fixture.show(text)
+        func colors(of needle: String) -> Set<NSColor?> { Set(fixture.colors(in: range(of: needle, in: text))) }
+
+        let link = range(of: "[text](https://x.y \"title\")", in: text)
+        XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["link"])
+        XCTAssertEqual(colors(of: "text"), [NSColor.linkColor])
+        XCTAssertEqual(colors(of: "[t"), [tertiary, NSColor.linkColor])
+        XCTAssertEqual(colors(of: "](https://x.y \"title\")"), [tertiary], "the URL and its title are markers (ED-2)")
+
+        let auto = range(of: "<https://a.b>", in: text)
+        XCTAssertEqual(Set(fixture.styles(in: auto).map { $0?.rawValue }), ["link"])
+        XCTAssertEqual(colors(of: "https://a.b"), [NSColor.linkColor])
+        XCTAssertEqual(fixture.color(at: auto.location), tertiary)
+        XCTAssertEqual(fixture.color(at: auto.location + auto.length - 1), tertiary)
+
+        let bare = range(of: "https://c.d/e?f=1", in: text)
+        XCTAssertEqual(Set(fixture.styles(in: bare).map { $0?.rawValue }), ["link"])
+        XCTAssertEqual(Set(fixture.colors(in: bare)), [NSColor.linkColor], "a bare URL is a link end to end")
+
+        let image = range(of: "![alt](i.png)", in: text)
+        XCTAssertEqual(Set(fixture.styles(in: image).map { $0?.rawValue }), [nil], "an image is not a link")
+        XCTAssertEqual(colors(of: "alt"), [fixture.styler.baseColor])
+        XCTAssertEqual(colors(of: "!["), [tertiary])
+        XCTAssertEqual(colors(of: "](i.png)"), [tertiary])
+
+        let length = (text as NSString).length
+        for location in 0..<length {
+            XCTAssertNil(fixture.underline(at: location), "no underline at \(location)")
+            XCTAssertNil(fixture.toolTip(at: location), "no tooltip at \(location)")
+            XCTAssertEqual(fixture.font(at: location)?.familyName, base.familyName)
+        }
+        let heading = range(of: "[h](u)", in: text)
+        XCTAssertEqual(fixture.style(at: heading.location + 1), .link)
+        XCTAssertTrue(isBold(fixture.font(at: heading.location + 1)), "on a heading line a link keeps its weight")
+        XCTAssertEqual(fixture.color(at: heading.location + 1), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: heading.location), tertiary)
+
+        // The index has no say: a re-check of the links against another index touches none.
+        let mark = NSColor.systemRed
+        fixture.storage.addAttribute(.foregroundColor, value: mark, range: NSRange(location: 0, length: length))
+        let index = twoFooIndex()
+        fixture.styler.linkIndex = { index }
+        fixture.styler.restyleLinks()
+        XCTAssertEqual(colors(of: "text"), [mark])
+        XCTAssertEqual(colors(of: "https://a.b"), [mark])
+        XCTAssertEqual(Set(fixture.colors(in: bare)), [mark])
+
+        // Typed, a URL is a link as it arrives and stops being one when its scheme breaks.
+        fixture.type("https://t.u", at: length)
+        XCTAssertEqual(Set(fixture.styles(in: NSRange(location: length, length: 11)).map { $0?.rawValue }), ["link"])
+        XCTAssertEqual(fixture.color(at: length), NSColor.linkColor)
+        fixture.type("", at: length + 5, replacing: 1)
+        XCTAssertTrue(fixture.textView.string.hasSuffix("https//t.u"))
+        XCTAssertNil(fixture.style(at: length))
+        XCTAssertEqual(fixture.color(at: length), fixture.styler.baseColor)
+    }
+
+    /// The text does not change but the index does: a missing link's target appears and the
+    /// underline and tooltip go, leaving link colour; the target goes and they come back; a
+    /// second note with the title makes it ambiguous, with neither. Only the links whose state
+    /// changed are touched, and a re-check that changes nothing touches nothing.
+    func testED11_aLinkIsRestyledWhenItsTargetAppearsOrDisappears() {
+        let fixture = makeFixture()
+        let box = IndexBox(.empty)
+        fixture.styler.linkIndex = { box.index }
+        let text = "one [[foo]] and [[Bar]] <https://a.b>\n\ntwo [[foo]]\n"
+        fixture.show(text)
+        let first = range(of: "[[foo]]", in: text)
+        let second = range(of: "[[foo]]", in: text, occurrence: 1)
+        let bar = range(of: "[[Bar]]", in: text)
+        let auto = range(of: "<https://a.b>", in: text)
+        let dotted = EditorStyler.missingLinkUnderline.rawValue
+        let tip = EditorStyler.missingLinkToolTip
+        for link in [first, second, bar] {
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["missingLink"], "an empty index")
+            XCTAssertEqual(fixture.underline(at: inside(link)), dotted)
+            XCTAssertEqual(fixture.toolTip(at: link.location), tip)
+        }
+
+        // Mark everything with a colour the styler never uses, so what it touched is visible.
+        let mark = NSColor.systemRed
+        let whole = NSRange(location: 0, length: fixture.storage.length)
+        fixture.storage.addAttribute(.foregroundColor, value: mark, range: whole)
+
+        // foo.md appears: both links to it are plain links; Bar stays missing and untouched.
+        box.index = oneFooIndex()
+        fixture.styler.restyleLinks()
+        for link in [first, second] {
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"])
+            XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
+            XCTAssertEqual(fixture.color(at: link.location), tertiary, "its brackets stay dimmed (ED-2)")
+            XCTAssertEqual(Set(fixture.underlines(in: link)), [nil], "the underline is gone")
+            XCTAssertEqual(Set(fixture.toolTips(in: link)), [nil], "and so is the tooltip")
+        }
+        XCTAssertEqual(fixture.style(at: bar.location), .missingLink)
+        XCTAssertEqual(fixture.color(at: inside(bar)), mark, "a link whose state did not change is untouched")
+        XCTAssertEqual(fixture.underline(at: inside(bar)), dotted)
+        XCTAssertEqual(fixture.toolTip(at: bar.location), tip)
+        XCTAssertEqual(fixture.color(at: inside(auto)), mark, "a URL never depends on the index")
+        XCTAssertEqual(fixture.color(at: 0), mark, "plain text is untouched")
+        XCTAssertEqual(fixture.textView.string, text)
+
+        // Nothing changed: nothing is touched.
+        fixture.storage.addAttribute(.foregroundColor, value: mark, range: whole)
+        fixture.styler.restyleLinks()
+        XCTAssertEqual(Set(fixture.colors(in: whole)), [mark])
+
+        // foo.md goes: the underline is back under the target and the tooltip over the link.
+        box.index = .empty
+        fixture.styler.restyleLinks()
+        for link in [first, second] {
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["missingLink"])
+            XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
+            XCTAssertEqual(fixture.color(at: link.location), tertiary)
+            XCTAssertEqual(fixture.underline(at: inside(link)), dotted)
+            XCTAssertNil(fixture.underline(at: link.location))
+            XCTAssertNil(fixture.underline(at: link.location + link.length - 1))
+            XCTAssertEqual(Set(fixture.toolTips(in: link)), [tip])
+        }
+        XCTAssertEqual(fixture.color(at: inside(bar)), mark)
+        XCTAssertEqual(fixture.color(at: 0), mark)
+
+        // Two notes titled foo, and Bar.md: foo is ambiguous with neither underline nor
+        // tooltip (K-2), Bar a plain link.
+        box.index = twoFooIndex()
+        fixture.styler.restyleLinks()
+        for link in [first, second] {
+            XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["ambiguousLink"])
+            XCTAssertEqual(fixture.color(at: inside(link)), EditorStyler.ambiguousLinkColor)
+            XCTAssertEqual(Set(fixture.underlines(in: link)), [nil])
+            XCTAssertEqual(Set(fixture.toolTips(in: link)), [nil])
+        }
+        XCTAssertEqual(Set(fixture.styles(in: bar).map { $0?.rawValue }), ["wikilink"])
+        XCTAssertEqual(fixture.color(at: inside(bar)), NSColor.linkColor)
+        XCTAssertEqual(Set(fixture.underlines(in: bar)), [nil])
+        XCTAssertEqual(Set(fixture.toolTips(in: bar)), [nil])
+        XCTAssertEqual(fixture.textView.string, text)
+
+        // A link typed now is resolved against the current index as it arrives.
+        let end = (text as NSString).length
+        fixture.type("[[none]]", at: end)
+        XCTAssertEqual(Set(fixture.styles(in: NSRange(location: end, length: 8)).map { $0?.rawValue }), ["missingLink"])
+        XCTAssertEqual(fixture.underline(at: end + 2), dotted)
+        XCTAssertEqual(fixture.toolTip(at: end), tip)
+        XCTAssertEqual(
+            fixture.style(at: first.location), .ambiguousLink, "another paragraph is not re-styled by typing")
+    }
+
+    /// Through the library: `Linker.md` links to `foo`, which no note has, so the link is
+    /// missing. Creating `foo.md` publishes a snapshot that resolves it and the link loses its
+    /// underline and tooltip without an edit; the file going again brings them back.
+    func testED11_theTargetNoteAppearingAndGoingRestylesTheOpenNotesLink() async throws {
+        let body = "see [[foo]] and <https://a.b>\n"
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try body.write(to: root.appendingPathComponent("Linker.md"), atomically: true, encoding: .utf8)
+
+        let fixture = makeFixture()
+        let library = LibraryController(root: root)
+        fixture.controller.attach(library)
+        library.start()
+        let deadline = Date().addingTimeInterval(20)
+        while library.phase != .ready {
+            if Date() > deadline { return XCTFail("library did not become ready") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let linker = NoteID(relativePath: "Linker.md")
+        XCTAssertTrue(fixture.controller.listController.select(linker))
+        while fixture.controller.editorController.body == nil {
+            if Date() > deadline { return XCTFail("editor did not load the note") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(fixture.textView.string, body)
+        let foo = range(of: "[[foo]]", in: body)
+        let auto = range(of: "<https://a.b>", in: body)
+        let dotted = EditorStyler.missingLinkUnderline.rawValue
+        let tip = EditorStyler.missingLinkToolTip
+        XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["missingLink"], "no note titled foo")
+        XCTAssertEqual(fixture.color(at: inside(foo)), NSColor.linkColor)
+        XCTAssertEqual(fixture.underline(at: inside(foo)), dotted)
+        XCTAssertEqual(Set(fixture.toolTips(in: foo)), [tip])
+        XCTAssertEqual(fixture.style(at: inside(auto)), .link)
+        XCTAssertEqual(fixture.color(at: inside(auto)), NSColor.linkColor)
+
+        let target = NoteID(relativePath: "foo.md")
+        var created = false
+        library.create(target) { result in
+            if case .failure(let error) = result { XCTFail("create failed: \(error)") }
+            created = true
+        }
+        while !created {
+            if Date() > deadline { return XCTFail("foo was not created") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(library.snapshot.links.resolve("foo"), .unique(target))
+        XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["wikilink"], "the target appeared")
+        XCTAssertEqual(fixture.color(at: inside(foo)), NSColor.linkColor)
+        XCTAssertEqual(fixture.color(at: foo.location), tertiary)
+        XCTAssertEqual(Set(fixture.underlines(in: foo)), [nil])
+        XCTAssertEqual(Set(fixture.toolTips(in: foo)), [nil])
+        XCTAssertEqual(fixture.style(at: inside(auto)), .link)
+        XCTAssertEqual(fixture.textView.string, body, "the text is untouched")
+        XCTAssertFalse(fixture.controller.editorController.hasUnsavedEdits, "re-styling is not an edit")
+
+        // The file goes, as the watcher would report it: the link is missing again.
+        try FileManager.default.removeItem(at: root.appendingPathComponent("foo.md"))
+        library.apply(LibraryChanges(removed: [target]))
+        while library.snapshot.entry(for: target) != nil {
+            if Date() > deadline { return XCTFail("foo was not dropped") }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(library.snapshot.links.resolve("foo"), .unresolved)
+        XCTAssertEqual(Set(fixture.styles(in: foo).map { $0?.rawValue }), ["missingLink"], "the target went")
+        XCTAssertEqual(fixture.color(at: inside(foo)), NSColor.linkColor)
+        XCTAssertEqual(fixture.underline(at: inside(foo)), dotted)
+        XCTAssertNil(fixture.underline(at: foo.location))
+        XCTAssertEqual(Set(fixture.toolTips(in: foo)), [tip])
+        XCTAssertEqual(fixture.textView.string, body)
+        XCTAssertFalse(fixture.controller.editorController.hasUnsavedEdits)
         library.stop()
     }
 
@@ -828,14 +1134,15 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(colors(of: ">"), [tertiary])
         XCTAssertEqual(colors(of: "quote"), [base])
 
-        XCTAssertEqual(colors(of: "[t"), [tertiary, base])
-        XCTAssertEqual(colors(of: "t](u)"), [base, tertiary], "the closing bracket and URL are markers")
+        XCTAssertEqual(colors(of: "[t"), [tertiary, NSColor.linkColor], "a standard link's text is a link (ED-11)")
+        XCTAssertEqual(
+            colors(of: "t](u)"), [NSColor.linkColor, tertiary], "the closing bracket and URL are markers")
         XCTAssertEqual(colors(of: "!["), [tertiary])
-        XCTAssertEqual(colors(of: "a](u)"), [base, tertiary])
+        XCTAssertEqual(colors(of: "a](u)"), [base, tertiary], "an image's alt text is not a link")
         XCTAssertEqual(colors(of: "<"), [tertiary])
-        XCTAssertEqual(colors(of: "http://x.y"), [base])
+        XCTAssertEqual(colors(of: "http://x.y"), [NSColor.linkColor], "an autolink's URL is a link (ED-11)")
         XCTAssertEqual(colors(of: ">", occurrence: 1), [tertiary])
-        XCTAssertEqual(colors(of: "http://z.w"), [base], "a bare URL has no markers")
+        XCTAssertEqual(colors(of: "http://z.w"), [NSColor.linkColor], "a bare URL has no markers and is a link")
 
         XCTAssertEqual(colors(of: "| a | b |"), [tertiary, base])
         XCTAssertEqual(colors(of: "|", occurrence: 0), [tertiary])
@@ -847,7 +1154,8 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(colors(of: "[["), [tertiary])
         XCTAssertEqual(colors(of: "]]"), [tertiary])
         XCTAssertEqual(colors(of: "Link"), [NSColor.linkColor])
-        XCTAssertEqual(Set(fixture.styles(in: link).map { $0?.rawValue }), ["wikilink"])
+        XCTAssertEqual(
+            Set(fixture.styles(in: link).map { $0?.rawValue }), ["missingLink"], "no note has the title (ED-11)")
         XCTAssertEqual(colors(of: "#tag"), [NSColor.systemPurple], "a tag's hash keeps the tag colour (T-4)")
         XCTAssertEqual(colors(of: "`code`"), [NSColor.secondaryLabelColor], "code delimiters keep the code colour")
         XCTAssertEqual(colors(of: "---\n"), [tertiary, base], "the rule")
@@ -1731,6 +2039,38 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertGreaterThan(headIndent(fixture, at: range(of: "> A quoted", in: text).location), 0)
         XCTAssertEqual(fixture.font(at: range(of: "| Name", in: text).location)?.familyName, mono.familyName)
         let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-quotes-tables")
+        XCTAssertEqual(written.count, 2)
+        for url in written {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
+    }
+
+    /// ED-11: every link state at once, an existing, a missing and an ambiguous wikilink, a
+    /// standard link, an autolink and a bare URL, plus links inside a done item.
+    func testV1_editorSnapshotShowsLinkStates() throws {
+        let fixture = makeFixture()
+        let index = twoFooIndex()
+        fixture.styler.linkIndex = { index }
+        fixture.show(
+            """
+            # Links
+
+            An existing note: [[Bar]], and one by path: [[daily/foo]].
+            A missing note: [[Not yet written]], dotted, with a tooltip on hover.
+            An ambiguous title: [[foo]], which two notes share.
+
+            A [standard link](https://example.com), an autolink <https://example.org> and a bare https://example.net URL.
+
+            - [x] done with [[Bar]], [[missing]] and https://example.com
+            - [ ] open with [[Bar]], [[missing]] and https://example.com
+
+            """)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        let text = fixture.textView.string
+        XCTAssertEqual(fixture.style(at: range(of: "[[Not yet written]]", in: text).location), .missingLink)
+        XCTAssertEqual(fixture.style(at: range(of: "[[foo]]", in: text).location), .ambiguousLink)
+        XCTAssertEqual(fixture.style(at: range(of: "https://example.net", in: text).location), .link)
+        let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-links")
         XCTAssertEqual(written.count, 2)
         for url in written {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)

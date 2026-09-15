@@ -263,7 +263,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       a subtle system fill across the full editor width, the rule line first in its band,
       visible rect only, recomputed from the scanner's rule list. Tests: band ranges for
       0, 1, 3 rules and for a rule at document start; snapshot per V-1 in light and dark.
-- [ ] M10.9 Link state (ED-11): missing wikilink targets get a dotted underline and the tooltip
+- [x] M10.9 Link state (ED-11): missing wikilink targets get a dotted underline and the tooltip
       "Cmd-click to create"; existing in link colour; ambiguous unchanged. Standard links,
       autolinks and bare URLs styled as links. Tests: attributes per state; restyle when a
       target appears or disappears.
