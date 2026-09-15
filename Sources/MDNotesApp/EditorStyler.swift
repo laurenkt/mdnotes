@@ -8,11 +8,13 @@ import MDNotesCore
 /// the bold, italic or strikethrough trait (ED-3), and every markdown marker the scanner yields
 /// (`#`, emphasis delimiters, list markers, `>`, link brackets and URLs, table pipes, setext
 /// underlines, rules) in tertiary label colour at the surrounding size (ED-2), list items
-/// with a hanging indent so their wrapped lines align under the item text (ED-5), and task
-/// boxes in the monospaced font with a done item's content in secondary label colour (ED-6).
-/// Only `.font`, `.foregroundColor`, `.strikethroughStyle` and `.paragraphStyle` are ever set:
-/// headings change weight and size, emphasis changes weight or slant, code tokens and task
-/// boxes change family (ADR-0010), list items change the paragraph's head indent, nothing else
+/// with a hanging indent so their wrapped lines align under the item text (ED-5), task
+/// boxes in the monospaced font with a done item's content in secondary label colour (ED-6),
+/// blockquote lines with a hanging indent under the quoted text and pipe-table lines in the
+/// monospaced font with the separator row dimmed (ED-7). Only `.font`, `.foregroundColor`,
+/// `.strikethroughStyle` and `.paragraphStyle` are ever set: headings change weight and size,
+/// emphasis changes weight or slant, code tokens, task boxes and table lines change family
+/// (ADR-0010), list items and blockquotes change the paragraph's head indent, nothing else
 /// changes either. Nothing here reaches the file, whose content is the text view's plain
 /// string (E-1).
 ///
@@ -36,6 +38,20 @@ import MDNotesCore
 /// so a link or a tag in a done item keeps its colour and emphasis keeps its trait. Toggling
 /// the box is an edit of one character, made by `EditorController.toggleTaskBox(at:)`, and is
 /// styled like any other edit (E-3).
+///
+/// A blockquote line's paragraph hangs at the width of its prefix as typed (ED-7): the text
+/// from the line start to where the quoted content begins (`> `, `> > `, or a bare `>`),
+/// measured in `baseFont` like a list marker, so a wrapped line starts exactly where the
+/// quoted text does and a nested quote, whose prefix is longer, hangs further. The `>`
+/// characters are dimmed like every other marker (ED-2). A list item on a quoted line adds
+/// its own indent to the quote's, so its wrapped lines align under the item text rather than
+/// under the `>`. Prefix widths share `markerWidth`'s cache and follow the Cmd-plus size.
+///
+/// Pipe-table lines are set in `codeFont` over their whole trimmed range, pipes, cells and the
+/// spaces between, so the columns line up as they do in the file (ED-7). Inline tokens in a
+/// cell come after the row token and add their own trait or colour to the mono font. The
+/// separator row (`|---|:-:|`) is set in `codeFont` and marker colour end to end: it is
+/// syntax, not content, and its pipes are dimmed with the rest (ED-2).
 ///
 /// A heading's content and markers are set at `headingScales[level]` times the base size, bold
 /// (ED-4): 1.4, 1.25 and 1.1 for levels 1 to 3 and the base size from level 4 on, following
@@ -119,13 +135,19 @@ public final class EditorStyler {
         case taskBox
         /// ED-6: the content of a ticked task item, in secondary label colour.
         case doneItem
+        /// ED-7: a blockquote line, prefix included; its paragraph carries the hanging indent.
+        case blockquote
+        /// ED-7: a pipe-table row, pipes included, in the monospaced font.
+        case tableRow
+        /// ED-7: a pipe-table separator row, in the monospaced font and marker colour.
+        case tableSeparator
 
         /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
         /// `.ambiguousLink` only once its target has been resolved (K-2); a task box is
         /// `.taskBox`, and `.doneItem` goes on a ticked one's item content structurally (ED-6).
         /// Nil for the kinds the scanner yields that have no styling of their own yet (ED-1's
-        /// links, quotes, tables and rules, styled by M10.6 onward); their markers are dimmed
-        /// all the same (ED-2).
+        /// links and rules, styled by M10.7 onward); their markers are dimmed all the same
+        /// (ED-2).
         init?(_ kind: MarkdownScanner.Kind) {
             switch kind {
             case .heading: self = .heading
@@ -138,7 +160,10 @@ public final class EditorStyler {
             case .emphasis(.strikethrough): self = .strikethrough
             case .listItem: self = .listItem
             case .taskBox: self = .taskBox
-            case .link, .autolink, .bareURL, .blockquote, .tableRow, .tableSeparator, .thematicBreak:
+            case .blockquote: self = .blockquote
+            case .tableRow: self = .tableRow
+            case .tableSeparator: self = .tableSeparator
+            case .link, .autolink, .bareURL, .thematicBreak:
                 return nil
             }
         }
@@ -148,7 +173,8 @@ public final class EditorStyler {
         var isEmphasis: Bool {
             switch self {
             case .bold, .italic, .strikethrough: true
-            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode, .listItem, .taskBox, .doneItem:
+            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode, .listItem, .taskBox, .doneItem,
+                .blockquote, .tableRow, .tableSeparator:
                 false
             }
         }
@@ -176,7 +202,7 @@ public final class EditorStyler {
             codeFont = EditorFontPreference.codeFont(ofSize: baseFont.pointSize)
             nestingIndent = Self.width(of: Self.nestingIndentText, in: baseFont)
             markerWidths.removeAll()
-            listParagraphStyles.removeAll()
+            hangingParagraphStyles.removeAll()
             restyleAll()
         }
     }
@@ -231,11 +257,13 @@ public final class EditorStyler {
     /// ED-5: the width of one nesting level, `nestingIndentText` in `baseFont`.
     public private(set) var nestingIndent: CGFloat
 
-    /// ED-5: the width in `baseFont` of each list marker seen since the base font last changed.
+    /// ED-5, ED-7: the width in `baseFont` of each list marker and blockquote prefix seen since
+    /// the base font last changed.
     private var markerWidths: [String: CGFloat] = [:]
 
-    /// ED-5: the paragraph style for each head indent seen since the base font last changed.
-    private var listParagraphStyles: [CGFloat: NSParagraphStyle] = [:]
+    /// ED-5, ED-7: the paragraph style for each head indent seen since the base font last
+    /// changed.
+    private var hangingParagraphStyles: [CGFloat: NSParagraphStyle] = [:]
 
     /// Guards against re-entering while attributes are being applied.
     private var isRestyling = false
@@ -258,8 +286,9 @@ public final class EditorStyler {
         NSAttributedString(string: text, attributes: [.font: font]).size().width
     }
 
-    /// ED-5: the width of `marker` (a list marker with the spaces after it, `- ` or `12. `) in
-    /// `baseFont`, which is what it takes on the item's first line.
+    /// ED-5, ED-7: the width of `marker` (a list marker with the spaces after it, `- ` or
+    /// `12. `, or a blockquote prefix as typed, `> ` or `> > `) in `baseFont`, which is what it
+    /// takes on the line's first line.
     public func markerWidth(_ marker: String) -> CGFloat {
         if let width = markerWidths[marker] { return width }
         let width = Self.width(of: marker, in: baseFont)
@@ -274,14 +303,21 @@ public final class EditorStyler {
         markerWidth(marker) + CGFloat(max(level, 0)) * nestingIndent
     }
 
-    /// The paragraph style hanging every line but the first at `headIndent` (ED-5).
-    private func listParagraphStyle(headIndent: CGFloat) -> NSParagraphStyle {
-        if let style = listParagraphStyles[headIndent] { return style }
+    /// ED-7: the head indent of a blockquote line whose prefix, from the line start to the
+    /// quoted content, is `prefix` (`> `, `> > `, `>`): its width in `baseFont`, so a wrapped
+    /// line starts where the quoted text does and a nested quote hangs further.
+    public func blockquoteHeadIndent(prefix: String) -> CGFloat {
+        markerWidth(prefix)
+    }
+
+    /// The paragraph style hanging every line but the first at `headIndent` (ED-5, ED-7).
+    private func hangingParagraphStyle(headIndent: CGFloat) -> NSParagraphStyle {
+        if let style = hangingParagraphStyles[headIndent] { return style }
         let style = NSMutableParagraphStyle()
         style.setParagraphStyle(.default)
         style.firstLineHeadIndent = 0
         style.headIndent = headIndent
-        listParagraphStyles[headIndent] = style
+        hangingParagraphStyles[headIndent] = style
         return style
     }
 
@@ -289,15 +325,17 @@ public final class EditorStyler {
 
     /// The attributes `style` adds on top of the base: the monospaced font and a colour for code
     /// (E-8), the monospaced font alone for a task box and a colour alone for a done item's
-    /// content (ED-6), a colour for links and tags, a strikethrough for `~~x~~`, and the marker. Fonts
-    /// that depend on what is already there are not here: a heading's font depends on its level
-    /// and is set by `apply(_:to:of:to:)` from `headingFont(forLevel:)`, and the bold and italic
-    /// traits of emphasis are added to the fonts already in place, run by run, by
-    /// `addTrait(_:fallback:in:to:)`.
+    /// content (ED-6), the monospaced font for a table row and that plus the marker colour for
+    /// a separator row (ED-7), a colour for links and tags, a strikethrough for `~~x~~`, and the
+    /// marker. Fonts that depend on what is already there are not here: a heading's font depends
+    /// on its level and is set by `apply(_:to:of:to:)` from `headingFont(forLevel:)`, and the
+    /// bold and italic traits of emphasis are added to the fonts already in place, run by run,
+    /// by `addTrait(_:fallback:in:to:)`. Nor are paragraph styles: a list item's and a
+    /// blockquote's hanging indents depend on their marker and prefix (ED-5, ED-7).
     public func attributes(for style: TokenStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [Self.tokenAttribute: style.rawValue]
         switch style {
-        case .heading, .bold, .italic, .listItem: break
+        case .heading, .bold, .italic, .listItem, .blockquote: break
         case .wikilink: attributes[.foregroundColor] = NSColor.linkColor
         case .ambiguousLink: attributes[.foregroundColor] = Self.ambiguousLinkColor
         case .tag: attributes[.foregroundColor] = NSColor.systemPurple
@@ -305,7 +343,10 @@ public final class EditorStyler {
             attributes[.font] = codeFont
             attributes[.foregroundColor] = NSColor.secondaryLabelColor
         case .strikethrough: attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-        case .taskBox: attributes[.font] = codeFont
+        case .taskBox, .tableRow: attributes[.font] = codeFont
+        case .tableSeparator:
+            attributes[.font] = codeFont
+            attributes[.foregroundColor] = Self.markerColor
         case .doneItem: attributes[.foregroundColor] = Self.doneItemColor
         }
         return attributes
@@ -434,6 +475,8 @@ public final class EditorStyler {
     /// against `linkIndex` as they are applied (K-2). A token with no style of its own still
     /// has its markers dimmed (ED-2). A ticked task box follows its list item, and its item's
     /// content takes `.doneItem` right after the box, before the content's inline tokens (ED-6).
+    /// A blockquote token covers its whole line and comes before the line's other tokens, so a
+    /// list item on that line adds the quote's indent to its own (ED-7).
     private func apply(
         _ tokens: [MarkdownScanner.Token], in range: NSRange, of text: EditorText, to storage: NSTextStorage
     ) {
@@ -445,6 +488,7 @@ public final class EditorStyler {
         storage.addAttributes([.font: baseFont, .foregroundColor: baseColor], range: range)
         let index = linkIndex()
         var listItem: MarkdownScanner.Token?
+        var quote: (line: NSRange, indent: CGFloat)?
         for token in tokens {
             let style: TokenStyle?
             if case .wikilink(let target, _, let isEmbed) = token.kind {
@@ -452,7 +496,12 @@ public final class EditorStyler {
             } else {
                 style = TokenStyle(token.kind)
             }
-            apply(style, to: token, of: text, to: storage)
+            if case .blockquote = token.kind {
+                quote = (token.range, blockquoteHeadIndent(prefix: Self.prefix(of: token, in: text)))
+            } else if let current = quote, !NSLocationInRange(token.range.location, current.line) {
+                quote = nil
+            }
+            apply(style, to: token, of: text, to: storage, quoteIndent: quote?.indent ?? 0)
             if case .listItem = token.kind {
                 listItem = token
             } else if case .taskBox(isDone: true) = token.kind, let item = listItem {
@@ -462,16 +511,25 @@ public final class EditorStyler {
         }
     }
 
+    /// ED-7: a blockquote token's prefix as typed, from its line start to its content.
+    private static func prefix(of token: MarkdownScanner.Token, in text: EditorText) -> String {
+        text.string(
+            inFileRange: NSRange(location: token.range.location, length: token.content.location - token.range.location))
+    }
+
     /// Styles one token: `style`'s attributes on its range, or on its content alone for
     /// emphasis, whose trait is added to the fonts already there; a heading takes the bold font
     /// of its level (ED-4); code takes the code font at the size of what encloses it and drops
     /// any strikethrough an enclosing token left (ED-3); a list item puts the hanging indent on
-    /// its whole paragraph (ED-5); a task box takes the monospaced font from its attributes
-    /// (ED-6); then the markers are recoloured (ED-2), so they carry the
-    /// token's attribute and font and the marker colour. Ranges are file indices into `text`,
-    /// mapped to the storage here.
+    /// its whole paragraph, `quoteIndent` further along on a quoted line (ED-5, ED-7); a task
+    /// box takes the monospaced font from its attributes (ED-6); a blockquote puts its own
+    /// hanging indent on its paragraph and a table line takes the monospaced font from its
+    /// attributes (ED-7); then the markers are recoloured (ED-2), so they carry the token's
+    /// attribute and font and the marker colour. Ranges are file indices into `text`, mapped to
+    /// the storage here.
     private func apply(
-        _ style: TokenStyle?, to token: MarkdownScanner.Token, of text: EditorText, to storage: NSTextStorage
+        _ style: TokenStyle?, to token: MarkdownScanner.Token, of text: EditorText, to storage: NSTextStorage,
+        quoteIndent: CGFloat = 0
     ) {
         if let style {
             let range = text.storageRange(forFileRange: style.isEmphasis ? token.content : token.range)
@@ -492,12 +550,17 @@ public final class EditorStyler {
                 }
             case .listItem:
                 if case .listItem(let level, _) = token.kind, let marker = token.markers.first {
-                    let indent = listHeadIndent(level: level, marker: text.string(inFileRange: marker))
+                    let indent = quoteIndent + listHeadIndent(level: level, marker: text.string(inFileRange: marker))
                     storage.addAttribute(
-                        .paragraphStyle, value: listParagraphStyle(headIndent: indent),
+                        .paragraphStyle, value: hangingParagraphStyle(headIndent: indent),
                         range: storage.mutableString.paragraphRange(for: range))
                 }
-            case .wikilink, .ambiguousLink, .tag, .strikethrough, .taskBox, .doneItem: break
+            case .blockquote:
+                storage.addAttribute(
+                    .paragraphStyle, value: hangingParagraphStyle(headIndent: quoteIndent),
+                    range: storage.mutableString.paragraphRange(for: range))
+            case .wikilink, .ambiguousLink, .tag, .strikethrough, .taskBox, .doneItem, .tableRow, .tableSeparator:
+                break
             }
         }
         guard Self.dimsMarkers(token.kind) else { return }

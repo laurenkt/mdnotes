@@ -253,7 +253,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.5 Task items (ED-6): `[ ]` / `[x]` set in the monospaced font at body size; done items in
       secondary colour; a plain click on the box toggles space and x as one undoable edit that
       autosaves. Tests: equal advance widths; click toggles; undo restores; file updated.
-- [ ] M10.6 Blockquotes and tables (ED-7): blockquote paragraphs hanging-indented with `>` dimmed,
+- [x] M10.6 Blockquotes and tables (ED-7): blockquote paragraphs hanging-indented with `>` dimmed,
       nested `>` nests; pipe-table lines in the monospaced font, separator row dimmed. Tests:
       attributes and indents.
 - [ ] M10.7 Horizontal rule extension (ED-8): a custom `NSLayoutManager` draws faded hyphens from the

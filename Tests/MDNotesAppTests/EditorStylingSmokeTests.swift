@@ -205,14 +205,15 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.style(at: range(of: "#tag", in: text).location), .tag)
         XCTAssertTrue(isBold(fixture.font(at: 0)), "the heading keeps its weight")
 
-        // The styler's own attributes say the same: only the two code styles and the task box
-        // (ED-6) carry the font.
+        // The styler's own attributes say the same: only the two code styles, the task box
+        // (ED-6) and the table lines (ED-7) carry the font.
         for style in EditorStyler.TokenStyle.allCases {
             let font = fixture.styler.attributes(for: style)[.font] as? NSFont
             switch style {
-            case .inlineCode, .fencedCode, .taskBox: XCTAssertEqual(font, mono, "\(style)")
+            case .inlineCode, .fencedCode, .taskBox, .tableRow, .tableSeparator:
+                XCTAssertEqual(font, mono, "\(style)")
             case .heading: XCTAssertNil(font, "the heading font depends on the level (ED-4)")
-            case .wikilink, .ambiguousLink, .tag, .listItem, .doneItem:
+            case .wikilink, .ambiguousLink, .tag, .listItem, .doneItem, .blockquote:
                 XCTAssertNil(font, "\(style) keeps the base font")
             case .bold, .italic, .strikethrough: XCTAssertNil(font, "\(style) adds a trait to the font in place")
             }
@@ -839,7 +840,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(colors(of: "| a | b |"), [tertiary, base])
         XCTAssertEqual(colors(of: "|", occurrence: 0), [tertiary])
         XCTAssertEqual(colors(of: " a "), [base])
-        XCTAssertEqual(colors(of: "|---|---|"), [tertiary, base], "the separator's pipes")
+        XCTAssertEqual(colors(of: "|---|---|"), [tertiary], "the separator row, pipes and all (ED-7)")
         XCTAssertEqual(colors(of: " d "), [base])
 
         let link = range(of: "[[Link]]", in: text)
@@ -1329,6 +1330,281 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(headIndent(fixture, at: 16), bullet, accuracy: 0.001, "the other item is untouched")
     }
 
+    // MARK: - ED-7: blockquotes hang under their text, table lines are monospaced
+
+    /// The paragraph range of `line` in `text`: the line plus its line break.
+    private func paragraph(of line: String, in text: String) -> NSRange {
+        let lineRange = range(of: line, in: text)
+        let length = line.hasSuffix("\n") ? lineRange.length : lineRange.length + 1
+        return NSRange(location: lineRange.location, length: length)
+    }
+
+    func testED7_blockquoteLinesHangAtTheirPrefixWithTheMarkersDimmed() throws {
+        let fixture = makeFixture()
+        let text = "> one\n> > two\n>three\n> - item\n>\n  > spaced\nplain\n"
+        fixture.show(text)
+        let styler = fixture.styler
+        let one = width(of: "> ", in: base)
+        XCTAssertGreaterThan(one, 0)
+        XCTAssertEqual(styler.blockquoteHeadIndent(prefix: "> "), one, accuracy: 0.001)
+        XCTAssertEqual(styler.blockquoteHeadIndent(prefix: "> > "), width(of: "> > ", in: base), accuracy: 0.001)
+
+        // The indent is the prefix's width as typed, so a nested quote hangs further, a bare
+        // `>` hangs at its own width, and a list item on a quoted line adds its marker.
+        let expected: [(line: String, indent: CGFloat)] = [
+            ("> one", one),
+            ("> > two", width(of: "> > ", in: base)),
+            (">three", width(of: ">", in: base)),
+            ("> - item", one + width(of: "- ", in: base)),
+            (">\n", width(of: ">", in: base)),
+            ("  > spaced", width(of: "  > ", in: base)),
+        ]
+        for (line, indent) in expected {
+            let paragraph = paragraph(of: line, in: text)
+            XCTAssertGreaterThan(indent, 0, line)
+            for offset in 0..<paragraph.length {
+                let style = try XCTUnwrap(
+                    fixture.attributes(at: paragraph.location + offset)[.paragraphStyle] as? NSParagraphStyle,
+                    "\(line.debugDescription) at \(offset)")
+                XCTAssertEqual(style.headIndent, indent, accuracy: 0.001, "\(line.debugDescription) at \(offset)")
+                XCTAssertEqual(style.firstLineHeadIndent, 0, "\(line.debugDescription): the first line is as typed")
+                XCTAssertEqual(
+                    fixture.font(at: paragraph.location + offset), base,
+                    "\(line.debugDescription) at \(offset): a quote keeps the base font")
+            }
+        }
+        XCTAssertGreaterThan(
+            headIndent(fixture, at: range(of: "> > two", in: text).location),
+            headIndent(fixture, at: range(of: "> one", in: text).location), "a nested quote hangs further")
+
+        // Every `>` is dimmed and the quoted text is not (ED-2); the line carries the quote's
+        // attribute, or the list item's after its marker.
+        XCTAssertEqual(fixture.colors(in: range(of: "> ", in: text)), [tertiary, fixture.styler.baseColor])
+        XCTAssertEqual(fixture.colors(in: range(of: "one", in: text)), Array(repeating: styler.baseColor, count: 3))
+        XCTAssertEqual(fixture.style(at: range(of: "one", in: text).location), .blockquote)
+        XCTAssertEqual(fixture.style(at: 0), .blockquote, "the marker carries the quote's attribute")
+        let two = range(of: "> > two", in: text)
+        XCTAssertEqual(fixture.color(at: two.location), tertiary)
+        XCTAssertEqual(fixture.color(at: two.location + 2), tertiary, "the second `>` too")
+        XCTAssertEqual(fixture.color(at: two.location + 1), styler.baseColor, "the space between is text")
+        XCTAssertEqual(fixture.color(at: two.location + 4), styler.baseColor)
+        XCTAssertEqual(fixture.color(at: range(of: ">three", in: text).location), tertiary)
+        let item = range(of: "> - item", in: text)
+        XCTAssertEqual(fixture.color(at: item.location), tertiary)
+        XCTAssertEqual(
+            fixture.colors(in: range(of: "- item", in: text)),
+            [tertiary, tertiary] + Array(repeating: styler.baseColor, count: 4))
+        XCTAssertEqual(fixture.style(at: item.location + 4), .listItem, "the item text is the list item's")
+        XCTAssertEqual(fixture.style(at: item.location), .blockquote)
+        XCTAssertEqual(fixture.color(at: range(of: "  > spaced", in: text).location + 2), tertiary)
+
+        let plain = range(of: "plain", in: text)
+        XCTAssertEqual(headIndent(fixture, at: plain.location), 0)
+        XCTAssertNil(fixture.style(at: plain.location))
+        XCTAssertEqual(fixture.color(at: plain.location), styler.baseColor)
+        XCTAssertEqual(fixture.textView.string, text, "the text is exactly what went in (E-1)")
+    }
+
+    func testED7_wrappedQuoteLinesStartWhereTheQuotedTextDoes() throws {
+        let fixture = makeFixture()
+        let long = String(repeating: "words that wrap ", count: 20)
+        let text = "> \(long)\n> > \(long)\n> - \(long)\n>\(long)\nplain \(long)\n"
+        fixture.show(text)
+        let layoutManager = try XCTUnwrap(fixture.textView.layoutManager)
+        let container = try XCTUnwrap(fixture.textView.textContainer)
+        layoutManager.ensureLayout(for: container)
+
+        let leadingEdge = container.lineFragmentPadding
+        let plain = range(of: "plain", in: text)
+        let plainWrapped = try wrappedLineX(after: plain.location, in: layoutManager)
+        XCTAssertEqual(plainWrapped, leadingEdge, accuracy: 0.5, "a plain paragraph wraps to the leading edge")
+
+        var seen: [CGFloat] = []
+        for (line, prefix) in [("> ", "> "), ("> > ", "> > "), ("> - ", "> - "), (">w", ">")] {
+            let lineRange = range(of: line + (line == ">w" ? "ords" : "words"), in: text)
+            let contentStart = lineRange.location + (prefix as NSString).length
+            let wrapped = try wrappedLineX(after: contentStart, in: layoutManager)
+            XCTAssertEqual(
+                wrapped, glyphX(at: contentStart, in: layoutManager), accuracy: 0.5,
+                "\(line.debugDescription): the wrapped line starts under the quoted text")
+            XCTAssertEqual(
+                wrapped, leadingEdge + headIndent(fixture, at: lineRange.location), accuracy: 0.5,
+                "\(line.debugDescription): at the paragraph's head indent")
+            XCTAssertGreaterThan(wrapped, leadingEdge)
+            seen.append(wrapped)
+        }
+        XCTAssertGreaterThan(seen[1], seen[0], "a nested quote hangs further than its parent")
+        XCTAssertGreaterThan(seen[2], seen[0], "a quoted list item hangs past the quote's indent")
+        XCTAssertLessThan(seen[3], seen[0], "a bare `>` hangs at its own width, no space")
+    }
+
+    func testED7_tableLinesAreMonospacedAndTheSeparatorRowIsDimmed() throws {
+        let fixture = makeFixture()
+        let text =
+            "| a | **b** |\n|---|:-:|\n| 1 | `c` |\nplain\n\nx | y\n-|-\n2 | 3\n\n> | q |\n> |-|\nafter | pipe\n"
+        fixture.show(text)
+        let styler = fixture.styler
+
+        func assertMono(_ needle: String, occurrence: Int = 0, file: StaticString = #filePath, line: UInt = #line) {
+            let found = range(of: needle, in: text, occurrence: occurrence)
+            for location in found.location..<(found.location + found.length) {
+                let font = fixture.font(at: location)
+                XCTAssertEqual(font?.familyName, mono.familyName, "\(needle) at \(location)", file: file, line: line)
+                XCTAssertEqual(font?.pointSize, base.pointSize, "\(needle) at \(location)", file: file, line: line)
+            }
+        }
+
+        // A row, pipes, cells and spaces, is monospaced end to end; the pipes are dimmed and
+        // the cells keep the text colour with their own inline styling on top.
+        assertMono("| a | **b** |")
+        let header = range(of: "| a | **b** |", in: text)
+        XCTAssertEqual(fixture.style(at: header.location), .tableRow)
+        XCTAssertEqual(fixture.color(at: header.location), tertiary)
+        XCTAssertEqual(fixture.colors(in: range(of: " a ", in: text)), Array(repeating: styler.baseColor, count: 3))
+        XCTAssertEqual(fixture.style(at: range(of: " a ", in: text).location + 1), .tableRow)
+        let bold = range(of: "**b**", in: text)
+        XCTAssertEqual(fixture.style(at: bold.location + 2), .bold)
+        XCTAssertTrue(isBold(fixture.font(at: bold.location + 2)), "emphasis in a cell adds its trait to the mono font")
+        XCTAssertEqual(fixture.color(at: bold.location), tertiary)
+        XCTAssertEqual(fixture.color(at: header.location + header.length - 1), tertiary, "the closing pipe")
+
+        // The separator row is dimmed whole, monospaced, and carries its own attribute.
+        assertMono("|---|:-:|")
+        let separator = range(of: "|---|:-:|", in: text)
+        XCTAssertEqual(fixture.colors(in: separator), Array(repeating: tertiary, count: separator.length))
+        XCTAssertEqual(Set(fixture.styles(in: separator).map { $0?.rawValue }), ["tableSeparator"])
+
+        assertMono("| 1 | `c` |")
+        let code = range(of: "`c`", in: text)
+        XCTAssertEqual(fixture.style(at: code.location), .inlineCode, "code in a cell is code")
+        XCTAssertEqual(fixture.color(at: code.location), NSColor.secondaryLabelColor)
+
+        // A line after the table, and the text outside any table, is prose.
+        for needle in ["plain", "after | pipe"] {
+            let found = range(of: needle, in: text)
+            for location in found.location..<(found.location + found.length) {
+                XCTAssertEqual(fixture.font(at: location), base, "\(needle) at \(location)")
+                XCTAssertEqual(fixture.color(at: location), styler.baseColor, "\(needle) at \(location)")
+                XCTAssertNil(fixture.style(at: location), "\(needle) at \(location)")
+            }
+        }
+
+        // Outer pipes are optional; the rows and separator are styled the same.
+        assertMono("x | y")
+        assertMono("-|-")
+        assertMono("2 | 3")
+        XCTAssertEqual(fixture.style(at: range(of: "x | y", in: text).location), .tableRow)
+        XCTAssertEqual(fixture.colors(in: range(of: "-|-", in: text)), Array(repeating: tertiary, count: 3))
+        XCTAssertEqual(fixture.style(at: range(of: "-|-", in: text).location), .tableSeparator)
+        XCTAssertEqual(fixture.style(at: range(of: "2 | 3", in: text).location), .tableRow)
+
+        // A table in a quote: the `>` stays in the base font, dimmed, the row is monospaced
+        // after it, and the paragraph hangs at the quote's prefix.
+        let quoted = range(of: "> | q |", in: text)
+        XCTAssertEqual(fixture.font(at: quoted.location), base)
+        XCTAssertEqual(fixture.color(at: quoted.location), tertiary)
+        XCTAssertEqual(fixture.style(at: quoted.location), .blockquote)
+        assertMono("| q |")
+        XCTAssertEqual(fixture.style(at: range(of: "| q |", in: text).location), .tableRow)
+        XCTAssertEqual(headIndent(fixture, at: quoted.location), width(of: "> ", in: base), accuracy: 0.001)
+        assertMono("|-|")
+        XCTAssertEqual(fixture.colors(in: range(of: "|-|", in: text)), Array(repeating: tertiary, count: 3))
+        XCTAssertEqual(fixture.textView.string, text, "the text is exactly what went in (E-1)")
+    }
+
+    func testED7_quoteIndentsAndTableFontsFollowCmdPlusAndCmdMinus() throws {
+        let fixture = makeFixture()
+        let text = "> > quote\n| a |\n|-|\nplain\n"
+        fixture.show(text)
+        let row = range(of: "| a |", in: text)
+        let separator = range(of: "|-|", in: text)
+        let before = headIndent(fixture, at: 0)
+        XCTAssertEqual(before, width(of: "> > ", in: base), accuracy: 0.001)
+        XCTAssertEqual(fixture.font(at: row.location), mono)
+        XCTAssertEqual(fixture.font(at: separator.location), mono)
+
+        fixture.controller.makeTextBigger(nil)
+        let bigger = NSFont.systemFont(ofSize: 14)
+        XCTAssertEqual(fixture.styler.baseFont, bigger)
+        XCTAssertEqual(headIndent(fixture, at: 0), width(of: "> > ", in: bigger), accuracy: 0.001)
+        XCTAssertGreaterThan(headIndent(fixture, at: 0), before)
+        XCTAssertEqual(fixture.font(at: row.location + 2), NSFont.monospacedSystemFont(ofSize: 14, weight: .regular))
+        XCTAssertEqual(fixture.font(at: separator.location), NSFont.monospacedSystemFont(ofSize: 14, weight: .regular))
+        XCTAssertEqual(fixture.color(at: separator.location + 1), tertiary)
+        XCTAssertEqual(fixture.font(at: range(of: "plain", in: text).location), bigger)
+        XCTAssertEqual(headIndent(fixture, at: range(of: "plain", in: text).location), 0)
+
+        fixture.controller.makeTextSmaller(nil)
+        fixture.controller.makeTextSmaller(nil)
+        let smaller = NSFont.systemFont(ofSize: 12)
+        XCTAssertEqual(headIndent(fixture, at: 0), width(of: "> > ", in: smaller), accuracy: 0.001)
+        XCTAssertLessThan(headIndent(fixture, at: 0), before)
+        XCTAssertEqual(fixture.font(at: row.location), NSFont.monospacedSystemFont(ofSize: 12, weight: .regular))
+
+        fixture.controller.makeTextActualSize(nil)
+        XCTAssertEqual(headIndent(fixture, at: 0), before, accuracy: 0.001)
+        XCTAssertEqual(fixture.font(at: row.location), mono)
+    }
+
+    /// Typing a `>` prefix gives the line its indent and takes it away again when deleted, and
+    /// a separator typed under a line of pipes turns both into a table, all within the edited
+    /// paragraph (E-3).
+    func testED7_typedPrefixesAndSeparatorsRestyleTheirParagraph() throws {
+        let fixture = makeFixture()
+        let text = "first\nsecond\n\n| a |\nplain\n"
+        fixture.show(text)
+        let one = width(of: "> ", in: base)
+        XCTAssertEqual(headIndent(fixture, at: 0), 0)
+        XCTAssertNil(fixture.style(at: range(of: "| a |", in: text).location), "a lone row is not a table")
+        XCTAssertEqual(fixture.font(at: range(of: "| a |", in: text).location), base)
+
+        fixture.type("> ", at: 0)
+        XCTAssertEqual(fixture.textView.string, "> first\nsecond\n\n| a |\nplain\n")
+        XCTAssertEqual(headIndent(fixture, at: 0), one, accuracy: 0.001)
+        XCTAssertEqual(headIndent(fixture, at: 7), one, accuracy: 0.001, "the line break is in the paragraph")
+        XCTAssertEqual(fixture.color(at: 0), tertiary)
+        XCTAssertEqual(fixture.style(at: 2), .blockquote)
+        XCTAssertEqual(headIndent(fixture, at: 8), 0, "`second` is not quoted")
+        XCTAssertNil(fixture.style(at: 8))
+
+        fixture.type("> > ", at: 8)
+        XCTAssertEqual(fixture.textView.string, "> first\n> > second\n\n| a |\nplain\n")
+        XCTAssertEqual(headIndent(fixture, at: 8), width(of: "> > ", in: base), accuracy: 0.001)
+        XCTAssertEqual(
+            fixture.colors(in: NSRange(location: 8, length: 4)),
+            [tertiary, fixture.styler.baseColor, tertiary, fixture.styler.baseColor])
+        XCTAssertEqual(headIndent(fixture, at: 0), one, accuracy: 0.001, "the first line hangs as before")
+
+        fixture.type("", at: 0, replacing: 2)
+        XCTAssertEqual(fixture.textView.string, "first\n> > second\n\n| a |\nplain\n")
+        for location in 0..<6 {
+            XCTAssertEqual(headIndent(fixture, at: location), 0, "at \(location): no prefix, no indent")
+        }
+        XCTAssertNil(fixture.style(at: 0))
+        XCTAssertEqual(
+            headIndent(fixture, at: 6), width(of: "> > ", in: base), accuracy: 0.001, "the other quote is untouched")
+
+        // A separator row typed under the lone row makes a table of both lines.
+        let plain = range(of: "plain", in: fixture.textView.string)
+        fixture.type("|-|\n", at: plain.location)
+        XCTAssertEqual(fixture.textView.string, "first\n> > second\n\n| a |\n|-|\nplain\n")
+        let row = range(of: "| a |", in: fixture.textView.string)
+        XCTAssertEqual(Set(fixture.styles(in: row).map { $0?.rawValue }), ["tableRow"])
+        XCTAssertEqual(fixture.font(at: row.location + 2)?.familyName, mono.familyName)
+        let separator = range(of: "|-|", in: fixture.textView.string)
+        XCTAssertEqual(Set(fixture.styles(in: separator).map { $0?.rawValue }), ["tableSeparator"])
+        XCTAssertEqual(fixture.colors(in: separator), Array(repeating: tertiary, count: 3))
+        let after = range(of: "plain", in: fixture.textView.string)
+        XCTAssertNil(fixture.style(at: after.location), "a line without a pipe ends the table")
+        XCTAssertEqual(fixture.font(at: after.location), base)
+
+        fixture.type("", at: separator.location, replacing: 4)
+        XCTAssertEqual(fixture.textView.string, "first\n> > second\n\n| a |\nplain\n")
+        XCTAssertNil(fixture.style(at: row.location), "no separator, no table")
+        XCTAssertEqual(fixture.font(at: row.location + 2), base)
+        XCTAssertEqual(fixture.color(at: row.location), fixture.styler.baseColor, "a lone pipe is text")
+    }
+
     // MARK: - V-1: the editor rendered with dimmed markers and emphasis
 
     func testV1_editorSnapshotShowsDimmedMarkersAndEmphasis() throws {
@@ -1422,6 +1698,38 @@ final class EditorStylingSmokeTests: XCTestCase {
         fixture.controller.mainView.layoutSubtreeIfNeeded()
         XCTAssertGreaterThan(headIndent(fixture, at: range(of: "- A short", in: fixture.textView.string).location), 0)
         let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-lists")
+        XCTAssertEqual(written.count, 2)
+        for url in written {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
+    }
+
+    func testV1_editorSnapshotShowsQuotesHangingAndTablesMonospaced() throws {
+        let fixture = makeFixture()
+        fixture.show(
+            """
+            # Quotes and tables
+
+            > A quoted paragraph long enough to wrap onto a second line so the hanging indent under the quoted text can be seen, with the marker dimmed
+            > > A nested quote, two levels in, that is also long enough to wrap onto a second line and hangs further than the outer one does, under its own text
+            > - A list item inside a quote, long enough to wrap onto a second line, hanging under the item text rather than under the bullet or the quote marker
+
+            A plain paragraph between them, long enough to wrap onto a second line, to show it wraps to the leading edge.
+
+            | Name  | Count | Note           |
+            |-------|------:|----------------|
+            | alpha |     1 | with **bold**  |
+            | beta  |    22 | and `code`     |
+            | gamma |   333 | a [[Wikilink]] |
+
+            Prose after the table.
+
+            """)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        let text = fixture.textView.string
+        XCTAssertGreaterThan(headIndent(fixture, at: range(of: "> A quoted", in: text).location), 0)
+        XCTAssertEqual(fixture.font(at: range(of: "| Name", in: text).location)?.familyName, mono.familyName)
+        let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-quotes-tables")
         XCTAssertEqual(written.count, 2)
         for url in written {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
