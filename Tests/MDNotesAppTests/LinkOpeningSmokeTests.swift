@@ -10,7 +10,9 @@ import XCTest
 /// hit test names for the point, `EditorTextView.mouseDown`. The cases where the text view's own
 /// handling would follow (a click outside a link) call the controller's entry points directly,
 /// because `NSTextView`'s `mouseDown` runs a tracking loop that waits for a mouse-up the test
-/// process never delivers.
+/// process never delivers. A standard link, autolink or bare URL opens through the
+/// controller's `openURL`, replaced here with one that records the URL instead of launching a
+/// browser.
 @MainActor
 final class LinkOpeningSmokeTests: XCTestCase {
     private var root: URL = FileManager.default.temporaryDirectory
@@ -20,6 +22,8 @@ final class LinkOpeningSmokeTests: XCTestCase {
     private static let alphaBody = """
         see [[Beta]] and [[Beta|labelled]] then [[Missing]] and [[Zeta]]
         path [[projects/New]] bad [[a:b]] code `[[Beta]]` pic ![[pic.png]]
+        web [site](https://example.com/a?b=1) auto <https://example.org/x> bare https://example.net/y
+        img ![i](https://example.com/i.png) rel [rel](notes/rel.md) code `https://example.com/c`
 
         ```
         fenced [[Beta]]
@@ -405,6 +409,116 @@ final class LinkOpeningSmokeTests: XCTestCase {
         await waitForEditor(controller, toShow: newerZeta)
         XCTAssertEqual(controller.mainView.textView.string, "newer zeta")
         XCTAssertEqual(try filesOnDisk(), fixtureFiles, "nothing was created")
+    }
+
+    // MARK: K-3 a standard link, autolink or bare URL opens with the default application
+
+    /// Replaces `openURL` with one that records every URL and answers `opens`; the recorded
+    /// URLs are read back through the returned closure.
+    private func captureURLs(_ controller: MainWindowController, opens: Bool = true) -> () -> [URL] {
+        var opened: [URL] = []
+        controller.openURL = { url in
+            opened.append(url)
+            return opens
+        }
+        return { opened }
+    }
+
+    func testK3_commandEnterWithTheCaretInAStandardLinkOpensItsURL() async throws {
+        let (controller, window) = try await makeControllerShowingAlpha()
+        placeCaret(at: range(of: "[site](https://example.com/a?b=1)").location + 2, in: controller)
+        let opened = captureURLs(controller)
+        var noteOpens = 0
+        controller.onOpenLink = { _, _ in noteOpens += 1 }
+        XCTAssertEqual(
+            controller.editorController.linkAtCaret(),
+            EditorLink(
+                range: range(of: "[site](https://example.com/a?b=1)"), destination: .url("https://example.com/a?b=1")))
+        XCTAssertNil(controller.editorController.linkTargetAtCaret(), "not a wikilink")
+
+        try pressCommandReturn(in: window)
+        XCTAssertEqual(
+            opened(), [URL(string: "https://example.com/a?b=1")], "the opener receives the URL, not the text")
+        XCTAssertEqual(noteOpens, 0, "no note is opened")
+        XCTAssertEqual(controller.editorController.noteID, alpha, "the editor stays on Alpha")
+        XCTAssertEqual(controller.listController.selectedID, alpha)
+        XCTAssertIdentical(window.firstResponder, controller.mainView.textView)
+        XCTAssertNil(controller.inlineMessage)
+        XCTAssertEqual(try filesOnDisk(), fixtureFiles, "nothing was created")
+    }
+
+    func testK3_commandEnterWithTheCaretInAnAutolinkOpensItsURLWithoutTheBrackets() async throws {
+        let (controller, window) = try await makeControllerShowingAlpha()
+        let link = range(of: "<https://example.org/x>")
+        placeCaret(at: link.location + link.length - 1, in: controller)
+        let opened = captureURLs(controller)
+        try pressCommandReturn(in: window)
+        XCTAssertEqual(opened(), [URL(string: "https://example.org/x")])
+        XCTAssertEqual(try filesOnDisk(), fixtureFiles)
+    }
+
+    func testK3_commandClickOnABareURLOpensIt() async throws {
+        let (controller, window) = try await makeControllerShowingAlpha()
+        let opened = captureURLs(controller)
+        try commandClick(
+            onCharacterAt: range(of: "https://example.net/y").location + 10, in: controller, window: window)
+        XCTAssertEqual(opened(), [URL(string: "https://example.net/y")])
+        XCTAssertEqual(controller.editorController.noteID, alpha)
+        XCTAssertNil(controller.inlineMessage)
+    }
+
+    func testK3_theCaretAtEitherEndOfAURLIsInsideIt() async throws {
+        let (controller, _) = try await makeControllerShowingAlpha()
+        let editor = controller.editorController
+        let link = range(of: "https://example.net/y")
+        let expected = EditorLink(range: link, destination: .url("https://example.net/y"))
+        XCTAssertEqual(editor.link(at: link.location), expected, "just before the URL")
+        XCTAssertEqual(editor.link(at: link.location + link.length), expected, "just after it")
+        XCTAssertNil(editor.link(at: link.location - 1), "the space before is not")
+        XCTAssertEqual(
+            editor.link(containingCharacterAt: link.location + link.length - 1), expected, "its last character is")
+        XCTAssertNil(editor.link(containingCharacterAt: link.location + link.length), "the character after is not")
+        XCTAssertNil(editor.link(containingCharacterAt: -1))
+        XCTAssertNil(editor.link(containingCharacterAt: (Self.alphaBody as NSString).length))
+    }
+
+    func testK3_anImageAndAURLInCodeAreNotLinks() async throws {
+        let (controller, _) = try await makeControllerShowingAlpha()
+        let editor = controller.editorController
+        let opened = captureURLs(controller)
+        XCTAssertNil(editor.link(at: range(of: "![i](https://example.com/i.png)").location + 8), "an image (ED-11)")
+        XCTAssertNil(editor.link(at: range(of: "`https://example.com/c`").location + 5), "a URL in a code span (E-2)")
+        XCTAssertFalse(controller.openLink(at: range(of: "![i](https://example.com/i.png)").location + 8))
+        XCTAssertFalse(controller.openLink(at: range(of: "`https://example.com/c`").location + 5))
+        XCTAssertEqual(opened(), [])
+    }
+
+    func testK3_aURLTheSystemWillNotOpenIsReportedInline() async throws {
+        let (controller, window) = try await makeControllerShowingAlpha()
+        let opened = captureURLs(controller, opens: false)
+        placeCaret(at: range(of: "[rel](notes/rel.md)").location + 2, in: controller)
+        XCTAssertNil(controller.inlineMessage)
+        try pressCommandReturn(in: window)
+        XCTAssertEqual(opened(), [URL(string: "notes/rel.md")], "the opener was asked")
+        let message = try XCTUnwrap(controller.inlineMessage)
+        XCTAssertTrue(message.contains("notes/rel.md"), "the message names the link: \(message)")
+        XCTAssertFalse(controller.mainView.messageLabel.isHidden)
+        XCTAssertEqual(controller.editorController.noteID, alpha)
+        XCTAssertEqual(try filesOnDisk(), fixtureFiles, "no notes/rel.md was created")
+
+        // A later successful open clears the message.
+        _ = captureURLs(controller)
+        placeCaret(at: range(of: "https://example.net/y").location + 3, in: controller)
+        try pressCommandReturn(in: window)
+        XCTAssertNil(controller.inlineMessage)
+    }
+
+    func testK3_aDestinationThatIsNotAURLIsReportedInlineAndNeverReachesTheOpener() async throws {
+        let (controller, _) = try await makeControllerShowingAlpha()
+        let opened = captureURLs(controller)
+        XCTAssertTrue(controller.openExternalLink("http://[bad"), "acted on: reported")
+        XCTAssertEqual(opened(), [])
+        XCTAssertNotNil(controller.inlineMessage)
     }
 
     // MARK: K-3 with the rest of the window

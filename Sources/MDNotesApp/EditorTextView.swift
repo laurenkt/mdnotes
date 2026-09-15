@@ -18,6 +18,14 @@ import AppKit
 /// never leave the view. Without an attachment on show the selection is written as
 /// `NSTextView` writes it.
 ///
+/// While Command is held and the pointer is over a link (ED-12) the cursor is the pointing
+/// hand and the link is underlined, solid, over its whole range. The view watches its own
+/// mouse moves and modifier changes: the character under the pointer is asked of `linkRange`
+/// (installed by the window controller, which knows what a link is) and the underline is a
+/// temporary attribute on the layout manager, drawn but never in the storage, so it is not an
+/// edit, not undoable and never saved. Releasing Command, moving off the link or leaving the
+/// view restores the I-beam and takes the underline away.
+///
 /// The view is built on TextKit 1 with an `EditorLayoutManager` (ED-8, ED-10), which is what
 /// draws the rule extensions and the section bands over the text: the storage, the
 /// layout manager and the text container are made here and the view keeps the storage alive,
@@ -73,6 +81,21 @@ public final class EditorTextView: NSTextView {
     /// private pasteboard so they leave the user's clipboard alone.
     public var pasteboard: NSPasteboard = .general
 
+    /// ED-12: the storage range of the link containing the character at the given storage
+    /// index, or nil when the character is in no link. Installed by the window controller;
+    /// with none installed nothing hovers.
+    public var linkRange: (@MainActor (Int) -> NSRange?)?
+
+    /// ED-12: the storage range of the link under the pointer while Command is held, which
+    /// carries the hover underline; nil while nothing hovers.
+    public private(set) var hoveredLinkRange: NSRange?
+
+    /// ED-12: the underline a hovered link shows, as a temporary attribute: a solid single
+    /// line over its whole range.
+    nonisolated public static let hoverUnderline: NSUnderlineStyle = .single
+
+    private var hoverTrackingArea: NSTrackingArea?
+
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if Self.hasOnlyCommand(event), let onCommandClick {
@@ -94,6 +117,81 @@ public final class EditorTextView: NSTextView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    // MARK: - Cmd-hover (ED-12)
+
+    /// The view's own tracking area, over its visible rect, for the mouse moves and exits the
+    /// hover follows; `NSTextView` asks for none of them itself.
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        updateHover(at: event.locationInWindow, modifiers: event.modifierFlags)
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        updateHover(at: nil, modifiers: event.modifierFlags)
+    }
+
+    /// Command pressed or released with the pointer where the event says it is: over a link,
+    /// the hover starts or ends with the key.
+    public override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        updateHover(at: event.locationInWindow, modifiers: event.modifierFlags)
+    }
+
+    /// AppKit's cursor-rect pass would put the I-beam back over a hovered link; the pointing
+    /// hand stays while one hovers.
+    public override func cursorUpdate(with event: NSEvent) {
+        if hoveredLinkRange != nil {
+            NSCursor.pointingHand.set()
+        } else {
+            super.cursorUpdate(with: event)
+        }
+    }
+
+    /// Works out which link, if any, hovers: the one containing the character under
+    /// `locationInWindow` (window coordinates; nil when the pointer has left the view) while
+    /// `modifiers` is Command alone.
+    private func updateHover(at locationInWindow: NSPoint?, modifiers: NSEvent.ModifierFlags) {
+        var range: NSRange?
+        if let locationInWindow, Self.hasOnlyCommand(modifiers), let linkRange,
+            let index = characterIndex(under: convert(locationInWindow, from: nil))
+        {
+            range = linkRange(index)
+        }
+        setHoveredLink(range)
+    }
+
+    /// Moves the hover underline and the cursor to `range`, or clears both for nil. The
+    /// underline is a temporary attribute of the layout manager (drawn, never in the storage);
+    /// the old one is removed over what is left of its range should the text have changed.
+    private func setHoveredLink(_ range: NSRange?) {
+        guard range != hoveredLinkRange else { return }
+        if let old = hoveredLinkRange, let storage = textStorage {
+            let remaining = NSIntersectionRange(old, NSRange(location: 0, length: storage.length))
+            if remaining.length > 0 {
+                editorLayoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: remaining)
+            }
+        }
+        hoveredLinkRange = range
+        if let range {
+            editorLayoutManager.addTemporaryAttribute(
+                .underlineStyle, value: Self.hoverUnderline.rawValue, forCharacterRange: range)
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.iBeam.set()
+        }
     }
 
     /// The index of the character drawn under `point` (in the view's coordinates), or nil when
@@ -206,7 +304,11 @@ public final class EditorTextView: NSTextView {
     /// True when Command is down and Shift, Control and Option are not. The function and
     /// keypad flags a keypad key carries do not count.
     private static func hasOnlyCommand(_ event: NSEvent) -> Bool {
-        event.modifierFlags.intersection([.shift, .control, .option, .command]) == .command
+        hasOnlyCommand(event.modifierFlags)
+    }
+
+    private static func hasOnlyCommand(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.shift, .control, .option, .command]) == .command
     }
 
     /// True when none of Shift, Control, Option and Command is down.

@@ -66,7 +66,9 @@ import MDNotesCore
 /// handed here: the library writes it under `i/` off the main thread and, once the file is
 /// there, the editor inserts `![[<name>]]` at the caret as typed text. A Cmd-click or Cmd-Enter
 /// on an embed (I-2) does not open a note: the library finds the file the embed names and it is
-/// opened with its default application through `openFile`.
+/// opened with its default application through `openFile`. Nor does one on a standard link,
+/// an autolink or a bare URL (K-3): its URL is opened through `openURL`. While Command is held
+/// the editor asks here which link the pointer is over, to underline it (ED-12).
 ///
 /// The eviction bar (L-10) is fed from here: the library's eviction status names how many
 /// notes are dataless and the boot volume's free space, and the bar shows them under the
@@ -156,6 +158,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// opened without launching anything.
     public var openFile: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
 
+    /// Opens a standard link's, an autolink's or a bare URL's destination with the default
+    /// application (K-3). `NSWorkspace.open`; tests replace it to capture the URL instead of
+    /// launching a browser.
+    public var openURL: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
+
     /// Called on the main thread once an image paste or drop (I-1) has settled: with the name
     /// of the file written under `i/`, which the editor has embedded, or the error that kept it
     /// from being written.
@@ -230,6 +237,10 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         // K-3: Cmd-click on a link in the editor, or Cmd-Enter with the caret in one.
         view.textView.onCommandClick = { [weak self] index in self?.openLink(at: index) ?? false }
         view.textView.onCommandReturn = { [weak self] in self?.openLinkAtCaret() ?? false }
+        // ED-12: which link the pointer is over while Command is held.
+        view.textView.linkRange = { [weak self] index in
+            self?.editorController.link(containingCharacterAt: index)?.range
+        }
         // E-9, ED-6, T-4: a plain click on a thumbnail opens its image, on a task box toggles
         // it, on a tag searches for it.
         view.textView.onClick = { [weak self] index in self?.clickInEditor(at: index) ?? false }
@@ -610,16 +621,37 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// nothing, when the caret is not in one.
     @discardableResult
     public func openLinkAtCaret() -> Bool {
-        guard let target = editorController.linkTargetAtCaret() else { return false }
-        return openLink(target)
+        open(editorController.linkAtCaret())
     }
 
     /// Cmd-click in the editor (K-3), with the insertion index the click landed on. Opens the
     /// link there; returns false, doing nothing, when there is none.
     @discardableResult
     public func openLink(at index: Int) -> Bool {
-        guard let target = editorController.linkTarget(at: index) else { return false }
-        return openLink(target)
+        open(editorController.link(at: index))
+    }
+
+    /// Opens `link` where it leads (K-3): a wikilink or embed through `openLink(_:)`, a URL
+    /// through `openExternalLink(_:)`. False, doing nothing, for nil.
+    private func open(_ link: EditorLink?) -> Bool {
+        switch link?.destination {
+        case .note(let target): return openLink(target)
+        case .url(let string): return openExternalLink(string)
+        case nil: return false
+        }
+    }
+
+    /// Opens the destination of a standard link, an autolink or a bare URL with the default
+    /// application, through `openURL` (K-3). One that is not a URL, or that the system will not
+    /// open (a relative path, a scheme nothing handles), is reported under the search field as
+    /// an unopenable embed is (I-2). Always true: the link was acted on.
+    @discardableResult
+    public func openExternalLink(_ string: String) -> Bool {
+        hideInlineMessage()
+        if let url = URL(string: string), openURL(url) { return true }
+        FileHandle.standardError.write(Data("MDNotes: could not open \(string)\n".utf8))
+        showInlineMessage("\u{201C}\(string)\u{201D} could not be opened.")
+        return true
     }
 
     /// Opens the note `target` names (K-3): the note it resolves to (K-2), or, when none does,

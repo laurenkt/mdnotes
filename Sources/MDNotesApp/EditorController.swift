@@ -397,7 +397,7 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         }
     }
 
-    // MARK: - Links (K-3)
+    // MARK: - Links (K-3, ED-12)
 
     /// The target of the wikilink the caret is in, or nil when it is not in one. The caret is
     /// the start of the selection.
@@ -406,25 +406,66 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     }
 
     /// The target of the wikilink or embed whose text, brackets included, contains the
-    /// insertion index `index`, or nil when no link does. Both ends count: a caret just before
-    /// the `[[` or just after the `]]` is touching the link, and a click resolved to an
-    /// insertion index lands on an end when it hits the outer half of a bracket. Where two
-    /// links meet, the earlier one wins. A `[[link]]` inside a code span or fenced block is not
-    /// a link (E-2), so the paragraphs around the index are scanned as the styler scans them,
-    /// with fenced blocks covered whole. `index` is a storage index (E-9): one on an attachment
-    /// line counts as the end of the line above it, so a caret on a thumbnail is touching the
-    /// embed that ends its line.
+    /// insertion index `index`, or nil when no wikilink does; a standard link, autolink or
+    /// bare URL there is not a wikilink, so nil too (`link(at:)` names those). Both ends count,
+    /// as for `link(at:)`.
     public func linkTarget(at index: Int) -> LinkTarget? {
+        guard case .note(let target)? = link(at: index)?.destination else { return nil }
+        return target
+    }
+
+    /// The link the caret is in (K-3), or nil when it is not in one. The caret is the start of
+    /// the selection.
+    public func linkAtCaret() -> EditorLink? {
+        link(at: textView.selectedRange().location)
+    }
+
+    /// The link whose text, brackets and markers included, contains the insertion index
+    /// `index`, or nil when no link does (K-3): a wikilink or embed, a standard link, an
+    /// autolink or a bare URL; an image `![alt](url)` is not a link (ED-11). Both ends count: a
+    /// caret just before the `[[` or just after the `]]` is touching the link, and a click
+    /// resolved to an insertion index lands on an end when it hits the outer half of a bracket.
+    /// Where two links meet, the earlier one wins. A link inside a code span or fenced block is
+    /// not a link (E-2), so the paragraphs around the index are scanned as the styler scans
+    /// them, with fenced blocks covered whole. `index` is a storage index (E-9): one on an
+    /// attachment line counts as the end of the line above it, so a caret on a thumbnail is
+    /// touching the embed that ends its line.
+    public func link(at index: Int) -> EditorLink? {
+        link(at: index, endInclusive: true)
+    }
+
+    /// The link whose text contains the character at storage index `index`, or nil (ED-12).
+    /// Unlike `link(at:)` this takes the index of a character, not an insertion index, because
+    /// the pointer is over one of the link's characters (`EditorTextView.characterIndex(under:)`);
+    /// the character after a link is not the link. A character of an attachment line (E-9) is
+    /// in no link.
+    public func link(containingCharacterAt index: Int) -> EditorLink? {
+        guard let storage = textView.textStorage, index < storage.length else { return nil }
+        return link(at: index, endInclusive: false)
+    }
+
+    /// The link at file index `index`, its end counting as inside it when `endInclusive`.
+    private func link(at index: Int, endInclusive: Bool) -> EditorLink? {
         guard let storage = textView.textStorage, index >= 0, index <= storage.length else { return nil }
         let text = editorText
+        if !endInclusive, text.displayOnlyRanges.contains(where: { NSLocationInRange(index, $0) }) { return nil }
         let index = text.fileIndex(forStorageIndex: index)
         let paragraphs = MarkdownScanner.paragraphRange(
             in: text.units, editedRange: NSRange(location: index, length: 0))
         for token in MarkdownScanner.scan(text.units, in: paragraphs) {
-            guard case .wikilink(let target, _, let isEmbed) = token.kind else { continue }
             if token.range.location > index { break }
-            guard index <= token.range.location + token.range.length else { continue }
-            return LinkTarget(text: text.string(inFileRange: target), isEmbed: isEmbed)
+            let end = token.range.location + token.range.length
+            guard endInclusive ? index <= end : index < end else { continue }
+            let destination: EditorLink.Destination
+            switch token.kind {
+            case .wikilink(let target, _, let isEmbed):
+                destination = .note(LinkTarget(text: text.string(inFileRange: target), isEmbed: isEmbed))
+            case .link(let url, isImage: false), .autolink(let url), .bareURL(let url):
+                destination = .url(text.string(inFileRange: url))
+            default:
+                continue
+            }
+            return EditorLink(range: text.storageRange(forFileRange: token.range), destination: destination)
         }
         return nil
     }
@@ -739,5 +780,28 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
             if generation == self.generation { hasUnsavedEdits = true }
         }
         onSave?(id, result)
+    }
+}
+
+/// A link in the editor's text (K-3, ED-12): where it is and where it leads. `range` is a
+/// storage range covering the whole link as typed, brackets and markers included, so it is
+/// what a Cmd-hover underlines (ED-12).
+public struct EditorLink: Equatable, Sendable {
+    /// What opening the link does (K-3).
+    public enum Destination: Equatable, Sendable {
+        /// A wikilink: the note its target names, created when none has it; or an embed, which
+        /// names a file rather than a note (K-1, I-2).
+        case note(LinkTarget)
+        /// A standard link's destination, an autolink's or a bare URL, as spelt: opened with
+        /// the default application.
+        case url(String)
+    }
+
+    public let range: NSRange
+    public let destination: Destination
+
+    public init(range: NSRange, destination: Destination) {
+        self.range = range
+        self.destination = destination
     }
 }

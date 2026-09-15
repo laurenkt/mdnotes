@@ -267,7 +267,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       "Cmd-click to create"; existing in link colour; ambiguous unchanged. Standard links,
       autolinks and bare URLs styled as links. Tests: attributes per state; restyle when a
       target appears or disappears.
-- [ ] M10.10 Cmd-hover and browser opening (ED-12, K-3): holding Cmd over any link shows the
+- [x] M10.10 Cmd-hover and browser opening (ED-12, K-3): holding Cmd over any link shows the
       pointing-hand cursor and a solid underline; Cmd-click or Cmd-Enter on a standard link or
       URL opens it with `NSWorkspace`. Tests: cursor and underline after simulated
       flagsChanged over a link; open action receives the URL.
