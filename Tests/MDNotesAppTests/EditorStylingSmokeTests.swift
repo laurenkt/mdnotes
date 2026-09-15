@@ -164,8 +164,9 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertNil(fixture.style(at: range(of: "see", in: text).location))
     }
 
-    /// E-8, E-2: the monospaced font goes on inline and fenced code and on nothing else; every
-    /// other character, styled or not, keeps the system font's family at the base size.
+    /// E-8, E-2: the monospaced font goes on inline and fenced code and on nothing else here
+    /// (a task box takes it too, ED-6, `TaskItemSmokeTests`); every other character, styled or
+    /// not, keeps the system font's family at the base size.
     func testE8_stylerAssignsTheMonoFontToInlineAndFencedCodeOnly() throws {
         let fixture = makeFixture()
         let text = "# Head `in heading`\nprose `inline` [[link]] #tag and ![[embed.png]]\n```\nfenced #no\n```\nafter\n"
@@ -204,13 +205,15 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.style(at: range(of: "#tag", in: text).location), .tag)
         XCTAssertTrue(isBold(fixture.font(at: 0)), "the heading keeps its weight")
 
-        // The styler's own attributes say the same: only the two code styles carry the font.
+        // The styler's own attributes say the same: only the two code styles and the task box
+        // (ED-6) carry the font.
         for style in EditorStyler.TokenStyle.allCases {
             let font = fixture.styler.attributes(for: style)[.font] as? NSFont
             switch style {
-            case .inlineCode, .fencedCode: XCTAssertEqual(font, mono, "\(style)")
+            case .inlineCode, .fencedCode, .taskBox: XCTAssertEqual(font, mono, "\(style)")
             case .heading: XCTAssertNil(font, "the heading font depends on the level (ED-4)")
-            case .wikilink, .ambiguousLink, .tag, .listItem: XCTAssertNil(font, "\(style) keeps the base font")
+            case .wikilink, .ambiguousLink, .tag, .listItem, .doneItem:
+                XCTAssertNil(font, "\(style) keeps the base font")
             case .bold, .italic, .strikethrough: XCTAssertNil(font, "\(style) adds a trait to the font in place")
             }
         }

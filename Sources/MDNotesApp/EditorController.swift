@@ -47,7 +47,10 @@ import MDNotesCore
 /// begins, and a `[` is not a tag character.
 ///
 /// A plain click on a tag (T-4) is intercepted by `EditorTextView` and handed to the window
-/// controller; `tag(at:)` is what names the tag under the pointer.
+/// controller; `tag(at:)` is what names the tag under the pointer. A plain click on a task box
+/// (ED-6) travels the same way; `toggleTaskBox(at:)` flips the character between the brackets
+/// as one undoable edit that autosaves, through the text view's own change protocol, so the
+/// edit is styled, registered with the note's undo stack and written like a keystroke.
 ///
 /// The storage may show display-only thumbnail attachments below image embeds (E-9,
 /// ADR-0012), added and removed through `addAttachment` and `removeAttachments`. They are not
@@ -474,6 +477,52 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
             return token.range
         }
         return nil
+    }
+
+    // MARK: - Task boxes (ED-6)
+
+    /// The task box `[ ]` or `[x]` one of whose three characters is at storage index `index`,
+    /// as its storage range and whether it is ticked; nil when the character is not part of a
+    /// box. Like `tag(at:)` this takes a character's index, since a click lands on one. A box
+    /// is only a box after a list marker, and never inside code, which is what the scanner
+    /// decides (ED-1); the paragraphs around the index are scanned as the styler scans them.
+    public func taskBox(at index: Int) -> (range: NSRange, isDone: Bool)? {
+        let text = editorText
+        guard let storage = textView.textStorage, index >= 0, index < storage.length,
+            !text.displayOnlyRanges.contains(where: { NSLocationInRange(index, $0) })
+        else { return nil }
+        let fileIndex = text.fileIndex(forStorageIndex: index)
+        let paragraphs = MarkdownScanner.paragraphRange(
+            in: text.units, editedRange: NSRange(location: fileIndex, length: 0))
+        for token in MarkdownScanner.scan(text.units, in: paragraphs) {
+            guard case .taskBox(let isDone) = token.kind else { continue }
+            if token.range.location > fileIndex { break }
+            guard NSLocationInRange(fileIndex, token.range) else { continue }
+            return (text.storageRange(forFileRange: token.range), isDone)
+        }
+        return nil
+    }
+
+    /// A plain click on the character at storage index `index` (ED-6): when it is part of a
+    /// task box, the character between the brackets becomes `x` for an open box or a space for
+    /// a ticked one, as a single undoable edit (E-7) that is styled (E-2) and starts the
+    /// autosave delay (E-4); the caret and the selection stay where they are. Returns false,
+    /// doing nothing, when the character is not in a box or no writable note is shown, so the
+    /// click places the caret as usual.
+    @discardableResult
+    public func toggleTaskBox(at index: Int) -> Bool {
+        guard noteID != nil, body?.isWritable == true, let storage = textView.textStorage,
+            let box = taskBox(at: index)
+        else { return false }
+        let inside = NSRange(location: box.range.location + 1, length: 1)
+        let replacement = box.isDone ? " " : "x"
+        // Its own undo step, apart from any typing run either side of it.
+        textView.breakUndoCoalescing()
+        guard textView.shouldChangeText(in: inside, replacementString: replacement) else { return false }
+        storage.replaceCharacters(in: inside, with: replacement)
+        textView.didChangeText()
+        textView.breakUndoCoalescing()
+        return true
     }
 
     // MARK: - Loading (S-8)

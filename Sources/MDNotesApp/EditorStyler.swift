@@ -7,12 +7,14 @@ import MDNotesCore
 /// fenced code in the system monospaced font (E-8) and their own colour, emphasis content with
 /// the bold, italic or strikethrough trait (ED-3), and every markdown marker the scanner yields
 /// (`#`, emphasis delimiters, list markers, `>`, link brackets and URLs, table pipes, setext
-/// underlines, rules) in tertiary label colour at the surrounding size (ED-2), and list items
-/// with a hanging indent so their wrapped lines align under the item text (ED-5). Only `.font`,
-/// `.foregroundColor`, `.strikethroughStyle` and `.paragraphStyle` are ever set: headings
-/// change weight and size, emphasis changes weight or slant, code tokens change family
-/// (ADR-0010), list items change the paragraph's head indent, nothing else changes either.
-/// Nothing here reaches the file, whose content is the text view's plain string (E-1).
+/// underlines, rules) in tertiary label colour at the surrounding size (ED-2), list items
+/// with a hanging indent so their wrapped lines align under the item text (ED-5), and task
+/// boxes in the monospaced font with a done item's content in secondary label colour (ED-6).
+/// Only `.font`, `.foregroundColor`, `.strikethroughStyle` and `.paragraphStyle` are ever set:
+/// headings change weight and size, emphasis changes weight or slant, code tokens and task
+/// boxes change family (ADR-0010), list items change the paragraph's head indent, nothing else
+/// changes either. Nothing here reaches the file, whose content is the text view's plain
+/// string (E-1).
 ///
 /// A list item's paragraph gets a `headIndent` of the marker's width plus `nestingIndent` per
 /// nesting level (ED-5): the marker (`- `, `1. `, with the spaces after it) is measured in
@@ -25,6 +27,15 @@ import MDNotesCore
 /// `1. ` ones, each under its own text. Both widths follow the Cmd-plus size (E-8) and are
 /// cached per marker string until the base font changes. Markers are dimmed like every other
 /// (ED-2); the task box after one is ED-6's.
+///
+/// A task box `[ ]` or `[x]` is set in `codeFont`, the monospaced font at the body size, so a
+/// space and an `x` take the same advance and the item text after either starts at the same
+/// place (ED-6). The box keeps the text colour: its brackets are the one marker ED-2 leaves
+/// undimmed, since the box is a control, not syntax. A ticked box puts `.doneItem` on its list
+/// item's content, secondary label colour, before the content's own inline tokens are styled,
+/// so a link or a tag in a done item keeps its colour and emphasis keeps its trait. Toggling
+/// the box is an edit of one character, made by `EditorController.toggleTaskBox(at:)`, and is
+/// styled like any other edit (E-3).
 ///
 /// A heading's content and markers are set at `headingScales[level]` times the base size, bold
 /// (ED-4): 1.4, 1.25 and 1.1 for levels 1 to 3 and the base size from level 4 on, following
@@ -104,12 +115,17 @@ public final class EditorStyler {
         /// ED-5: a bullet, ordered or task list item, from its marker to the end of the line;
         /// its paragraph carries the hanging indent.
         case listItem
+        /// ED-6: a task box `[ ]` or `[x]`, brackets included, in the monospaced font.
+        case taskBox
+        /// ED-6: the content of a ticked task item, in secondary label colour.
+        case doneItem
 
         /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
-        /// `.ambiguousLink` only once its target has been resolved (K-2). Nil for the kinds
-        /// the scanner yields that have no styling of their own yet (ED-1's links, task boxes,
-        /// quotes, tables and rules, styled by M10.5 onward); their markers are dimmed all the
-        /// same (ED-2).
+        /// `.ambiguousLink` only once its target has been resolved (K-2); a task box is
+        /// `.taskBox`, and `.doneItem` goes on a ticked one's item content structurally (ED-6).
+        /// Nil for the kinds the scanner yields that have no styling of their own yet (ED-1's
+        /// links, quotes, tables and rules, styled by M10.6 onward); their markers are dimmed
+        /// all the same (ED-2).
         init?(_ kind: MarkdownScanner.Kind) {
             switch kind {
             case .heading: self = .heading
@@ -121,7 +137,8 @@ public final class EditorStyler {
             case .emphasis(.italic): self = .italic
             case .emphasis(.strikethrough): self = .strikethrough
             case .listItem: self = .listItem
-            case .link, .autolink, .bareURL, .taskBox, .blockquote, .tableRow, .tableSeparator, .thematicBreak:
+            case .taskBox: self = .taskBox
+            case .link, .autolink, .bareURL, .blockquote, .tableRow, .tableSeparator, .thematicBreak:
                 return nil
             }
         }
@@ -131,7 +148,8 @@ public final class EditorStyler {
         var isEmphasis: Bool {
             switch self {
             case .bold, .italic, .strikethrough: true
-            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode, .listItem: false
+            case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode, .listItem, .taskBox, .doneItem:
+                false
             }
         }
     }
@@ -171,6 +189,9 @@ public final class EditorStyler {
 
     /// The colour every markdown marker is set in (ED-2).
     public static let markerColor: NSColor = .tertiaryLabelColor
+
+    /// The colour a ticked task item's content is set in (ED-6).
+    public static let doneItemColor: NSColor = .secondaryLabelColor
 
     /// K-2: the link index wikilink targets are resolved against, read whenever links are
     /// styled. `EditorController` points it at the snapshot of the library the shown note
@@ -267,7 +288,8 @@ public final class EditorStyler {
     // MARK: - Styles
 
     /// The attributes `style` adds on top of the base: the monospaced font and a colour for code
-    /// (E-8), a colour for links and tags, a strikethrough for `~~x~~`, and the marker. Fonts
+    /// (E-8), the monospaced font alone for a task box and a colour alone for a done item's
+    /// content (ED-6), a colour for links and tags, a strikethrough for `~~x~~`, and the marker. Fonts
     /// that depend on what is already there are not here: a heading's font depends on its level
     /// and is set by `apply(_:to:of:to:)` from `headingFont(forLevel:)`, and the bold and italic
     /// traits of emphasis are added to the fonts already in place, run by run, by
@@ -283,6 +305,8 @@ public final class EditorStyler {
             attributes[.font] = codeFont
             attributes[.foregroundColor] = NSColor.secondaryLabelColor
         case .strikethrough: attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        case .taskBox: attributes[.font] = codeFont
+        case .doneItem: attributes[.foregroundColor] = Self.doneItemColor
         }
         return attributes
     }
@@ -408,7 +432,8 @@ public final class EditorStyler {
     /// heading line's links and tags take its weight and their colour, emphasis inside emphasis
     /// composes, and code inside emphasis takes the code style back (ED-3). Links are resolved
     /// against `linkIndex` as they are applied (K-2). A token with no style of its own still
-    /// has its markers dimmed (ED-2).
+    /// has its markers dimmed (ED-2). A ticked task box follows its list item, and its item's
+    /// content takes `.doneItem` right after the box, before the content's inline tokens (ED-6).
     private func apply(
         _ tokens: [MarkdownScanner.Token], in range: NSRange, of text: EditorText, to storage: NSTextStorage
     ) {
@@ -419,6 +444,7 @@ public final class EditorStyler {
         storage.removeAttribute(.paragraphStyle, range: range)
         storage.addAttributes([.font: baseFont, .foregroundColor: baseColor], range: range)
         let index = linkIndex()
+        var listItem: MarkdownScanner.Token?
         for token in tokens {
             let style: TokenStyle?
             if case .wikilink(let target, _, let isEmbed) = token.kind {
@@ -427,6 +453,12 @@ public final class EditorStyler {
                 style = TokenStyle(token.kind)
             }
             apply(style, to: token, of: text, to: storage)
+            if case .listItem = token.kind {
+                listItem = token
+            } else if case .taskBox(isDone: true) = token.kind, let item = listItem {
+                storage.addAttributes(
+                    attributes(for: .doneItem), range: text.storageRange(forFileRange: item.content))
+            }
         }
     }
 
@@ -434,7 +466,8 @@ public final class EditorStyler {
     /// emphasis, whose trait is added to the fonts already there; a heading takes the bold font
     /// of its level (ED-4); code takes the code font at the size of what encloses it and drops
     /// any strikethrough an enclosing token left (ED-3); a list item puts the hanging indent on
-    /// its whole paragraph (ED-5); then the markers are recoloured (ED-2), so they carry the
+    /// its whole paragraph (ED-5); a task box takes the monospaced font from its attributes
+    /// (ED-6); then the markers are recoloured (ED-2), so they carry the
     /// token's attribute and font and the marker colour. Ranges are file indices into `text`,
     /// mapped to the storage here.
     private func apply(
@@ -464,7 +497,7 @@ public final class EditorStyler {
                         .paragraphStyle, value: listParagraphStyle(headIndent: indent),
                         range: storage.mutableString.paragraphRange(for: range))
                 }
-            case .wikilink, .ambiguousLink, .tag, .strikethrough: break
+            case .wikilink, .ambiguousLink, .tag, .strikethrough, .taskBox, .doneItem: break
             }
         }
         guard Self.dimsMarkers(token.kind) else { return }

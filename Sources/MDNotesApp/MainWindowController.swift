@@ -230,7 +230,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         // K-3: Cmd-click on a link in the editor, or Cmd-Enter with the caret in one.
         view.textView.onCommandClick = { [weak self] index in self?.openLink(at: index) ?? false }
         view.textView.onCommandReturn = { [weak self] in self?.openLinkAtCaret() ?? false }
-        // E-9, T-4: a plain click on a thumbnail opens its image; on a tag it searches for it.
+        // E-9, ED-6, T-4: a plain click on a thumbnail opens its image, on a task box toggles
+        // it, on a tag searches for it.
         view.textView.onClick = { [weak self] index in self?.clickInEditor(at: index) ?? false }
         // I-1: an image pasted into or dropped on the editor is stored and embedded.
         view.textView.onInsertImage = { [weak self] source in self?.insertImage(source) ?? false }
@@ -742,11 +743,23 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     }
 
     /// A plain click on the character at storage index `index` of the editor's text: on a
-    /// thumbnail it opens the image (E-9), on a tag it searches for the tag (T-4). Returns
-    /// false, doing nothing, for any other character, which leaves the click to the text view.
+    /// thumbnail it opens the image (E-9), on a task box it toggles the box (ED-6), on a tag it
+    /// searches for the tag (T-4). Returns false, doing nothing, for any other character, which
+    /// leaves the click to the text view.
     @discardableResult
     public func clickInEditor(at index: Int) -> Bool {
-        openThumbnail(at: index) || searchTag(at: index)
+        openThumbnail(at: index) || toggleTaskBox(at: index) || searchTag(at: index)
+    }
+
+    // MARK: - Task boxes (ED-6)
+
+    /// A plain click on a task box's character at storage index `index` (ED-6): the box is
+    /// toggled between `[ ]` and `[x]` as one undoable edit that autosaves, the caret left
+    /// alone. Returns false, doing nothing, when the character is not in a box or the note is
+    /// read-only, so the click places the caret as usual.
+    @discardableResult
+    public func toggleTaskBox(at index: Int) -> Bool {
+        editorController.toggleTaskBox(at: index)
     }
 
     // MARK: - Thumbnails (E-9)

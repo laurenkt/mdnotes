@@ -250,7 +250,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.4 Lists (ED-5): hanging indent via paragraph style so wrapped lines align under the item
       text, two spaces per nesting level, markers dimmed; ordered markers too. Tests: head
       indent per level; wrapped line x-origin equals text start.
-- [ ] M10.5 Task items (ED-6): `[ ]` / `[x]` set in the monospaced font at body size; done items in
+- [x] M10.5 Task items (ED-6): `[ ]` / `[x]` set in the monospaced font at body size; done items in
       secondary colour; a plain click on the box toggles space and x as one undoable edit that
       autosaves. Tests: equal advance widths; click toggles; undo restores; file updated.
 - [ ] M10.6 Blockquotes and tables (ED-7): blockquote paragraphs hanging-indented with `>` dimmed,
