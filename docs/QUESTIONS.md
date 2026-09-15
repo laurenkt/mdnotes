@@ -109,3 +109,52 @@ Answer: None of the three. The gate is law (CLAUDE.md, Rules): when PF-1 fails, 
 why cold launch regressed and make it faster, instead of re-running the gate or parking the
 work. Recorded as I-11 (bug), which the loop drains before M10.3; M10.3 then resumes from
 docs/patches/M10.3-heading-scale.patch. (Answered by the human, 2026-09-15.)
+
+## Q5: PF-1's cold launch pays ~250 ms of macOS loading Writing Tools at the search field's first focus; what should the cold gate measure?   (task: I-11, 2026-09-15)
+Context: I-11 asked for the cold launch to be profiled and made faster until PF-1 passes with margin.
+Profiled with Time Profiler on the release test binary (macOS 27.0 26A428, M1 Air). Three
+regressions of ours were found and fixed on the branch: `LibraryScanner` listed 20k notes through
+`FileManager.contentsOfDirectory` and `URL.resourceValues` (seven times the cost of the kernel's own
+`getattrlistbulk` listing, every object bridged through the Objective-C runtime whose lock the main
+thread holds while a cold launch loads frameworks); `LibraryController.start` began the body reads
+and download probes together with the titles publish, so the list waited on them; and
+`NSWindowController.showWindow` routed through `NSDocumentController`, soft-linking QuickLookUI
+(50 ms). Median launch went from 210 to 85 ms and cold from 450-600 to 300-410 ms.
+What remains is the OS. `NSWindow.makeKeyAndOrderFront` makes the search field first responder
+(S-1, `initialFirstResponder`); `NSTextField.selectText:` sets the field editor's selection;
+`-[NSTextInputContext invalidateCharacterCoordinates]` asks `+[NSCampoLightweightUIController
+isEligible]`, which soft-links WritingToolsUI, and with it 415 images (WebKit, MapKit, PDFKit,
+Photos, the SwiftUI overlays): 170-250 ms of objc class and category registration on the main
+thread, once per process, 168 of the 181 samples inside the delegate. Nothing public gates it:
+`allowsWritingTools = false` on the field and `writingToolsBehavior = .none` on the field editor
+(verified set) change nothing, and the closure is not SwiftUI's (`Bundle.load` of SwiftUI first
+changed nothing). The other 85-100 ms after the delegate returns are AppKit's
+`NSIATextInputActionsContext updateInputMode` (TSM input-source languages through ICU) and the first
+`CATransaction` commit, run-loop blocks that drain before our publish; most of that overlaps the
+scan. Our own cold main-thread work is now ~50 ms (menu 12, order-front residue ~30, reload and
+first-page layout 10). Measured alternatives: `NSWritingToolsCoordinator.isWritingToolsAvailable`
+called before the clock loads the same closure (247 ms) and leaves cold launch at 140-150 ms with
+the list on screen; it is `@MainActor` in the Swift interface, so it cannot run off the main
+thread. A `dlopen` of WritingToolsUI on a background thread with the field focused only when the
+titles snapshot lands measured 406 ms cold: the objc runtime lock is held for the whole
+registration and the main thread stalls on it in `NSMenu`/`NSWindow` regardless. So the 250 ms
+cannot be avoided, overlapped or moved off the main thread by anything short of not focusing a
+text field, which S-1 forbids and which only defers the cost to the first keystroke. With it,
+cold launch has a floor of ~300 ms on this machine and PF-1's 300 ms cannot be met with margin.
+Options: (1) an ADR that PF-1 measures the app's own launch path: `LaunchPerfTests` reads
+`NSWritingToolsCoordinator.isWritingToolsAvailable` once before the first clock starts (public
+API, main thread, in the test only), documenting the OS charge it excludes; the gate then measures
+140-150 ms cold against 300 with margin, and the real first launch pays the OS its 250 ms as
+every AppKit app on this macOS does. (2) an ADR raising the cold budget to cover the OS (500 ms
+cold, 300 median), keeping the gate honest about the user's wait but blind to a 150 ms regression
+of ours. (3) an ADR changing S-1 so the field is focused on the first keystroke instead of at
+launch; the cost moves to the first keystroke and PF-1 passes at ~150 ms, but the app would drop
+or delay what the user types in that first quarter second. (4) leave I-11 open and PF-1 failing
+until an OS update changes the charge.
+Recommendation: (1). The gate exists to catch regressions in what the app controls; a fixed OS
+charge at first text focus, the same for every process, tells it nothing, and (2) would hide a
+regression of our whole current budget. The branch's fixes stand on their own (median 210 -> 85 ms)
+but the pre-commit gate refused them with PF-1 cold at 334 and 311 ms, so they are parked whole,
+with their MAP edits, as `docs/patches/I-11-cold-launch.patch` (applies cleanly to main at
+0139109; `git apply` it, delete it, and commit as the I-11 fix once the ADR has landed); I-11 is
+marked `[?]` and PF-1's cold assertion stays as it is until then.
