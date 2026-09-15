@@ -148,8 +148,10 @@ final class LinkOpeningSmokeTests: XCTestCase {
     /// window that has never been on screen does not dispatch mouse events itself.
     private func commandClick(onCharacterAt index: Int, in controller: MainWindowController, window: NSWindow) throws {
         let textView = controller.mainView.textView
-        if let layoutManager = textView.textLayoutManager {
-            layoutManager.ensureLayout(for: layoutManager.documentRange)
+        // The editor's layout manager lays out lazily (ED-8): the character's rect is an
+        // estimate until its line has been laid out.
+        if let layoutManager = textView.layoutManager, let container = textView.textContainer {
+            layoutManager.ensureLayout(for: container)
         }
         let screenRect = textView.firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: nil)
         XCTAssertGreaterThan(screenRect.width, 0, "the character has been laid out")

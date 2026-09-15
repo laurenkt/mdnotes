@@ -256,7 +256,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.6 Blockquotes and tables (ED-7): blockquote paragraphs hanging-indented with `>` dimmed,
       nested `>` nests; pipe-table lines in the monospaced font, separator row dimmed. Tests:
       attributes and indents.
-- [ ] M10.7 Horizontal rule extension (ED-8): a custom `NSLayoutManager` draws faded hyphens from the
+- [x] M10.7 Horizontal rule extension (ED-8): a custom `NSLayoutManager` draws faded hyphens from the
       end of the typed rule to the trailing edge, unselectable, visible rect only. Tests: rule
       token ranges; drawn extension excluded from selection and copy; snapshot per V-1.
 - [ ] M10.8 Section banding (ED-10): the layout manager fills alternate sections between rules with

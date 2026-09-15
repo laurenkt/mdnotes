@@ -318,11 +318,11 @@ public final class MainView: NSView, NSSplitViewDelegate {
         return (scroll, table)
     }
 
-    /// The editor: an `EditorTextView` in a scroll view, set up the way
-    /// `NSTextView.scrollableTextView()` sets up a plain text view (TextKit 2, wrapping to the
-    /// scroll view's width, growing downwards without limit).
+    /// The editor: an `EditorTextView` over an `EditorLayoutManager` (TextKit 1, ED-8) in a
+    /// scroll view, set up the way `NSTextView.scrollableTextView()` sets up a plain text view
+    /// (wrapping to the scroll view's width, growing downwards without limit).
     private static func makeEditor() -> (NSScrollView, EditorTextView) {
-        let text = EditorTextView(frame: .zero)
+        let text = EditorTextView(frame: .zero, layoutManager: EditorLayoutManager())
         text.autoresizingMask = [.width, .height]
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false

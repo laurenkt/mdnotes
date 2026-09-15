@@ -17,8 +17,39 @@ import AppKit
 /// writes the text as the file holds it, through `EditorText`, so the attachment characters
 /// never leave the view. Without an attachment on show the selection is written as
 /// `NSTextView` writes it.
+///
+/// The view is built on TextKit 1 with an `EditorLayoutManager` (ED-8, ED-10), which is what
+/// draws the rule extensions and, later, the section bands over the text: the storage, the
+/// layout manager and the text container are made here and the view keeps the storage alive,
+/// as the owner of a text system built by hand must.
 @MainActor
 public final class EditorTextView: NSTextView {
+    /// The storage the view's text system is built on. `NSTextView` retains only its container,
+    /// and the container's layout manager is retained by the storage, so the view holds the
+    /// storage to keep the whole system alive.
+    private let ownedStorage: NSTextStorage
+
+    /// The view's layout manager, an `EditorLayoutManager` (ED-8).
+    public let editorLayoutManager: EditorLayoutManager
+
+    /// A text view over a fresh TextKit 1 system whose layout manager is `layoutManager`: a
+    /// text container of `frame`'s width and no height limit (the view is made vertically
+    /// resizable by its owner), so the text wraps to the view's width and grows downwards.
+    public init(frame: NSRect, layoutManager: EditorLayoutManager) {
+        let storage = NSTextStorage()
+        let container = NSTextContainer(size: NSSize(width: frame.width, height: CGFloat.greatestFiniteMagnitude))
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+        ownedStorage = storage
+        editorLayoutManager = layoutManager
+        super.init(frame: frame, textContainer: container)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
     /// A click with Command down and no other modifier, with the insertion index the click
     /// lands on: the index `characterIndexForInsertion(at:)` reports, so a click on the right
     /// half of a character gives the index after it, as placing the caret there would (K-3).

@@ -11,7 +11,9 @@ import MDNotesCore
 /// with a hanging indent so their wrapped lines align under the item text (ED-5), task
 /// boxes in the monospaced font with a done item's content in secondary label colour (ED-6),
 /// blockquote lines with a hanging indent under the quoted text and pipe-table lines in the
-/// monospaced font with the separator row dimmed (ED-7). Only `.font`, `.foregroundColor`,
+/// monospaced font with the separator row dimmed (ED-7), and a thematic break's typed
+/// characters dimmed and marked `.rule` so `EditorLayoutManager` draws the extension to the
+/// trailing edge after them (ED-8). Only `.font`, `.foregroundColor`,
 /// `.strikethroughStyle` and `.paragraphStyle` are ever set: headings change weight and size,
 /// emphasis changes weight or slant, code tokens, task boxes and table lines change family
 /// (ADR-0010), list items and blockquotes change the paragraph's head indent, nothing else
@@ -141,13 +143,15 @@ public final class EditorStyler {
         case tableRow
         /// ED-7: a pipe-table separator row, in the monospaced font and marker colour.
         case tableSeparator
+        /// ED-8: a thematic break's typed characters, dimmed; `EditorLayoutManager` draws the
+        /// extension to the trailing edge after every run carrying this.
+        case rule
 
         /// The style a token's kind alone decides; a wikilink is `.wikilink` here and becomes
         /// `.ambiguousLink` only once its target has been resolved (K-2); a task box is
         /// `.taskBox`, and `.doneItem` goes on a ticked one's item content structurally (ED-6).
         /// Nil for the kinds the scanner yields that have no styling of their own yet (ED-1's
-        /// links and rules, styled by M10.7 onward); their markers are dimmed all the same
-        /// (ED-2).
+        /// links, styled by M10.9 onward); their markers are dimmed all the same (ED-2).
         init?(_ kind: MarkdownScanner.Kind) {
             switch kind {
             case .heading: self = .heading
@@ -163,7 +167,8 @@ public final class EditorStyler {
             case .blockquote: self = .blockquote
             case .tableRow: self = .tableRow
             case .tableSeparator: self = .tableSeparator
-            case .link, .autolink, .bareURL, .thematicBreak:
+            case .thematicBreak: self = .rule
+            case .link, .autolink, .bareURL:
                 return nil
             }
         }
@@ -174,7 +179,7 @@ public final class EditorStyler {
             switch self {
             case .bold, .italic, .strikethrough: true
             case .heading, .wikilink, .ambiguousLink, .tag, .inlineCode, .fencedCode, .listItem, .taskBox, .doneItem,
-                .blockquote, .tableRow, .tableSeparator:
+                .blockquote, .tableRow, .tableSeparator, .rule:
                 false
             }
         }
@@ -213,8 +218,9 @@ public final class EditorStyler {
     /// The warning tint an ambiguous link is set in (K-2).
     public static let ambiguousLinkColor: NSColor = .systemOrange
 
-    /// The colour every markdown marker is set in (ED-2).
-    public static let markerColor: NSColor = .tertiaryLabelColor
+    /// The colour every markdown marker is set in (ED-2), and of a rule's drawn extension
+    /// (ED-8, `EditorLayoutManager.extensionColor`).
+    nonisolated public static let markerColor: NSColor = .tertiaryLabelColor
 
     /// The colour a ticked task item's content is set in (ED-6).
     public static let doneItemColor: NSColor = .secondaryLabelColor
@@ -335,7 +341,7 @@ public final class EditorStyler {
     public func attributes(for style: TokenStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [Self.tokenAttribute: style.rawValue]
         switch style {
-        case .heading, .bold, .italic, .listItem, .blockquote: break
+        case .heading, .bold, .italic, .listItem, .blockquote, .rule: break
         case .wikilink: attributes[.foregroundColor] = NSColor.linkColor
         case .ambiguousLink: attributes[.foregroundColor] = Self.ambiguousLinkColor
         case .tag: attributes[.foregroundColor] = NSColor.systemPurple
@@ -559,7 +565,8 @@ public final class EditorStyler {
                 storage.addAttribute(
                     .paragraphStyle, value: hangingParagraphStyle(headIndent: quoteIndent),
                     range: storage.mutableString.paragraphRange(for: range))
-            case .wikilink, .ambiguousLink, .tag, .strikethrough, .taskBox, .doneItem, .tableRow, .tableSeparator:
+            case .wikilink, .ambiguousLink, .tag, .strikethrough, .taskBox, .doneItem, .tableRow, .tableSeparator,
+                .rule:
                 break
             }
         }

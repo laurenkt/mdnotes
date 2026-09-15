@@ -158,8 +158,10 @@ final class TaskItemSmokeTests: XCTestCase {
     /// The point, in the window's coordinates, at the centre of the character at `index`.
     private func centre(ofCharacterAt index: Int, in fixture: Fixture) throws -> NSPoint {
         let window = try XCTUnwrap(fixture.window)
-        if let layoutManager = fixture.textView.textLayoutManager {
-            layoutManager.ensureLayout(for: layoutManager.documentRange)
+        // The editor's layout manager lays out lazily (ED-8): the character's rect is an
+        // estimate until its line has been laid out.
+        if let layoutManager = fixture.textView.layoutManager, let container = fixture.textView.textContainer {
+            layoutManager.ensureLayout(for: container)
         }
         let screenRect = fixture.textView.firstRect(
             forCharacterRange: NSRange(location: index, length: 1), actualRange: nil)

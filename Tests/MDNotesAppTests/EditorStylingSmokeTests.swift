@@ -213,7 +213,7 @@ final class EditorStylingSmokeTests: XCTestCase {
             case .inlineCode, .fencedCode, .taskBox, .tableRow, .tableSeparator:
                 XCTAssertEqual(font, mono, "\(style)")
             case .heading: XCTAssertNil(font, "the heading font depends on the level (ED-4)")
-            case .wikilink, .ambiguousLink, .tag, .listItem, .doneItem, .blockquote:
+            case .wikilink, .ambiguousLink, .tag, .listItem, .doneItem, .blockquote, .rule:
                 XCTAssertNil(font, "\(style) keeps the base font")
             case .bold, .italic, .strikethrough: XCTAssertNil(font, "\(style) adds a trait to the font in place")
             }
@@ -1077,9 +1077,10 @@ final class EditorStylingSmokeTests: XCTestCase {
 
     /// A heading edit changes the size of its paragraph's fonts and nothing outside it (E-3),
     /// so the layout manager lays that paragraph out again and nothing before it, and what it
-    /// lays out after it is exactly what any keystroke in that paragraph makes it lay out
-    /// (TextKit lays out contiguously from the invalidated paragraph on; the re-style adds
-    /// nothing to that). The paragraphs after it end up moved down by the heading's growth.
+    /// lays out after it is no more than any keystroke in that paragraph makes it lay out (the
+    /// re-style adds nothing to that; with the editor's non-contiguous layout, ED-8, the lines
+    /// below keep their layout and move). The paragraphs after it end up moved down by the
+    /// heading's growth.
     func testE3_aHeadingEditRelaysOutOnlyItsParagraph() throws {
         let fixture = makeFixture()
         let text = "first paragraph\nsecond line of it\n\n## Head\nunder the head\n\nthird paragraph\nlast line\n"
@@ -1127,9 +1128,9 @@ final class EditorStylingSmokeTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(
                 characters.location, paragraph.location, "laid out \(characters) before the heading's paragraph")
         }
-        XCTAssertEqual(
-            linesLaidOut(by: recorder, in: layoutManager, outside: paragraph), plainLines,
-            "the size change made the layout manager lay out nothing a plain keystroke does not")
+        let extra = linesLaidOut(by: recorder, in: layoutManager, outside: paragraph).subtracting(plainLines)
+        XCTAssertTrue(
+            extra.isEmpty, "the size change made the layout manager lay out \(extra), which a plain keystroke does not")
 
         // The paragraphs after it moved down by the heading's growth.
         let thirdAfter = layoutManager.lineFragmentRect(

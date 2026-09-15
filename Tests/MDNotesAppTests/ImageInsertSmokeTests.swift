@@ -191,8 +191,10 @@ final class ImageInsertSmokeTests: XCTestCase {
     /// the text has been laid out.
     private func windowPoint(atCharacter index: Int, in fixture: Fixture) -> NSPoint {
         let textView = fixture.textView
-        if let layoutManager = textView.textLayoutManager {
-            layoutManager.ensureLayout(for: layoutManager.documentRange)
+        // The editor's layout manager lays out lazily (ED-8): the character's rect is an
+        // estimate until its line has been laid out.
+        if let layoutManager = textView.layoutManager, let container = textView.textContainer {
+            layoutManager.ensureLayout(for: container)
         }
         let screenRect = textView.firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: nil)
         XCTAssertGreaterThan(screenRect.width, 0, "the character has been laid out")
@@ -204,8 +206,10 @@ final class ImageInsertSmokeTests: XCTestCase {
     /// mouse-down then a mouse-up at the character's centre, delivered to the editor.
     private func commandClick(onCharacterAt index: Int, in fixture: Fixture) throws {
         let textView = fixture.textView
-        if let layoutManager = textView.textLayoutManager {
-            layoutManager.ensureLayout(for: layoutManager.documentRange)
+        // The editor's layout manager lays out lazily (ED-8): the character's rect is an
+        // estimate until its line has been laid out.
+        if let layoutManager = textView.layoutManager, let container = textView.textContainer {
+            layoutManager.ensureLayout(for: container)
         }
         let screenRect = textView.firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: nil)
         XCTAssertGreaterThan(screenRect.width, 0, "the character has been laid out")
