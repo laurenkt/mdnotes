@@ -45,13 +45,21 @@ The `scripts/next-item.sh` output prints `KIND`, `ID`, the item's lines, `OPEN` 
 
 ## 2. Spawn a subagent in its own worktree
 
+First check `git rev-parse origin/main main` prints the same hash twice; if not, run
+`git push -q origin main` before spawning (worktrees are cut from `origin/main`).
+
 Agent tool, `subagent_type: general-purpose`, `run_in_background: false`,
 `isolation: "worktree"` (ADR-0018: a fresh worktree and branch cut from main; the subagent's
-working directory is that worktree). For a task:
+working directory is that worktree). Substitute the `HEAD` hash from step 1 into the prompt.
+For a task:
 
 ```
 You are working in a fresh git worktree of the MDNotes repo, on your own branch cut from
-main; your current directory is that worktree and every path below is relative to it. Run
+main; your current directory is that worktree and every path below is relative to it. First
+confirm `git rev-parse HEAD` prints <HEAD>; if it does not, reply with the single line
+`STALE BASE` and stop. Run every build, test and gate command in the foreground with a
+generous timeout (up to 600000 ms), never in the background, and never end your turn to wait
+for a notification: your turn ends only when the commit exists and `git status` is clean. Run
 `scripts/task-brief.sh <ID>` and read its output: it holds the task, the spec bullets it
 cites, and the codebase map. Then read CLAUDE.md. Do not read docs/SPEC.md in full and do
 not explore the codebase beyond what the map and the task need. Do exactly this one task and
@@ -76,7 +84,11 @@ For an issue:
 
 ```
 You are working in a fresh git worktree of the MDNotes repo, on your own branch cut from
-main; your current directory is that worktree. Run `scripts/task-brief.sh <ID>` and read its
+main; your current directory is that worktree. First confirm `git rev-parse HEAD` prints
+<HEAD>; if it does not, reply with the single line `STALE BASE` and stop. Run every build,
+test and gate command in the foreground with a generous timeout (up to 600000 ms), never in
+the background, and never end your turn to wait for a notification: your turn ends only when
+the commit exists and `git status` is clean. Run `scripts/task-brief.sh <ID>` and read its
 output, then read CLAUDE.md. Do not read docs/SPEC.md in full. Fix exactly this one issue:
 
 <ITEM LINES>
@@ -110,6 +122,12 @@ and `STATUS`.
 - `STATUS: ok`: run `scripts/log-metric.sh <ID> <subagent tokens> <duration ms>` with the
   numbers from the Agent result's usage line. It appends the row and commits it itself (the
   pre-commit gate skips a commit that touches only `docs/METRICS.md`).
+
+Finally run `git push -q origin main` (add `--tags` when a `MILESTONE` line appeared). The
+Agent tool's worktree isolation cuts task worktrees from `origin/main`, not local `main`, so
+origin must follow every landing or the next subagent starts from a stale base (this happened
+on 2026-09-15: the M10.3 worktree was cut six commits behind and `land.sh` refused it). Plain
+pushes are allowed in `.claude/settings.json`; force-pushes stay denied.
 
 ## 4. Notify the phone
 

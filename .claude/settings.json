@@ -28,6 +28,10 @@
       "Bash(git tag:*)",
       "Bash(git show:*)",
       "Bash(git rev-parse:*)",
+      "Bash(git fetch:*)",
+      "Bash(git push origin main)",
+      "Bash(git push -q origin main)",
+      "Bash(git push origin main --tags)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(grep:*)",
@@ -37,7 +41,10 @@
       "Bash(mkdir:*)"
     ],
     "deny": [
-      "Bash(git push:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git push --delete:*)",
       "Bash(git merge:*)",
       "Bash(git rebase:*)",
       "Bash(git worktree:*)",
