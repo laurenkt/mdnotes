@@ -108,18 +108,18 @@ final class EditorStylingSmokeTests: XCTestCase {
 
     // MARK: - E-2: what is styled and how
 
-    func testE2_headingsAreBoldAtTheSameSizeAndBodyIsNot() throws {
+    func testE2_headingsAreBoldAndBodyIsNot() throws {
         let fixture = makeFixture()
         let text = "# Title\nbody line\n## Second\n"
         fixture.show(text)
 
         let heading = try XCTUnwrap(fixture.font(at: 0))
         XCTAssertTrue(isBold(heading), "heading is bold: \(heading)")
-        XCTAssertEqual(heading.pointSize, base.pointSize)
+        XCTAssertEqual(heading.pointSize, base.pointSize * 1.4, accuracy: 0.001, "level 1 scale (ED-4)")
         XCTAssertEqual(heading.familyName, base.familyName)
         XCTAssertEqual(fixture.style(at: 0), .heading)
         XCTAssertEqual(fixture.style(at: 6), .heading, "the whole heading line is styled")
-        XCTAssertEqual(fixture.styler.headingFont, heading)
+        XCTAssertEqual(fixture.styler.headingFont(forLevel: 1), heading)
 
         let body = try XCTUnwrap(fixture.font(at: range(of: "body", in: text).location))
         XCTAssertFalse(isBold(body))
@@ -179,6 +179,7 @@ final class EditorStylingSmokeTests: XCTestCase {
             range(of: "```\nfenced #no\n```\n", in: text),
         ]
         let length = (text as NSString).length
+        let headingLine = range(of: "# Head `in heading`", in: text)
         for location in 0..<length {
             let font = try XCTUnwrap(fixture.font(at: location), "every character has a font")
             let inCode = codeRanges.contains { NSLocationInRange(location, $0) }
@@ -189,7 +190,13 @@ final class EditorStylingSmokeTests: XCTestCase {
             } else {
                 XCTAssertEqual(font.familyName, base.familyName, "\(character) at \(location) is not code")
             }
-            XCTAssertEqual(font.pointSize, base.pointSize, "the size never changes (E-2)")
+            if NSLocationInRange(location, headingLine) {
+                XCTAssertEqual(
+                    font.pointSize, base.pointSize * 1.4, accuracy: 0.001,
+                    "\(character) at \(location) is at the heading's size, code included (ED-4, E-8)")
+            } else {
+                XCTAssertEqual(font.pointSize, base.pointSize, "\(character) at \(location) is at the base size")
+            }
         }
         XCTAssertEqual(fixture.style(at: range(of: "`in heading`", in: text).location), .inlineCode)
         XCTAssertEqual(fixture.style(at: range(of: "fenced", in: text).location), .fencedCode)
@@ -202,7 +209,7 @@ final class EditorStylingSmokeTests: XCTestCase {
             let font = fixture.styler.attributes(for: style)[.font] as? NSFont
             switch style {
             case .inlineCode, .fencedCode: XCTAssertEqual(font, mono, "\(style)")
-            case .heading: XCTAssertEqual(font, fixture.styler.headingFont)
+            case .heading: XCTAssertNil(font, "the heading font depends on the level (ED-4)")
             case .wikilink, .ambiguousLink, .tag: XCTAssertNil(font, "\(style) keeps the base font")
             case .bold, .italic, .strikethrough: XCTAssertNil(font, "\(style) adds a trait to the font in place")
             }
@@ -238,11 +245,13 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.textView.string, text, "the text is exactly what went in")
 
         // Only the font traits, colour and strikethrough vary, run by run; the size is the
-        // base's everywhere and the family too, except on code, which is monospaced (E-8).
+        // base's everywhere but the heading line, which is scaled (ED-4), and the family too,
+        // except on code, which is monospaced (E-8).
         let allowed: Set<NSAttributedString.Key> = [
             .font, .foregroundColor, .paragraphStyle, .strikethroughStyle, EditorStyler.tokenAttribute,
         ]
         let codeStyles = [EditorStyler.TokenStyle.inlineCode.rawValue, EditorStyler.TokenStyle.fencedCode.rawValue]
+        let heading = range(of: "# Title", in: text)
         var runs = 0
         fixture.storage.enumerateAttributes(in: NSRange(location: 0, length: fixture.storage.length), options: []) {
             attributes, range, _ in
@@ -250,7 +259,8 @@ final class EditorStylingSmokeTests: XCTestCase {
             XCTAssertTrue(
                 Set(attributes.keys).isSubset(of: allowed), "unexpected attributes \(attributes.keys) in \(range)")
             if let font = attributes[.font] as? NSFont {
-                XCTAssertEqual(font.pointSize, base.pointSize, "size unchanged in \(range)")
+                let expectedSize = NSLocationInRange(range.location, heading) ? base.pointSize * 1.4 : base.pointSize
+                XCTAssertEqual(font.pointSize, expectedSize, accuracy: 0.001, "size in \(range)")
                 let isCode = codeStyles.contains(attributes[EditorStyler.tokenAttribute] as? String ?? "")
                 XCTAssertEqual(
                     font.familyName, isCode ? mono.familyName : base.familyName, "family in \(range)")
@@ -287,7 +297,7 @@ final class EditorStylingSmokeTests: XCTestCase {
 
         let heading = try XCTUnwrap(fixture.font(at: 0))
         XCTAssertEqual(heading.familyName, base.familyName)
-        XCTAssertEqual(heading.pointSize, 15)
+        XCTAssertEqual(heading.pointSize, 15 * 1.4, accuracy: 0.001, "the heading follows the size, scaled (ED-4)")
         XCTAssertTrue(isBold(heading), "the heading is bold at the new size: \(heading)")
         let body = try XCTUnwrap(fixture.font(at: range(of: "body", in: text).location))
         XCTAssertEqual(body, NSFont.systemFont(ofSize: 15))
@@ -853,7 +863,8 @@ final class EditorStylingSmokeTests: XCTestCase {
         let b = range(of: "**b**", in: text)
         XCTAssertEqual(fixture.color(at: b.location), tertiary)
         XCTAssertEqual(
-            fixture.font(at: b.location), fixture.styler.headingFont, "the marker is at the heading's weight")
+            fixture.font(at: b.location), fixture.styler.headingFont(forLevel: 1),
+            "the marker is at the heading's weight and size")
         XCTAssertTrue(isBold(fixture.font(at: b.location + 2)))
         XCTAssertEqual(fixture.style(at: b.location + 2), .bold)
         XCTAssertEqual(fixture.color(at: b.location + 2), fixture.styler.baseColor)
@@ -904,6 +915,225 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.color(at: end + 1), fixture.styler.baseColor)
     }
 
+    // MARK: - ED-4: heading scale
+
+    /// The scale each heading level is set at (ED-4), by level.
+    private let headingScales: [Int: CGFloat] = [1: 1.4, 2: 1.25, 3: 1.1, 4: 1.0, 5: 1.0, 6: 1.0]
+
+    func testED4_headingFontSizePerLevel() throws {
+        let fixture = makeFixture()
+        let text = "# One\n## Two\n### Three\n#### Four\n##### Five\n###### Six\nbody\n"
+        fixture.show(text)
+        XCTAssertEqual(EditorStyler.headingScales, [1.4, 1.25, 1.1, 1.0])
+
+        for (level, word) in [(1, "One"), (2, "Two"), (3, "Three"), (4, "Four"), (5, "Five"), (6, "Six")] {
+            let scale = try XCTUnwrap(headingScales[level])
+            XCTAssertEqual(EditorStyler.headingScale(forLevel: level), scale, "level \(level)")
+            let line = range(of: String(repeating: "#", count: level) + " " + word, in: text)
+            let content = range(of: word, in: text)
+            let font = try XCTUnwrap(fixture.font(at: content.location), "level \(level)")
+            XCTAssertEqual(font.pointSize, 13 * scale, accuracy: 0.001, "level \(level) content size")
+            XCTAssertTrue(isBold(font), "level \(level) is bold: \(font)")
+            XCTAssertEqual(font.familyName, base.familyName, "level \(level) keeps the family (E-8)")
+            XCTAssertEqual(font, fixture.styler.headingFont(forLevel: level))
+            XCTAssertEqual(fixture.style(at: content.location), .heading)
+            XCTAssertEqual(fixture.color(at: content.location), fixture.styler.baseColor)
+
+            let hashes = try XCTUnwrap(fixture.font(at: line.location), "level \(level)")
+            XCTAssertEqual(hashes, font, "level \(level): the `#` run is at the heading's size and weight (ED-2)")
+            for offset in 0..<level {
+                XCTAssertEqual(fixture.color(at: line.location + offset), tertiary, "level \(level) `#` dimmed")
+            }
+        }
+        let body = try XCTUnwrap(fixture.font(at: range(of: "body", in: text).location))
+        XCTAssertEqual(body, base)
+        XCTAssertEqual(fixture.styler.headingFont(forLevel: 4), fixture.styler.headingFont(forLevel: 6))
+        XCTAssertEqual(fixture.styler.headingFont(forLevel: 4).pointSize, base.pointSize)
+    }
+
+    func testED4_setextHeadingsScaleWithTheUnderlineDimmedAtTheHeadingSize() throws {
+        let fixture = makeFixture()
+        let text = "First\n===\n\nSecond one\n---\n\nbody\n"
+        fixture.show(text)
+
+        let first = try XCTUnwrap(fixture.font(at: 0))
+        XCTAssertEqual(first.pointSize, 13 * 1.4, accuracy: 0.001)
+        XCTAssertTrue(isBold(first))
+        XCTAssertEqual(fixture.style(at: 0), .heading)
+        let equals = range(of: "===", in: text)
+        XCTAssertEqual(fixture.colors(in: equals), [tertiary, tertiary, tertiary], "the underline is dimmed (ED-9)")
+        XCTAssertEqual(fixture.font(at: equals.location), first, "the underline is at the heading's size")
+        XCTAssertEqual(fixture.style(at: equals.location), .heading)
+
+        let second = range(of: "Second", in: text)
+        let secondFont = try XCTUnwrap(fixture.font(at: second.location))
+        XCTAssertEqual(secondFont.pointSize, 13 * 1.25, accuracy: 0.001)
+        XCTAssertTrue(isBold(secondFont))
+        let dashes = range(of: "---", in: text)
+        XCTAssertEqual(fixture.colors(in: dashes), [tertiary, tertiary, tertiary])
+        XCTAssertEqual(fixture.font(at: dashes.location), secondFont)
+
+        XCTAssertEqual(fixture.font(at: range(of: "body", in: text).location), base)
+        XCTAssertEqual(fixture.color(at: range(of: "body", in: text).location), fixture.styler.baseColor)
+    }
+
+    func testED4_emphasisLinksAndCodeInAHeadingKeepItsSize() throws {
+        let fixture = makeFixture()
+        let text = "## Head **bold** *it* [[link]] #tag `code`\nbody `code`\n"
+        fixture.show(text)
+        let size = 13 * 1.25
+
+        let bold = range(of: "bold", in: text)
+        let boldFont = try XCTUnwrap(fixture.font(at: bold.location))
+        XCTAssertTrue(isBold(boldFont))
+        XCTAssertEqual(boldFont.pointSize, size, accuracy: 0.001)
+        let italic = range(of: "it", in: text)
+        let italicFont = try XCTUnwrap(fixture.font(at: italic.location))
+        XCTAssertTrue(isItalic(italicFont))
+        XCTAssertTrue(isBold(italicFont), "the heading's weight stays under the slant")
+        XCTAssertEqual(italicFont.pointSize, size, accuracy: 0.001)
+        let link = range(of: "[[link]]", in: text)
+        XCTAssertEqual(fixture.font(at: inside(link))?.pointSize ?? 0, size, accuracy: 0.001)
+        XCTAssertEqual(fixture.color(at: inside(link)), NSColor.linkColor)
+        let tag = range(of: "#tag", in: text)
+        XCTAssertEqual(fixture.font(at: tag.location)?.pointSize ?? 0, size, accuracy: 0.001)
+        XCTAssertEqual(fixture.color(at: tag.location), NSColor.systemPurple)
+
+        let code = range(of: "`code`", in: text)
+        let codeFont = try XCTUnwrap(fixture.font(at: code.location + 1))
+        XCTAssertEqual(codeFont.familyName, mono.familyName, "code in a heading is monospaced (E-8)")
+        XCTAssertEqual(codeFont.pointSize, size, accuracy: 0.001, "at the heading's size")
+        XCTAssertFalse(isBold(codeFont), "and not bold: nothing inside code is styled (ED-3)")
+        XCTAssertEqual(fixture.color(at: code.location + 1), NSColor.secondaryLabelColor)
+        let bodyCode = range(of: "`code`", in: text, occurrence: 1)
+        XCTAssertEqual(fixture.font(at: bodyCode.location + 1), mono, "code in prose stays at the base size")
+    }
+
+    func testED4_headingsFollowCmdPlusAndCmdMinus() throws {
+        let fixture = makeFixture()
+        let text = "# One\n## Two\n### Three\n#### Four\nbody\n"
+        fixture.show(text)
+        XCTAssertEqual(fixture.font(at: range(of: "One", in: text).location)?.pointSize ?? 0, 13 * 1.4, accuracy: 0.001)
+
+        fixture.controller.makeTextBigger(nil)
+        XCTAssertEqual(EditorFontPreference.size(), 14)
+        XCTAssertEqual(fixture.styler.baseFont.pointSize, 14)
+        for (level, word) in [(1, "One"), (2, "Two"), (3, "Three"), (4, "Four")] {
+            let scale = try XCTUnwrap(headingScales[level])
+            let font = try XCTUnwrap(fixture.font(at: range(of: word, in: text).location))
+            XCTAssertEqual(font.pointSize, 14 * scale, accuracy: 0.001, "level \(level) after Bigger")
+            XCTAssertTrue(isBold(font))
+            XCTAssertEqual(font, fixture.styler.headingFont(forLevel: level))
+        }
+        XCTAssertEqual(fixture.font(at: range(of: "body", in: text).location), NSFont.systemFont(ofSize: 14))
+
+        fixture.controller.makeTextSmaller(nil)
+        fixture.controller.makeTextSmaller(nil)
+        XCTAssertEqual(fixture.styler.baseFont.pointSize, 12)
+        XCTAssertEqual(fixture.font(at: range(of: "One", in: text).location)?.pointSize ?? 0, 12 * 1.4, accuracy: 0.001)
+        XCTAssertEqual(
+            fixture.font(at: range(of: "Two", in: text).location)?.pointSize ?? 0, 12 * 1.25, accuracy: 0.001)
+        XCTAssertEqual(fixture.font(at: range(of: "Four", in: text).location)?.pointSize ?? 0, 12, accuracy: 0.001)
+        XCTAssertEqual(fixture.font(at: range(of: "body", in: text).location), NSFont.systemFont(ofSize: 12))
+
+        fixture.controller.makeTextActualSize(nil)
+        XCTAssertEqual(fixture.font(at: range(of: "One", in: text).location)?.pointSize ?? 0, 13 * 1.4, accuracy: 0.001)
+    }
+
+    /// Records the glyph ranges the layout manager lays out line by line, so a test can tell
+    /// which paragraphs a re-style made it lay out again (E-3).
+    @MainActor
+    private final class LayoutRecorder: NSObject, NSLayoutManagerDelegate {
+        var glyphRanges: [NSRange] = []
+
+        nonisolated func layoutManager(
+            _ layoutManager: NSLayoutManager, shouldSetLineFragmentRect lineFragmentRect: UnsafeMutablePointer<NSRect>,
+            lineFragmentUsedRect: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+            in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange
+        ) -> Bool {
+            MainActor.assumeIsolated { glyphRanges.append(glyphRange) }
+            return false
+        }
+    }
+
+    /// The lines (as text) whose layout `recorder` saw the layout manager set, outside
+    /// `paragraph` (a character range), in the current text.
+    private func linesLaidOut(
+        by recorder: LayoutRecorder, in layoutManager: NSLayoutManager, outside paragraph: NSRange
+    ) -> Set<String> {
+        let text = layoutManager.textStorage?.string as NSString? ?? ""
+        var lines: Set<String> = []
+        for glyphRange in recorder.glyphRanges {
+            let characters = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            guard characters.length > 0, !NSLocationInRange(characters.location, paragraph) else { continue }
+            lines.insert(text.substring(with: text.lineRange(for: NSRange(location: characters.location, length: 0))))
+        }
+        return lines
+    }
+
+    /// A heading edit changes the size of its paragraph's fonts and nothing outside it (E-3),
+    /// so the layout manager lays that paragraph out again and nothing before it, and what it
+    /// lays out after it is exactly what any keystroke in that paragraph makes it lay out
+    /// (TextKit lays out contiguously from the invalidated paragraph on; the re-style adds
+    /// nothing to that). The paragraphs after it end up moved down by the heading's growth.
+    func testE3_aHeadingEditRelaysOutOnlyItsParagraph() throws {
+        let fixture = makeFixture()
+        let text = "first paragraph\nsecond line of it\n\n## Head\nunder the head\n\nthird paragraph\nlast line\n"
+        fixture.show(text)
+        let layoutManager = try XCTUnwrap(fixture.textView.layoutManager)
+        let container = try XCTUnwrap(fixture.textView.textContainer)
+        layoutManager.ensureLayout(for: container)
+        let head = range(of: "## Head", in: text)
+        let third = range(of: "third", in: text)
+        let thirdBefore = layoutManager.lineFragmentRect(
+            forGlyphAt: layoutManager.glyphIndexForCharacter(at: third.location), effectiveRange: nil)
+
+        // A plain keystroke in the paragraph's body line, for comparison: no size changes.
+        let plain = LayoutRecorder()
+        layoutManager.delegate = plain
+        defer { layoutManager.delegate = nil }
+        let under = range(of: "under", in: text)
+        fixture.type("x", at: under.location)
+        layoutManager.ensureLayout(for: container)
+        let paragraphAfterPlain = MarkdownScanner.paragraphRange(
+            in: Array(fixture.textView.string.utf16), editedRange: NSRange(location: under.location, length: 0))
+        let plainLines = linesLaidOut(by: plain, in: layoutManager, outside: paragraphAfterPlain)
+        XCTAssertFalse(plainLines.contains("first paragraph\n"), "a keystroke never lays out the paragraph before")
+        fixture.type("", at: under.location, replacing: 1)
+        layoutManager.ensureLayout(for: container)
+        XCTAssertEqual(fixture.textView.string, text)
+
+        // Promote the heading to level 1: its font grows from 1.25 to 1.4 times the base size.
+        let recorder = LayoutRecorder()
+        layoutManager.delegate = recorder
+        fixture.type("", at: head.location, replacing: 1)
+        let after = fixture.textView.string
+        XCTAssertEqual(
+            after, "first paragraph\nsecond line of it\n\n# Head\nunder the head\n\nthird paragraph\nlast line\n")
+        XCTAssertEqual(fixture.font(at: head.location)?.pointSize ?? 0, 13 * 1.4, accuracy: 0.001)
+        let paragraph = MarkdownScanner.paragraphRange(
+            in: Array(after.utf16), editedRange: NSRange(location: head.location, length: 0))
+        layoutManager.ensureLayout(for: container)
+
+        let laidOut = recorder.glyphRanges.map {
+            layoutManager.characterRange(forGlyphRange: $0, actualGlyphRange: nil)
+        }
+        XCTAssertTrue(laidOut.contains { NSLocationInRange(head.location, $0) }, "the heading line was laid out again")
+        for characters in laidOut {
+            XCTAssertGreaterThanOrEqual(
+                characters.location, paragraph.location, "laid out \(characters) before the heading's paragraph")
+        }
+        XCTAssertEqual(
+            linesLaidOut(by: recorder, in: layoutManager, outside: paragraph), plainLines,
+            "the size change made the layout manager lay out nothing a plain keystroke does not")
+
+        // The paragraphs after it moved down by the heading's growth.
+        let thirdAfter = layoutManager.lineFragmentRect(
+            forGlyphAt: layoutManager.glyphIndexForCharacter(at: third.location - 1), effectiveRange: nil)
+        XCTAssertGreaterThan(thirdAfter.minY, thirdBefore.minY)
+        XCTAssertEqual(thirdAfter.height, thirdBefore.height, accuracy: 0.001)
+    }
+
     // MARK: - V-1: the editor rendered with dimmed markers and emphasis
 
     func testV1_editorSnapshotShowsDimmedMarkersAndEmphasis() throws {
@@ -932,6 +1162,40 @@ final class EditorStylingSmokeTests: XCTestCase {
         fixture.controller.mainView.layoutSubtreeIfNeeded()
         XCTAssertEqual(fixture.color(at: 0), tertiary)
         let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-markers")
+        XCTAssertEqual(written.count, 2)
+        for url in written {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
+    }
+
+    func testV1_editorSnapshotShowsTheHeadingScale() throws {
+        let fixture = makeFixture()
+        fixture.show(
+            """
+            # Level one heading
+
+            Body text at the base size, with **bold** and `code` for comparison.
+
+            ## Level two heading
+
+            More body text under it.
+
+            ### Level three heading
+
+            #### Level four heading
+
+            Setext level one
+            ================
+
+            Setext level two
+            ----------------
+
+            The last paragraph of body text.
+
+            """)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(fixture.font(at: 2)?.pointSize ?? 0, 13 * 1.4, accuracy: 0.001)
+        let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-headings")
         XCTAssertEqual(written.count, 2)
         for url in written {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)

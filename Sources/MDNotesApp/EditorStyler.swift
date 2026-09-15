@@ -2,26 +2,33 @@ import AppKit
 import Foundation
 import MDNotesCore
 
-/// Syntax styling for the editor (E-2, ADR-0019): headings in the bold face of the editor font,
-/// `[[wikilinks]]` in the link colour, `#tags` in theirs, inline or fenced code in the system
-/// monospaced font (E-8) and their own colour, emphasis content with the bold, italic or
-/// strikethrough trait (ED-3), and every markdown marker the scanner yields (`#`, emphasis
-/// delimiters, list markers, `>`, link brackets and URLs, table pipes, setext underlines,
-/// rules) in tertiary label colour at the surrounding size (ED-2). Only `.font`,
-/// `.foregroundColor` and `.strikethroughStyle` are ever set, and the font keeps the base size
-/// everywhere: headings and emphasis change weight or slant, code tokens change family (the
-/// one exception E-2 allows, ADR-0010), nothing else changes either. Nothing here reaches the
-/// file, whose content is the text view's plain string (E-1).
+/// Syntax styling for the editor (E-2, ADR-0019): headings in the bold face of the editor font
+/// scaled by level (ED-4), `[[wikilinks]]` in the link colour, `#tags` in theirs, inline or
+/// fenced code in the system monospaced font (E-8) and their own colour, emphasis content with
+/// the bold, italic or strikethrough trait (ED-3), and every markdown marker the scanner yields
+/// (`#`, emphasis delimiters, list markers, `>`, link brackets and URLs, table pipes, setext
+/// underlines, rules) in tertiary label colour at the surrounding size (ED-2). Only `.font`,
+/// `.foregroundColor` and `.strikethroughStyle` are ever set: headings change weight and size,
+/// emphasis changes weight or slant, code tokens change family (ADR-0010), nothing else changes
+/// either. Nothing here reaches the file, whose content is the text view's plain string (E-1).
+///
+/// A heading's content and markers are set at `headingScales[level]` times the base size, bold
+/// (ED-4): 1.4, 1.25 and 1.1 for levels 1 to 3 and the base size from level 4 on, following
+/// the Cmd-plus size because every heading font is derived from `baseFont` (E-8). A setext
+/// heading's range spans its text line and its underline, so the underline is dimmed at the
+/// heading's size (ED-9).
 ///
 /// A token's style goes on its whole range and its markers are then recoloured, so a marker
-/// keeps the weight of what surrounds it (a heading's `#` is bold and dimmed) and carries the
-/// token's `tokenAttribute`. Emphasis is the exception: its trait goes on the content only,
-/// added to whatever font each run there already has, so nested emphasis composes (bold in
-/// italic is bold italic) and emphasis on a heading line keeps the heading's weight. Tokens
-/// come enclosing first, so a code span inside emphasis is styled after it and takes the code
-/// font and colour back, with no strikethrough: nothing inside code is ever styled (ED-3).
-/// Code markers (backticks, fence lines) keep the code colour, a tag's `#` keeps the tag's
-/// colour (T-4), and a task box is left to ED-6.
+/// keeps the weight and size of what surrounds it (a heading's `#` is bold, scaled and dimmed)
+/// and carries the token's `tokenAttribute`. Emphasis is the exception: its trait goes on the
+/// content only, added to whatever font each run there already has, so nested emphasis
+/// composes (bold in italic is bold italic) and emphasis on a heading line keeps the heading's
+/// weight and size. Tokens come enclosing first, so a code span inside emphasis is styled after
+/// it and takes the code font and colour back, with no strikethrough: nothing inside code is
+/// ever styled (ED-3). Code takes the size of what encloses it, so a code span in a heading is
+/// monospaced at the heading's size (E-8, "at the same size"). Code markers (backticks, fence
+/// lines) keep the code colour, a tag's `#` keeps the tag's colour (T-4), and a task box is
+/// left to ED-6.
 ///
 /// A wikilink whose bare title several notes share is styled as ambiguous instead (K-2), in a
 /// warning tint. Which links those are is the library's `LinkIndex`, read through `linkIndex`
@@ -46,7 +53,11 @@ import MDNotesCore
 ///
 /// The base font is the editor font preference (E-8); `MainView` reports a change through
 /// `baseFont`, which re-styles the whole text, since setting the text view's font has just
-/// flattened every weight.
+/// flattened every weight and size.
+///
+/// A heading's size is part of the paragraph-scoped re-style like every other attribute
+/// (ED-4, E-3): an edit to a heading line changes the fonts of its paragraph alone, so the
+/// layout manager lays that paragraph out again and only moves what follows.
 ///
 /// The storage may show display-only thumbnail attachments that are not in the file (E-9).
 /// Every scan here is of `EditorText`, the file's text with those left out, and every token
@@ -126,7 +137,7 @@ public final class EditorStyler {
     public var baseFont: NSFont {
         didSet {
             guard baseFont != oldValue else { return }
-            headingFont = Self.bold(baseFont)
+            headingFonts = Self.headingFonts(for: baseFont)
             codeFont = EditorFontPreference.codeFont(ofSize: baseFont.pointSize)
             restyleAll()
         }
@@ -146,9 +157,28 @@ public final class EditorStyler {
     /// belongs to; until then nothing resolves and every link is styled as a plain wikilink.
     public var linkIndex: @MainActor () -> LinkIndex = { .empty }
 
-    /// The bold face of `baseFont` at the same size, or `baseFont` itself when the family has
-    /// no bold face.
-    public private(set) var headingFont: NSFont
+    /// ED-4: how many times the base size a heading of level 1, 2, 3 and 4 or more is set at.
+    /// `headingScale(forLevel:)` reads it.
+    nonisolated public static let headingScales: [CGFloat] = [1.4, 1.25, 1.1, 1.0]
+
+    /// ED-4: the factor a heading of `level` (1 to 6) scales the base size by; levels past the
+    /// last entry of `headingScales` share its value, and a level below 1 reads as 1.
+    nonisolated public static func headingScale(forLevel level: Int) -> CGFloat {
+        let index = min(max(level, 1), headingScales.count) - 1
+        return headingScales[index]
+    }
+
+    /// The bold face of `baseFont` at each heading level's size (ED-4), indexed by level minus
+    /// one; `headingFont(forLevel:)` reads it.
+    private var headingFonts: [NSFont]
+
+    /// The font a heading of `level` is set in (ED-4): `baseFont`'s bold face at
+    /// `headingScale(forLevel:)` times its size, or the scaled `baseFont` itself when the family
+    /// has no bold face.
+    public func headingFont(forLevel level: Int) -> NSFont {
+        let index = min(max(level, 1), headingFonts.count) - 1
+        return headingFonts[index]
+    }
 
     /// The system monospaced font at `baseFont`'s size, for inline and fenced code (E-8).
     public private(set) var codeFont: NSFont
@@ -159,20 +189,27 @@ public final class EditorStyler {
     public init(textView: NSTextView, baseFont: NSFont) {
         self.textView = textView
         self.baseFont = baseFont
-        headingFont = Self.bold(baseFont)
+        headingFonts = Self.headingFonts(for: baseFont)
         codeFont = EditorFontPreference.codeFont(ofSize: baseFont.pointSize)
+    }
+
+    /// One bold font per entry of `headingScales`, each `base` at that multiple of its size.
+    private static func headingFonts(for base: NSFont) -> [NSFont] {
+        headingScales.map { bold(base.withSize(base.pointSize * $0)) }
     }
 
     // MARK: - Styles
 
-    /// The attributes `style` adds on top of the base: a weight for headings, the monospaced
-    /// font and a colour for code (E-8), a colour for links and tags, a strikethrough for
-    /// `~~x~~`, and the marker. The bold and italic traits of emphasis are not here: they are
-    /// added to the fonts already in place, run by run, by `addTrait(_:fallback:in:to:)`.
+    /// The attributes `style` adds on top of the base: the monospaced font and a colour for code
+    /// (E-8), a colour for links and tags, a strikethrough for `~~x~~`, and the marker. Fonts
+    /// that depend on what is already there are not here: a heading's font depends on its level
+    /// and is set by `apply(_:to:of:to:)` from `headingFont(forLevel:)`, and the bold and italic
+    /// traits of emphasis are added to the fonts already in place, run by run, by
+    /// `addTrait(_:fallback:in:to:)`.
     public func attributes(for style: TokenStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [Self.tokenAttribute: style.rawValue]
         switch style {
-        case .heading: attributes[.font] = headingFont
+        case .heading, .bold, .italic: break
         case .wikilink: attributes[.foregroundColor] = NSColor.linkColor
         case .ambiguousLink: attributes[.foregroundColor] = Self.ambiguousLinkColor
         case .tag: attributes[.foregroundColor] = NSColor.systemPurple
@@ -180,7 +217,6 @@ public final class EditorStyler {
             attributes[.font] = codeFont
             attributes[.foregroundColor] = NSColor.secondaryLabelColor
         case .strikethrough: attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-        case .bold, .italic: break
         }
         return attributes
     }
@@ -328,21 +364,32 @@ public final class EditorStyler {
     }
 
     /// Styles one token: `style`'s attributes on its range, or on its content alone for
-    /// emphasis, whose trait is added to the fonts already there; code drops any strikethrough
-    /// an enclosing token left (ED-3); then the markers are recoloured (ED-2), so they carry
-    /// the token's attribute and font and the marker colour. Ranges are file indices into
-    /// `text`, mapped to the storage here.
+    /// emphasis, whose trait is added to the fonts already there; a heading takes the bold font
+    /// of its level (ED-4); code takes the code font at the size of what encloses it and drops
+    /// any strikethrough an enclosing token left (ED-3); then the markers are recoloured (ED-2),
+    /// so they carry the token's attribute and font and the marker colour. Ranges are file
+    /// indices into `text`, mapped to the storage here.
     private func apply(
         _ style: TokenStyle?, to token: MarkdownScanner.Token, of text: EditorText, to storage: NSTextStorage
     ) {
         if let style {
             let range = text.storageRange(forFileRange: style.isEmphasis ? token.content : token.range)
+            let enclosingSize = enclosingFontSize(at: range, in: storage)
             storage.addAttributes(attributes(for: style), range: range)
             switch style {
+            case .heading:
+                if case .heading(let level) = token.kind {
+                    storage.addAttribute(.font, value: headingFont(forLevel: level), range: range)
+                }
             case .bold: addTrait(.bold, fallback: .boldFontMask, in: range, to: storage)
             case .italic: addTrait(.italic, fallback: .italicFontMask, in: range, to: storage)
-            case .inlineCode, .fencedCode: storage.removeAttribute(.strikethroughStyle, range: range)
-            case .heading, .wikilink, .ambiguousLink, .tag, .strikethrough: break
+            case .inlineCode, .fencedCode:
+                storage.removeAttribute(.strikethroughStyle, range: range)
+                if enclosingSize != baseFont.pointSize {
+                    storage.addAttribute(
+                        .font, value: EditorFontPreference.codeFont(ofSize: enclosingSize), range: range)
+                }
+            case .wikilink, .ambiguousLink, .tag, .strikethrough: break
             }
         }
         guard Self.dimsMarkers(token.kind) else { return }
@@ -350,6 +397,16 @@ public final class EditorStyler {
             storage.addAttribute(
                 .foregroundColor, value: Self.markerColor, range: text.storageRange(forFileRange: marker))
         }
+    }
+
+    /// The point size of the font already at the start of `range` (a storage range), which is
+    /// the font of whatever encloses the token about to be styled there: the heading's on a
+    /// heading line, else the base font's. The base size for an empty range.
+    private func enclosingFontSize(at range: NSRange, in storage: NSTextStorage) -> CGFloat {
+        guard range.length > 0, range.location < storage.length,
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont
+        else { return baseFont.pointSize }
+        return font.pointSize
     }
 
     /// Adds `trait` to the font of every run in `range` (a storage range), keeping each run's

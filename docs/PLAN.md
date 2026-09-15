@@ -242,7 +242,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.2 Marker dimming and emphasis traits in `EditorStyler` (ED-2, ED-3): markers in tertiary
       label colour; bold, italic and strikethrough traits on content; nothing inside code.
       Tests: attributes per token; markers and content styled separately.
-- [ ] M10.3 Heading scale (ED-4): 1.4 / 1.25 / 1.1 / 1.0 times the body size, bold; `#` and setext
+- [x] M10.3 Heading scale (ED-4): 1.4 / 1.25 / 1.1 / 1.0 times the body size, bold; `#` and setext
       underline dimmed; scales with Cmd-plus. Restyle stays paragraph-scoped (E-3). Tests:
       font size per level; a heading edit relays out only its paragraph.
       Start from `docs/patches/M10.3-heading-scale.patch` (finished, snapshot-checked work from
