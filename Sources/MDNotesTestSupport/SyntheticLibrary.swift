@@ -89,7 +89,7 @@ public enum SyntheticLibrary {
             }
             let body = makeBody(
                 index: i, paths: paths, rng: &rng, targetBytes: isLarge ? options.largeNoteBytes : 400, image: image,
-                embeds: embeds)
+                embeds: embeds, rich: isLarge)
             try body.write(to: url, atomically: true, encoding: .utf8)
         }
         // A non-note file and an ignored-folder file, to make sure filters are exercised.
@@ -110,9 +110,17 @@ public enum SyntheticLibrary {
 
     /// The body: a heading, the note's own image if it has one, then words, tags, wikilinks
     /// and paragraph breaks until `targetBytes` is reached. `embeds` are spread through the
-    /// body at even intervals, each `![[name]]` a paragraph of its own.
+    /// body at even intervals, each `![[name]]` a paragraph of its own. A `rich` body (the
+    /// large notes', PF-3) carries every other ED-1 construct too: every
+    /// `richConstructSpacing`th paragraph break is followed by the next block of
+    /// `richConstructs`, so headings of every level, emphasis, links, images, lists, quotes,
+    /// tables, code and thematic breaks (after the blank line ED-8 asks for, so the rules band
+    /// the note per ED-10) recur evenly through the text. The blocks' words come from an RNG of
+    /// their own, seeded by the note's index, so the notes after a rich one read the shared
+    /// RNG exactly as they did before the blocks existed and their bodies stay as they were.
     private static func makeBody(
-        index: Int, paths: [String], rng: inout SplitMix64, targetBytes: Int, image: String?, embeds: [String]
+        index: Int, paths: [String], rng: inout SplitMix64, targetBytes: Int, image: String?, embeds: [String],
+        rich: Bool = false
     ) -> String {
         var out = ""
         out.reserveCapacity(targetBytes + 64)
@@ -120,6 +128,9 @@ public enum SyntheticLibrary {
         if let image { out += "![[\(image)]]\n\n" }
         var nextEmbed = 0
         let spacing = embeds.isEmpty ? Int.max : max(1, targetBytes / (embeds.count + 1))
+        var richRNG = SplitMix64(seed: UInt64(index) &+ 1)
+        var paragraphs = 0
+        var constructs = 0
         while out.utf8.count < targetBytes {
             if nextEmbed < embeds.count, out.utf8.count >= spacing * (nextEmbed + 1) {
                 out += "\n\n![[\(embeds[nextEmbed])]]\n\n"
@@ -135,6 +146,12 @@ public enum SyntheticLibrary {
                 out += "#\(w) "
             case 2:
                 out += "\n\n"
+                paragraphs += 1
+                if rich, paragraphs % richConstructSpacing == 0 {
+                    out += richConstruct(constructs, rng: &richRNG, paths: paths)
+                    out += "\n\n"
+                    constructs += 1
+                }
             default:
                 out += w + " "
             }
@@ -142,6 +159,61 @@ public enum SyntheticLibrary {
         // A body that filled up before every embed had its turn gets the rest at the end.
         for name in embeds[nextEmbed...] { out += "\n\n![[\(name)]]\n\n" }
         return out
+    }
+
+    /// Every `richConstructSpacing`th paragraph break of a rich body is followed by a block.
+    public static let richConstructSpacing = 4
+
+    /// A word from `rng`.
+    private static func word(_ rng: inout SplitMix64) -> String {
+        words[Int(rng.next() % UInt64(words.count))]
+    }
+
+    /// `count` words from `rng`, space-separated.
+    private static func phrase(_ rng: inout SplitMix64, _ count: Int) -> String {
+        (0..<count).map { _ in word(&rng) }.joined(separator: " ")
+    }
+
+    /// How many blocks `richConstruct` cycles through.
+    static let richConstructCount = 22
+
+    /// The `k`th (modulo `richConstructCount`) block of a rich body; together the blocks are
+    /// every construct of ED-1 (wikilinks, embeds and tags are the plain text's own). None
+    /// starts or ends with a blank line, the caller adds those, so a thematic break follows a
+    /// blank line (ED-8) and is never a setext underline, while a setext underline sits
+    /// directly under its text (ED-9).
+    private static func richConstruct(_ k: Int, rng: inout SplitMix64, paths: [String]) -> String {
+        switch k % richConstructCount {
+        case 0: return "## \(phrase(&rng, 3))"
+        case 1: return "---"
+        case 2: return "### \(phrase(&rng, 2)) `\(word(&rng))`"
+        case 3: return "**\(phrase(&rng, 2))** and __\(word(&rng))__ then *\(word(&rng))* and _\(word(&rng))_"
+        case 4: return "- \(phrase(&rng, 3))\n  - \(phrase(&rng, 2))\n    - \(word(&rng))\n- \(phrase(&rng, 2))"
+        case 5: return "#### \(phrase(&rng, 2))"
+        case 6: return "[\(phrase(&rng, 2))](https://example.com/\(word(&rng))) and <https://example.org/\(word(&rng))>"
+        case 7: return "> \(phrase(&rng, 5))\n> > \(phrase(&rng, 4))\n> \(phrase(&rng, 3))"
+        case 8: return "* * *"
+        case 9: return "##### \(phrase(&rng, 2))"
+        case 10:
+            return
+                "1. \(phrase(&rng, 3))\n2. \(phrase(&rng, 2))\n  1. \(word(&rng))\n  2. \(word(&rng))\n3. \(word(&rng))"
+        case 11: return "~~\(phrase(&rng, 2))~~ and **\(word(&rng)) *\(word(&rng))* \(word(&rng))**"
+        case 12:
+            return "| \(word(&rng)) | \(word(&rng)) | \(word(&rng)) |\n|---|:---:|---:|\n"
+                + "| \(word(&rng)) | \(word(&rng)) | \(word(&rng)) |\n| \(word(&rng)) | \(word(&rng)) | \(word(&rng)) |"
+        case 13: return "###### \(phrase(&rng, 2))"
+        case 14: return "```swift\nlet \(word(&rng)) = \(word(&rng))(\(word(&rng)))\n\(word(&rng)).\(word(&rng))()\n```"
+        case 15: return "___"
+        case 16: return "\(phrase(&rng, 3))\n==="
+        case 17: return "- [ ] \(phrase(&rng, 3))\n- [x] \(phrase(&rng, 2))\n  - [ ] \(word(&rng))"
+        case 18:
+            return "![\(phrase(&rng, 2))](i/\(word(&rng)).png) beside https://example.com/\(word(&rng))/\(word(&rng))"
+        case 19: return "\(phrase(&rng, 2))\n---"
+        case 20: return "~~~\n\(phrase(&rng, 4))\n~~~"
+        default:
+            let target = paths[Int(rng.next() % UInt64(paths.count))]
+            return "+ \(word(&rng)) `\(word(&rng))` [[\(NoteTitle.fromRelativePath(target))]]"
+        }
     }
 }
 

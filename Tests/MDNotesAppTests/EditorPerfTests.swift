@@ -9,8 +9,11 @@ import XCTest
 /// note, the storage edit with the paragraph-scoped re-style inside it (E-3), the thumbnail
 /// reconciliation of the paragraphs around it (E-9), the layout it invalidates, and the window
 /// redrawing, all on the main thread. The note embeds 50 images whose thumbnails are on show
-/// (PF-8: the gate runs with thumbnails enabled). Runs only in `scripts/check.sh full`
-/// (release); `MDNOTES_SKIP_PERF=1` skips it (ADR-0007).
+/// (PF-8: the gate runs with thumbnails enabled) and carries every ED-1 construct (M10.14):
+/// headings of every level, emphasis, links, lists, quotes, tables, code, and thematic breaks
+/// that divide it into banded sections, so the window's redraw includes the layout manager's
+/// band fills (ED-10) and rule extensions (ED-8) over the visible lines. Runs only in
+/// `scripts/check.sh full` (release); `MDNOTES_SKIP_PERF=1` skips it (ADR-0007).
 @MainActor
 final class EditorPerfTests: XCTestCase {
     /// How many images the 1 MB note embeds, each on a paragraph of its own (M8.5).
@@ -128,17 +131,45 @@ final class EditorPerfTests: XCTestCase {
         XCTAssertGreaterThan(
             countStyled(in: storage), 1_000, "the loaded note is styled (E-2) before typing starts")
 
+        // The note carries every construct (ED-1): the block ones the styler marks whole lines
+        // with are counted here, and the rules the layout manager reads for its bands (ED-10)
+        // and extensions (ED-8) are in its list, so the redraw measured below draws both.
+        let layoutManager = textView.editorLayoutManager
+        let container = try XCTUnwrap(textView.textContainer)
+        let styleCounts = countStyles(in: storage)
+        for style in [
+            EditorStyler.TokenStyle.rule, .tableRow, .tableSeparator, .blockquote, .listItem, .taskBox, .fencedCode,
+            .heading,
+        ] {
+            XCTAssertGreaterThan(styleCounts[style] ?? 0, 10, "the loaded note carries \(style) runs (ED-1)")
+        }
+        let rules = layoutManager.allRules
+        XCTAssertFalse(rules.isEmpty, "the layout manager has the note's rules (ED-8, ED-10)")
+        XCTAssertEqual(rules.count, styleCounts[.rule], "every rule run is in the layout manager's list")
+        let whole = NSRange(location: 0, length: length)
+        let bands = layoutManager.bandRanges(in: whole)
+        XCTAssertGreaterThan(bands.count, 10, "the rules divide the note into banded sections (ED-10)")
+
         // Where the caret is put, then what is typed there a character at a time: the end of
-        // the note, its middle, the start of a line deep inside it, and the heading on line one.
-        // What is typed makes a tag, a wikilink, a heading and plain words, so each keystroke
-        // changes what the paragraph's tokens are.
+        // the note, its middle, the start of a line deep inside it, the heading on line one, a
+        // line inside a filled band, and the end of a typed rule (which stops being one at the
+        // first keystroke, so every section after it changes sides and the view redraws whole,
+        // ED-10). What is typed makes a tag, a wikilink, a heading, emphasis and plain words,
+        // so each keystroke changes what the paragraph's tokens are.
         let text = storage.string as NSString
         let headingEnd = text.lineRange(for: NSRange(location: 0, length: 0))
+        let band = try XCTUnwrap(bands.min { abs($0.location - length * 2 / 5) < abs($1.location - length * 2 / 5) })
+        let bandLine = lineStart(near: band.location + band.length / 2, in: text)
+        XCTAssertTrue(
+            NSLocationInRange(bandLine, band) && bandLine > band.location, "a line inside the band, not its rule's")
+        let rule = try XCTUnwrap(rules.min { abs($0.location - length * 3 / 5) < abs($1.location - length * 3 / 5) })
         let cases: [(name: String, location: Int, typed: String)] = [
             ("end", length, "\n\n#swift [[kupka 3]] more"),
             ("middle", lineStart(near: length / 2, in: text), "# heading `code` "),
             ("deep", lineStart(near: length * 3 / 4, in: text), "words #tag "),
             ("heading", max(headingEnd.length - 1, 0), " [[link]]"),
+            ("band", bandLine, "in a band **bold** "),
+            ("rule", NSMaxRange(rule), " #tag after the rule"),
         ]
         let warmUp = 2
         let iterations = 11
@@ -149,6 +180,7 @@ final class EditorPerfTests: XCTestCase {
         for _ in 0..<warmUp {
             for c in cases {
                 textView.setSelectedRange(NSRange(location: c.location, length: 0))
+                textView.scrollRangeToVisible(textView.selectedRange())
                 for character in c.typed { keystroke(String(character), in: controller, window: window) }
                 try undo(textView, count: c.typed.count, expecting: length)
             }
@@ -156,9 +188,30 @@ final class EditorPerfTests: XCTestCase {
 
         var worstMedian = 0.0
         for c in cases {
+            // What the redraw of this case covers: the caret is on screen; for the band case so
+            // is a band fill (ED-10), for the rule case the rule, its extension and the band
+            // its line opens (ED-8, ED-10).
+            textView.setSelectedRange(NSRange(location: c.location, length: 0))
+            textView.scrollRangeToVisible(textView.selectedRange())
+            window.layoutIfNeeded()
+            window.displayIfNeeded()
+            let visible = visibleCharacters(of: textView)
+            XCTAssertTrue(
+                NSLocationInRange(c.location, visible) || c.location == NSMaxRange(visible),
+                "\(c.name): caret on screen")
+            if c.name == "band" || c.name == "rule" {
+                XCTAssertFalse(
+                    layoutManager.bandRects(in: visible, in: container).isEmpty, "\(c.name): a band is drawn (ED-10)")
+            }
+            if c.name == "rule" {
+                XCTAssertTrue(layoutManager.ruleRanges(in: visible).contains(rule), "the rule is on screen (ED-8)")
+                XCTAssertEqual(
+                    layoutManager.ruleExtension(for: rule, in: container)?.rule, rule, "the rule has an extension")
+            }
             var samples = Array(repeating: [Double](), count: c.typed.count)
             for _ in 0..<iterations {
                 textView.setSelectedRange(NSRange(location: c.location, length: 0))
+                textView.scrollRangeToVisible(textView.selectedRange())
                 var carets: [Int] = []
                 for (i, character) in c.typed.enumerated() {
                     let start = DispatchTime.now().uptimeNanoseconds
@@ -247,5 +300,28 @@ final class EditorPerfTests: XCTestCase {
             }
         }
         return found
+    }
+
+    /// How many runs of each token style the storage carries.
+    private func countStyles(in storage: NSTextStorage) -> [EditorStyler.TokenStyle: Int] {
+        var counts: [EditorStyler.TokenStyle: Int] = [:]
+        storage.enumerateAttribute(EditorStyler.tokenAttribute, in: NSRange(location: 0, length: storage.length)) {
+            value, _, _ in
+            guard let raw = value as? String, let style = EditorStyler.TokenStyle(rawValue: raw) else { return }
+            counts[style, default: 0] += 1
+        }
+        return counts
+    }
+
+    /// The characters whose glyphs lie in the text view's visible rect: what a redraw of the
+    /// window draws, bands and rule extensions included.
+    private func visibleCharacters(of textView: EditorTextView) -> NSRange {
+        let layoutManager = textView.editorLayoutManager
+        guard let container = textView.textContainer else { return NSRange(location: 0, length: 0) }
+        var visible = textView.visibleRect
+        visible.origin.x -= textView.textContainerOrigin.x
+        visible.origin.y -= textView.textContainerOrigin.y
+        let glyphs = layoutManager.glyphRange(forBoundingRect: visible, in: container)
+        return layoutManager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
     }
 }

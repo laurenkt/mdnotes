@@ -280,7 +280,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.13 Rich paste wiring (ED-14): `EditorTextView` converts HTML, else RTF, else plain;
       Cmd-Shift-V (Paste and Match Style) pastes plain; image data still goes to `i/` (I-1).
       `PastePerfTests`: PF-9, 200 KB of HTML under 100 ms. Smoke tests per pasteboard type.
-- [ ] M10.14 `EditorPerfTests` extended (PF-3): the 1 MB note now contains every construct, with
+- [x] M10.14 `EditorPerfTests` extended (PF-3): the 1 MB note now contains every construct, with
       banding and rule extensions drawn; keystroke-to-redraw stays under 8 ms.
 - [ ] M10.15 Manual acceptance pass for M10 against `docs/ACCEPTANCE.md` (one line per ED bullet);
       discrepancies become tasks above this line.
