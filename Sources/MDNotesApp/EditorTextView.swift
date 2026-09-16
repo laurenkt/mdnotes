@@ -124,6 +124,23 @@ public final class EditorTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    // MARK: - Section bands (ED-10)
+
+    /// The view's background, then the section bands over it across the view's full width
+    /// (ED-10). `NSTextView` clips the layout manager's `drawBackground` to the text container,
+    /// which would leave the `textContainerInset` margins on the text background, while this
+    /// pass is unclipped, so the bands are painted here for the glyphs `rect` (the dirty rect)
+    /// covers, from the view's left edge to its right, before the text's own background and the
+    /// selection go over them.
+    public override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let container = textContainer else { return }
+        let origin = textContainerOrigin
+        let inContainer = rect.offsetBy(dx: -origin.x, dy: -origin.y)
+        let glyphs = editorLayoutManager.glyphRange(forBoundingRect: inContainer, in: container)
+        editorLayoutManager.drawBands(forGlyphRange: glyphs, at: origin, fromX: bounds.minX, toX: bounds.maxX)
+    }
+
     // MARK: - Cmd-hover (ED-12)
 
     /// The view's own tracking area, over its visible rect, for the mouse moves and exits the

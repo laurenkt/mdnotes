@@ -23,7 +23,10 @@ import Foundation
 /// is the first line of its section. Before the glyphs are drawn, every filled section that
 /// crosses them is painted as a band from the top of its first line to the top of the next
 /// section's first line (the bottom of the text for the last), across the full width of the
-/// editor including its margins. Which sections are filled is a matter of counting the rules
+/// editor including its margins: `EditorTextView` asks `drawBands` for them from its own
+/// background pass, because `NSTextView` clips the layout manager's background pass to the
+/// text container and the band must reach past the `textContainerInset` to the view's edges.
+/// Which sections are filled is a matter of counting the rules
 /// before them, so the layout manager keeps every rule of the storage in a list that each
 /// edit updates for the lines it touched (reading the whole storage's attribute runs on every
 /// keystroke would not fit a 1 MB note's redraw budget, PF-3), and an edit that adds or
@@ -226,27 +229,38 @@ public final class EditorLayoutManager: NSLayoutManager {
 
     // MARK: - Drawing
 
-    /// Paints the bands of the filled sections among `glyphsToShow` (ED-10), then the
-    /// background as `NSLayoutManager` draws it (the selection and any background attribute
-    /// go over the band). `glyphsToShow` is what the text view's dirty rect covers, so only
-    /// the visible lines are looked at. Each band spans the text view's bounds, margins
-    /// included; without a view it spans the container.
+    /// Paints the bands of the filled sections among `glyphsToShow` (ED-10) in `bandColor`,
+    /// each from `minX` to `maxX` horizontally (the editor's edges, margins included) and over
+    /// its lines vertically, the container's origin at `origin`. `glyphsToShow` is what the
+    /// text view's dirty rect covers, so only the visible lines are looked at. `EditorTextView`
+    /// calls this from its own background pass: `NSTextView` clips the layout manager's
+    /// `drawBackground` to the text container, which would stop the band at the
+    /// `textContainerInset`, but paints its view background unclipped, so the bands go over
+    /// that background, before the text's own background and the selection.
+    public func drawBands(
+        forGlyphRange glyphsToShow: NSRange, at origin: NSPoint, fromX minX: CGFloat, toX maxX: CGFloat
+    ) {
+        guard glyphsToShow.length > 0, textStorage != nil, maxX > minX,
+            let container = textContainer(forGlyphAt: glyphsToShow.location, effectiveRange: nil)
+        else { return }
+        let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        Self.bandColor.setFill()
+        for rect in bandRects(in: characters, in: container) {
+            NSRect(x: minX, y: rect.minY + origin.y, width: maxX - minX, height: rect.height).fill(using: .sourceOver)
+        }
+    }
+
+    /// The background as `NSLayoutManager` draws it, with the bands (ED-10) first when the
+    /// container is drawn by no text view (a bare layout manager drawing into a bitmap), each
+    /// spanning the container. With a text view the bands are its background pass's, through
+    /// `drawBands`, since this pass is clipped to the container and the bands must reach the
+    /// view's edges; painting them here too would double the fill.
     public override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         if glyphsToShow.length > 0, textStorage != nil,
-            let container = textContainer(forGlyphAt: glyphsToShow.location, effectiveRange: nil)
+            let container = textContainer(forGlyphAt: glyphsToShow.location, effectiveRange: nil),
+            container.textView == nil
         {
-            let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
-            // Drawing happens on the main thread, where the text view lives.
-            let view = container.textView
-            let containerSpan = (x: origin.x, width: container.size.width)
-            let span: (x: CGFloat, width: CGFloat) = MainActor.assumeIsolated {
-                view.map { (x: $0.bounds.minX, width: $0.bounds.width) } ?? containerSpan
-            }
-            Self.bandColor.setFill()
-            for rect in bandRects(in: characters, in: container) {
-                NSRect(x: span.x, y: rect.minY + origin.y, width: span.width, height: rect.height).fill(
-                    using: .sourceOver)
-            }
+            drawBands(forGlyphRange: glyphsToShow, at: origin, fromX: origin.x, toX: origin.x + container.size.width)
         }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }

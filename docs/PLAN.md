@@ -282,7 +282,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `PastePerfTests`: PF-9, 200 KB of HTML under 100 ms. Smoke tests per pasteboard type.
 - [x] M10.14 `EditorPerfTests` extended (PF-3): the 1 MB note now contains every construct, with
       banding and rule extensions drawn; keystroke-to-redraw stays under 8 ms.
-- [ ] M10.14a Section bands reach the editor's edges (ED-10): the fill stops at the text container,
+- [x] M10.14a Section bands reach the editor's edges (ED-10): the fill stops at the text container,
       leaving the 8 pt `textContainerInset` either side on the text background (v6 pass: the
       `editor-bands` snapshot has band colour from x 8 to 791 pt of an 800 pt text view whose
       frame starts at 0, while `EditorLayoutManager.drawBackground` already widens its rect to

@@ -240,8 +240,9 @@ final class SectionBandSmokeTests: XCTestCase {
 
     // MARK: - ED-10: drawing
 
-    /// Draws the background for `glyphs` through the layout manager into a transparent bitmap
-    /// the size of the text container, flipped as the text view is, and returns the bitmap.
+    /// Draws the bands for `glyphs` through the layout manager's `drawBands`, as the text
+    /// view's background pass does, into a transparent bitmap the size of the text container,
+    /// flipped as the text view is, and returns the bitmap.
     private func drawBackground(_ glyphs: NSRange, with fixture: Fixture) throws -> NSBitmapImageRep {
         let container = try XCTUnwrap(fixture.textView.textContainer)
         let used = fixture.layoutManager.usedRect(for: container)
@@ -257,7 +258,7 @@ final class SectionBandSmokeTests: XCTestCase {
         NSGraphicsContext.current = context
         context.cgContext.translateBy(x: 0, y: CGFloat(height))
         context.cgContext.scaleBy(x: 1, y: -1)
-        fixture.layoutManager.drawBackground(forGlyphRange: glyphs, at: .zero)
+        fixture.layoutManager.drawBands(forGlyphRange: glyphs, at: .zero, fromX: 0, toX: container.size.width)
         context.flushGraphics()
         NSGraphicsContext.restoreGraphicsState()
         return rep
@@ -331,6 +332,98 @@ final class SectionBandSmokeTests: XCTestCase {
         XCTAssertTrue(isPainted(rep, x: 2, atLineOf: second, in: fixture))
         XCTAssertFalse(isPainted(rep, x: 2, atLineOf: dash, in: fixture))
         XCTAssertFalse(isPainted(rep, x: 2, atLineOf: fourth, in: fixture))
+    }
+
+    /// With a text view drawing the container, the layout manager's own clipped background
+    /// pass leaves the bands to the view's pass: painting them in both would double the fill.
+    func testED10_theLayoutManagerBackgroundPassLeavesTheBandsToTheViewsPass() throws {
+        let fixture = makeFixture()
+        fixture.show(threeRules)
+        let container = try XCTUnwrap(fixture.textView.textContainer)
+        XCTAssertNotNil(container.textView)
+        let layoutManager = fixture.layoutManager
+        let whole = layoutManager.glyphRange(forCharacterRange: fixture.whole, actualCharacterRange: nil)
+        let used = layoutManager.usedRect(for: container)
+        let width = Int(container.size.width.rounded(.up))
+        let height = Int(max(used.maxY, layoutManager.extraLineFragmentRect.maxY).rounded(.up)) + 1
+        let rep = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let unflipped = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: rep))
+        let context = NSGraphicsContext(cgContext: unflipped.cgContext, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.cgContext.translateBy(x: 0, y: CGFloat(height))
+        context.cgContext.scaleBy(x: 1, y: -1)
+        layoutManager.drawBackground(forGlyphRange: whole, at: .zero)
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+        let banded = fixture.range(of: "The second section").location
+        XCTAssertFalse(
+            isPainted(rep, x: 2, atLineOf: banded, in: fixture), "the view's background pass paints the band")
+    }
+
+    // MARK: - ED-10: the real view's draw pass
+
+    /// Renders the real text view, as the window does, into a bitmap the size of its bounds
+    /// through `cacheDisplay`, so every clip `NSTextView`'s own draw pass applies is in force.
+    private func renderTextView(with fixture: Fixture) throws -> NSBitmapImageRep {
+        let view = fixture.textView
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
+
+    /// The pixel of `rep` (the whole view) at column `column` on the row through the middle
+    /// of the line holding `location`, the view's coordinates scaled to the bitmap's.
+    private func pixel(_ rep: NSBitmapImageRep, column: Int, atLineOf location: Int, in fixture: Fixture) throws
+        -> NSColor
+    {
+        let view = fixture.textView
+        let scale = CGFloat(rep.pixelsHigh) / view.bounds.height
+        let middle =
+            (fixture.lineTop(at: location) + fixture.lineBottom(at: location)) / 2 + view.textContainerInset.height
+        let row = Int((middle * scale).rounded(.down))
+        let color = try XCTUnwrap(rep.colorAt(x: column, y: row), "pixel \(column), \(row)")
+        return try XCTUnwrap(color.usingColorSpace(.deviceRGB))
+    }
+
+    /// True when the two colours are the same to the bitmap's precision.
+    private func same(_ a: NSColor, _ b: NSColor) -> Bool {
+        abs(a.redComponent - b.redComponent) < 0.004 && abs(a.greenComponent - b.greenComponent) < 0.004
+            && abs(a.blueComponent - b.blueComponent) < 0.004
+    }
+
+    func testED10_theRenderedViewIsBandedFromItsFirstColumnToItsLast() throws {
+        let fixture = makeFixture()
+        fixture.show(threeRules)
+        let view = fixture.textView
+        XCTAssertEqual(view.textContainerInset.width, 8, "the margins the band must cover")
+        XCTAssertEqual(view.bounds.minX, 0)
+        let rep = try renderTextView(with: fixture)
+        let first = 0
+        let last = rep.pixelsWide - 1
+        let middle = rep.pixelsWide / 2
+        let banded = fixture.range(of: "The second section").location
+        let unbanded = fixture.range(of: "The third section").location
+
+        let bandedMiddle = try pixel(rep, column: middle, atLineOf: banded, in: fixture)
+        let clearMiddle = try pixel(rep, column: middle, atLineOf: unbanded, in: fixture)
+        XCTAssertFalse(same(bandedMiddle, clearMiddle), "the band shows against the text background")
+
+        for column in [first, last] {
+            let onBand = try pixel(rep, column: column, atLineOf: banded, in: fixture)
+            XCTAssertTrue(same(onBand, bandedMiddle), "column \(column) of a banded line carries the band fill")
+            XCTAssertFalse(same(onBand, clearMiddle), "column \(column) of a banded line is not the text background")
+            let offBand = try pixel(rep, column: column, atLineOf: unbanded, in: fixture)
+            XCTAssertTrue(same(offBand, clearMiddle), "column \(column) of an unbanded line is the text background")
+        }
+        // The rule's own line is banded too (the break line is first in its section), edge to edge.
+        let ruleLine = fixture.range(of: "___").location
+        for column in [first, last] {
+            XCTAssertTrue(same(try pixel(rep, column: column, atLineOf: ruleLine, in: fixture), bandedMiddle))
+        }
     }
 
     // MARK: - ED-10, E-3: edits
