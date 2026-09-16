@@ -282,6 +282,15 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `PastePerfTests`: PF-9, 200 KB of HTML under 100 ms. Smoke tests per pasteboard type.
 - [x] M10.14 `EditorPerfTests` extended (PF-3): the 1 MB note now contains every construct, with
       banding and rule extensions drawn; keystroke-to-redraw stays under 8 ms.
-- [ ] M10.15 Manual acceptance pass for M10 against `docs/ACCEPTANCE.md` (one line per ED bullet);
+- [ ] M10.14a Section bands reach the editor's edges (ED-10): the fill stops at the text container,
+      leaving the 8 pt `textContainerInset` either side on the text background (v6 pass: the
+      `editor-bands` snapshot has band colour from x 8 to 791 pt of an 800 pt text view whose
+      frame starts at 0, while `EditorLayoutManager.drawBackground` already widens its rect to
+      the view's `bounds`). Find where the widened rect is clipped back to the container
+      (`NSTextView`'s draw pass, most likely) and paint the band across the text view's full
+      bounds. Tests: render the real text view to a bitmap and assert the fill at columns 0 and
+      width − 1 of a banded line and its absence on an unbanded one; re-check the
+      `editor-bands` snapshot per V-1.
+- [x] M10.15 Manual acceptance pass for M10 against `docs/ACCEPTANCE.md` (one line per ED bullet);
       discrepancies become tasks above this line.
 - [ ] M10.16 Tag `v0.3.0`.
