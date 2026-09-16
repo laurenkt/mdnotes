@@ -2,13 +2,13 @@
 # Print the Info.plist for build/MDNotes.app to stdout.
 # Kept separate from bundle.sh so a test can lint the generated plist without a release build.
 #
-#   MDNOTES_VERSION    CFBundleShortVersionString / CFBundleVersion (default 0.2.0)
+#   MDNOTES_VERSION    CFBundleShortVersionString / CFBundleVersion (default 0.3.0)
 #   MDNOTES_ICON_FILE  when set, adds CFBundleIconFile with this value
 set -euo pipefail
 
 APP_NAME="MDNotes"
 BUNDLE_ID="dev.laurenkt.mdnotes"
-VERSION="${MDNOTES_VERSION:-0.2.0}"
+VERSION="${MDNOTES_VERSION:-0.3.0}"
 ICON_FILE="${MDNOTES_ICON_FILE:-}"
 
 ICON_ENTRY=""

@@ -7,6 +7,37 @@ release tag; the setup and the driving scripts it needs are described at the end
 Result key: **pass**, **fail** (task named), **gate** (enforced by `scripts/check.sh full`,
 not checkable by hand), **n/a by hand** (why), **blocked** (question in `QUESTIONS.md`).
 
+## Release pass of 2026-09-16 (M10.16, `v0.3.0`)
+
+Build: `scripts/bundle.sh` at commit e5ffd7e (code as of b283ee7, M10.14a), macOS 27.0
+(26A428); `scripts/info-plist.sh` now defaults to 0.3.0, the plist reports
+`CFBundleShortVersionString` and `CFBundleVersion` 0.3.0 (`plutil -p`), `plutil -lint` is clean
+and the bundle is ad-hoc signed (`codesign -dv`: `Signature=adhoc`, identifier
+`dev.laurenkt.mdnotes`). No app was launched, as in the M7.6 to M10.15 passes: the human's
+instance runs on the real library. `scripts/check.sh quick` on the same commit: 906 tests green
+(403 core, 503 app), the 9 perf gates skipped in the debug run and run by the full gate in the
+commit that carries this tag. Scope: the one ID whose code changed since the v6 pass, ED-10
+(M10.14a; `git diff --stat 388f157..e5ffd7e` names `EditorLayoutManager.swift`,
+`EditorTextView.swift`, `SectionBandSmokeTests.swift` and docs, nothing else under `Sources/`),
+re-checked through the `editor-bands` snapshot pair V-1 writes, and V-1 itself on the same pair.
+Every other ID stands as recorded in the v6 pass below, the v5 pass and the whole-of-v2
+roll-up, which re-checked the earlier sections on code that has not changed since.
+
+| ID    | Result | Notes |
+|-------|--------|-------|
+| ED-10 | pass | `editor-bands-light.png` and `editor-bands-dark.png` from this run (`testV1_editorSnapshotShowsSectionBands`, 1600 × 1200 px for an 800 × 600 pt content view), opened and compared: the second and fourth sections now reach both edges of the editor, the 8 pt `textContainerInset` margins the v6 pass found unbanded included. Sampled over `NSBitmapImageRep.colorAt` (through `deviceRGB`): every banded row tried (y 683, the `---` line, then 690, 720, 830, 920; 1065, the `___` line, then 1085, 1120, 1170) is one colour from x 0 to x 1599, light rgb(249,249,249) on the white text background, dark rgb(48,48,48) on rgb(40,40,40), a single `quaternarySystemFill` fill and not a doubled one; the unbanded rows above the first rule (560, 610, 660), in the third section (940, 960, 1000, 1030) and below the text's last line (1199) are the text background from edge to edge. The band starts on the rule's line and the fourth runs to the bottom of the text, as v6 recorded. The rule extensions, the heading, the list items and the hairline are unchanged from the v6 pair. The M10.14a fail is closed. |
+| V-1   | pass | The pair above re-written by this run at the same size; light and dark differ on `textBackgroundColor`, the bands and `windowBackgroundColor` as before. Against W-6, E-8 and direction B: nothing custom-drawn beyond the ED-8 hyphens and the ED-10 bands, the fill still `quaternarySystemFill` (the M10.14a diff adds no `NSColor`), the band now framed by the editor's edges rather than the container's, which is what the canvas shows. The v6 observation on the 2.7 % fill against ED-10's "about 4 %" stands unchanged. |
+
+Release decision: `v0.3.0` is tagged with Q3 open (TP-3 and TP-8: the spec's example date
+letters `YYYY`, `DD`, `dddd` are not what a Unicode pattern means by them), as `v0.2.0` was.
+The result key above admits a blocked entry in a release pass; the v5 pass and the roll-up
+record TP-8 as pass on the mechanism and blocked on the spec's own example only; the behaviour
+shipped is the one TP-3 and M9.1 both decide (Unicode patterns via `DateFormatter`) and the
+intended daily path is reachable today with the Unicode spelling Q3 gives. Q4 and Q5 are
+answered (ADR-0020). No task is open above M10.16 in `PLAN.md` and `ISSUES.md` has no open
+entry. Q3 is the human's to answer; its answer, a docs fix under the recommended option, ships
+in a later tag.
+
 ## Pass of 2026-09-16 (M10.15, v6)
 
 Build: debug `swift test` via `scripts/check.sh quick` at commit 900fd81 (code as of aa7d07f,

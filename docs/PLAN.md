@@ -293,4 +293,4 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `editor-bands` snapshot per V-1.
 - [x] M10.15 Manual acceptance pass for M10 against `docs/ACCEPTANCE.md` (one line per ED bullet);
       discrepancies become tasks above this line.
-- [ ] M10.16 Tag `v0.3.0`.
+- [x] M10.16 Tag `v0.3.0`.
