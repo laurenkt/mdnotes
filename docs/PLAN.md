@@ -378,7 +378,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testED16_quotePartialLineSelectionWholeLines`, `testED16_codeBlockWrapsLines`,
       `testED16_codeBlockTogglesOffFromInside`, `testED16_singleUndoStep`,
       `testED16_fileUpdated`.
-- [ ] M10.27 Newline keeps indentation (ED-17): Return in the editor inserts a line break followed by
+- [x] M10.27 Newline keeps indentation (ED-17): Return in the editor inserts a line break followed by
       the current line's leading spaces and tabs (only those before the caret, when the caret
       is inside them), as one undoable edit; list markers, `>` prefixes and task boxes are not
       carried. An open completion popover (K-4, T-3) still takes Return first; Cmd-Return

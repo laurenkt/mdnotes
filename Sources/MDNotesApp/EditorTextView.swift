@@ -390,6 +390,39 @@ public final class EditorTextView: NSTextView {
         setSelectedRange(EditorText(storage: storage).storageRange(forFileRange: result.selection))
     }
 
+    // MARK: - Newline keeps indentation (ED-17)
+
+    /// Return (ED-17): a line break followed by the leading spaces and tabs of the line the
+    /// caret (the selection's start) is on, only those before it when it is within them, typed
+    /// as one insertion so a single undo takes the break and the indent together. List
+    /// markers, `>` prefixes and task boxes are not carried. With no indent to carry the key
+    /// keeps `NSTextView`'s behaviour. An open completion popover (K-4, T-3) takes the key
+    /// first, in the delegate's `doCommandBy`, so it never reaches here while one is showing.
+    public override func insertNewline(_ sender: Any?) {
+        guard isEditable, let storage = textStorage else { return super.insertNewline(sender) }
+        let text = EditorText(storage: storage)
+        let caret = text.fileIndex(forStorageIndex: selectedRange().location)
+        let indent = Self.carriedIndent(in: text.units, at: caret)
+        guard !indent.isEmpty else { return super.insertNewline(sender) }
+        insertText("\n" + indent, replacementRange: selectedRange())
+    }
+
+    /// The indentation Return carries (ED-17): the run of spaces and tabs that starts the line
+    /// holding file index `caret` in `units`, cut off at `caret`.
+    nonisolated public static func carriedIndent(in units: [UInt16], at caret: Int) -> String {
+        let caret = min(max(caret, 0), units.count)
+        var start = caret
+        while start > 0, units[start - 1] != lineFeed, units[start - 1] != carriageReturnUnit { start -= 1 }
+        var end = start
+        while end < caret, units[end] == space || units[end] == horizontalTab { end += 1 }
+        return String(decoding: units[start..<end], as: UTF16.self)
+    }
+
+    private nonisolated static let lineFeed: UInt16 = 0x0A
+    private nonisolated static let carriageReturnUnit: UInt16 = 0x0D
+    private nonisolated static let space: UInt16 = 0x20
+    private nonisolated static let horizontalTab: UInt16 = 0x09
+
     // MARK: - Paste (ED-13, ED-14) and image paste and drop (I-1)
 
     /// `NSTextView` enables Paste only for the types it reads itself, which for a plain text
