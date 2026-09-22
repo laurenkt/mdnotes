@@ -242,6 +242,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.tableView.onActivateSelectedRow = { [weak self] in self?.activateSelectedRow() }
         view.tableView.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
         editorController.onCancel = { [weak self] in self?.clearQueryAndFocusSearchField() }
+        // S-12: Shift-Tab steps back, editor to list to search field; Ctrl-Tab leaves the editor
+        // for the search field.
+        view.tableView.onMoveBackward = { [weak self] in self?.focusSearchField(nil) }
+        editorController.onBacktab = { [weak self] in self?.focusList() }
+        view.textView.onControlTab = { [weak self] in self?.focusSearchField(nil) }
         // L-7, L-8: the bar above the editor says why a loaded body is read-only.
         editorController.onReadOnlyNoticeChange = { [weak self] notice in
             guard let self else { return }
@@ -364,13 +369,19 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
 
     /// Command selectors the search field's editor receives. Down arrow selects the first row
     /// and moves focus to the list; Escape clears the query and leaves focus in the field
-    /// (S-7); Enter opens or creates the note the query names (C-1). Anything else keeps the
-    /// field's own behaviour.
+    /// (S-7); Enter opens or creates the note the query names (C-1). Tab moves focus to the
+    /// list, keeping its selection or taking the first row; Shift-Tab does nothing (S-12).
+    /// Anything else keeps the field's own behaviour.
     public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard control === mainView.searchField else { return false }
         switch commandSelector {
         case #selector(NSResponder.moveDown(_:)):
             selectFirstRowAndFocusList()
+            return true
+        case #selector(NSResponder.insertTab(_:)):
+            focusListFromSearchField()
+            return true
+        case #selector(NSResponder.insertBacktab(_:)):
             return true
         case #selector(NSResponder.cancelOperation(_:)):
             clearQueryAndFocusSearchField()
@@ -1148,6 +1159,22 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         table.scrollRowToVisible(0)
         window?.makeFirstResponder(table)
+    }
+
+    /// S-12: Tab from the search field. Focus moves to the list; a selected row stays selected
+    /// and one is taken as Down would (S-7) when none is. With nothing listed the key is
+    /// consumed and nothing changes.
+    public func focusListFromSearchField() {
+        let table = mainView.tableView
+        guard table.numberOfRows > 0 else { return }
+        guard table.selectedRow >= 0 else { return selectFirstRowAndFocusList() }
+        table.scrollRowToVisible(table.selectedRow)
+        window?.makeFirstResponder(table)
+    }
+
+    /// S-12: Shift-Tab in the editor. Focus moves back to the list, its selection untouched.
+    public func focusList() {
+        window?.makeFirstResponder(mainView.tableView)
     }
 
     /// S-7: Escape from anywhere. Empties the query, so the list shows every note again, and

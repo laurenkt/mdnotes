@@ -134,7 +134,17 @@ public final class EditorTextView: NSTextView {
         super.mouseDown(with: event)
     }
 
+    /// Ctrl-Tab (S-12: move focus to the search field). Installed by the window controller;
+    /// with none installed the key keeps the text view's behaviour.
+    public var onControlTab: (@MainActor () -> Void)?
+
     public override func keyDown(with event: NSEvent) {
+        if let onControlTab, Self.hasOnlyControl(event.modifierFlags),
+            event.charactersIgnoringModifiers?.unicodeScalars.first == Self.tab
+        {
+            onControlTab()
+            return
+        }
         if Self.hasOnlyCommand(event), let onCommandReturn,
             let key = event.charactersIgnoringModifiers?.unicodeScalars.first,
             key == Self.carriageReturn || key == Self.enter, onCommandReturn()
@@ -470,6 +480,11 @@ public final class EditorTextView: NSTextView {
         flags.intersection([.shift, .control, .option, .command]).isEmpty
     }
 
+    private static func hasOnlyControl(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.shift, .control, .option, .command]) == .control
+    }
+
     private static let carriageReturn: UnicodeScalar = "\r"
     private static let enter: UnicodeScalar = "\u{03}"
+    private static let tab: UnicodeScalar = "\t"
 }

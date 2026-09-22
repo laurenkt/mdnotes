@@ -5,7 +5,7 @@ import MDNotesCore
 import XCTest
 
 /// Headless smoke tests for the keyboard flow between the search field, the list and the
-/// editor (S-7, S-8). Every key is a real `NSEvent` sent through `NSWindow.sendEvent`, so it
+/// editor (S-7, S-8, S-12). Every key is a real `NSEvent` sent through `NSWindow.sendEvent`, so it
 /// takes the responder-chain path a user's keystroke does: key equivalents first, then the
 /// first responder's `keyDown`, `interpretKeyEvents` and the command selector it maps to.
 @MainActor
@@ -83,6 +83,7 @@ final class KeyboardFlowSmokeTests: XCTestCase {
 
     private enum Key {
         case down, up, escape, `return`, keypadEnter, tab
+        case shiftTab, controlTab
         case commandL
 
         var characters: String {
@@ -92,7 +93,8 @@ final class KeyboardFlowSmokeTests: XCTestCase {
             case .escape: "\u{1B}"
             case .return: "\r"
             case .keypadEnter: "\u{03}"
-            case .tab: "\t"
+            case .tab, .controlTab: "\t"
+            case .shiftTab: "\u{19}"  // NSBackTabCharacter, what AppKit reports for Shift-Tab
             case .commandL: "l"
             }
         }
@@ -104,7 +106,7 @@ final class KeyboardFlowSmokeTests: XCTestCase {
             case .escape: 53
             case .return: 36
             case .keypadEnter: 76
-            case .tab: 48
+            case .tab, .shiftTab, .controlTab: 48
             case .commandL: 37
             }
         }
@@ -114,6 +116,8 @@ final class KeyboardFlowSmokeTests: XCTestCase {
             case .down, .up: .function
             case .keypadEnter: .numericPad
             case .commandL: .command
+            case .shiftTab: .shift
+            case .controlTab: .control
             case .escape, .return, .tab: []
             }
         }
@@ -392,5 +396,126 @@ final class KeyboardFlowSmokeTests: XCTestCase {
         try press(.down, in: window)
         XCTAssertEqual(controller.listController.selectedID, gamma, "Down always takes the first row")
         XCTAssertIdentical(window.firstResponder, controller.mainView.tableView)
+    }
+
+    // MARK: S-12 Keyboard focus order
+
+    func testS12_tabFromSearchFocusesListSelectsFirst() async throws {
+        let (controller, window) = try await makeController()
+        let table = controller.mainView.tableView
+        XCTAssertEqual(table.selectedRow, -1)
+
+        try press(.tab, in: window)
+        XCTAssertIdentical(
+            window.firstResponder, table, "expected the list, got \(firstResponderDescription(window))")
+        XCTAssertEqual(table.selectedRow, 0, "the first row is selected, as Down would (S-7)")
+        XCTAssertEqual(controller.listController.selectedID, gamma)
+        await waitForEditor(controller, toShow: gamma)
+        XCTAssertIdentical(window.firstResponder, table, "loading the editor does not steal focus (S-8)")
+    }
+
+    func testS12_tabFromSearchKeepsExistingSelection() async throws {
+        let (controller, window) = try await makeController()
+        let table = controller.mainView.tableView
+        try press(.down, in: window)
+        try press(.down, in: window)
+        XCTAssertEqual(controller.listController.selectedID, beta)
+        try press(.commandL, in: window)
+        XCTAssertTrue(searchFieldHasFocus(controller))
+
+        try press(.tab, in: window)
+        XCTAssertIdentical(
+            window.firstResponder, table, "expected the list, got \(firstResponderDescription(window))")
+        XCTAssertEqual(table.selectedRow, 1, "the selected row is kept")
+        XCTAssertEqual(controller.listController.selectedID, beta)
+    }
+
+    func testS12_tabFromSearchEmptyListStays() async throws {
+        let (controller, window) = try await makeController()
+        let editor = try XCTUnwrap(controller.mainView.searchField.currentEditor() as? NSTextView)
+        editor.insertText("zqx", replacementRange: editor.selectedRange())
+        XCTAssertEqual(controller.mainView.tableView.numberOfRows, 0)
+
+        try press(.tab, in: window)
+        XCTAssertTrue(
+            searchFieldHasFocus(controller),
+            "nothing listed, so focus stays put; got \(firstResponderDescription(window))")
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "zqx", "no tab is typed into the query")
+        XCTAssertEqual(controller.query, "zqx")
+    }
+
+    func testS12_tabInEditorInsertsTab() async throws {
+        let (controller, window) = try await makeController()
+        let textView = controller.mainView.textView
+        try press(.down, in: window)
+        await waitForEditor(controller, toShow: gamma)
+        try press(.tab, in: window)
+        XCTAssertIdentical(window.firstResponder, textView)
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+        try press(.tab, in: window)
+        XCTAssertIdentical(
+            window.firstResponder, textView, "focus stays in the editor, got \(firstResponderDescription(window))")
+        XCTAssertEqual(textView.string, "\tgamma body", "a tab character is inserted at the caret")
+    }
+
+    func testS12_shiftTabEditorToList() async throws {
+        let (controller, window) = try await makeController()
+        let table = controller.mainView.tableView
+        try press(.down, in: window)
+        try press(.down, in: window)
+        try press(.tab, in: window)
+        await waitForEditor(controller, toShow: beta)
+        XCTAssertIdentical(window.firstResponder, controller.mainView.textView)
+
+        try press(.shiftTab, in: window)
+        XCTAssertIdentical(
+            window.firstResponder, table, "expected the list, got \(firstResponderDescription(window))")
+        XCTAssertEqual(table.selectedRow, 1, "the selection is left alone")
+        XCTAssertEqual(controller.mainView.textView.string, "beta body", "nothing is typed into the note")
+    }
+
+    func testS12_shiftTabListToSearch() async throws {
+        let (controller, window) = try await makeController()
+        let table = controller.mainView.tableView
+        let editor = try XCTUnwrap(controller.mainView.searchField.currentEditor() as? NSTextView)
+        editor.insertText("a", replacementRange: editor.selectedRange())
+        try press(.down, in: window)
+        try press(.down, in: window)
+        XCTAssertIdentical(window.firstResponder, table)
+        let selected = controller.listController.selectedID
+
+        try press(.shiftTab, in: window)
+        XCTAssertTrue(
+            searchFieldHasFocus(controller),
+            "expected the search field's editor, got \(firstResponderDescription(window))")
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "a", "the query is kept")
+        XCTAssertEqual(controller.query, "a")
+        XCTAssertEqual(controller.listController.selectedID, selected, "the selection is left alone")
+
+        // Shift-Tab in the search field does nothing.
+        try press(.shiftTab, in: window)
+        XCTAssertTrue(
+            searchFieldHasFocus(controller),
+            "Shift-Tab in the field keeps focus, got \(firstResponderDescription(window))")
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "a")
+        XCTAssertEqual(controller.listController.selectedID, selected)
+    }
+
+    func testS12_controlTabEditorToSearch() async throws {
+        let (controller, window) = try await makeController()
+        let fieldEditor = try XCTUnwrap(controller.mainView.searchField.currentEditor() as? NSTextView)
+        fieldEditor.insertText("gam", replacementRange: fieldEditor.selectedRange())
+        try press(.down, in: window)
+        try press(.tab, in: window)
+        await waitForEditor(controller, toShow: gamma)
+        XCTAssertIdentical(window.firstResponder, controller.mainView.textView)
+
+        try press(.controlTab, in: window)
+        XCTAssertTrue(
+            searchFieldHasFocus(controller),
+            "expected the search field's editor, got \(firstResponderDescription(window))")
+        XCTAssertEqual(controller.mainView.searchField.stringValue, "gam", "the query is kept")
+        XCTAssertEqual(controller.mainView.textView.string, "gamma body", "no tab is typed into the note")
     }
 }

@@ -356,7 +356,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testR4_renameEditsClickedRow`, `testR4_showInFinderRevealsFile` (workspace stubbed),
       `testR4_copyLinkTitle`, `testR4_copyLinkAmbiguousUsesPath`,
       `testR4_moveToTrashUnselectedKeepsSelection`, `testR4_noMenuOnTemplateRows`.
-- [ ] M10.25 Keyboard focus order (S-12, S-8): Tab in the search field focuses the list, selecting the
+- [x] M10.25 Keyboard focus order (S-12, S-8): Tab in the search field focuses the list, selecting the
       first row when none is selected (as Down does, S-7), and stays put when the list is
       empty; Tab in the list still moves to the editor (S-8); Tab in the editor still inserts a
       tab. Shift-Tab: editor to list, list to search field (query kept), nothing in the search field. Ctrl-Tab in the editor focuses the search field.

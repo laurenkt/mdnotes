@@ -30,7 +30,8 @@ import MDNotesCore
 /// write happens until the user types again, which recreates the file.
 ///
 /// It is also the text view's delegate: Escape in the editor is handed to `onCancel` (S-7)
-/// instead of the text view's default, which offers completions.
+/// instead of the text view's default, which offers completions, and Shift-Tab to `onBacktab`
+/// (S-12).
 ///
 /// Wikilinks are styled by `styler` against the snapshot's link index (K-2): the one the
 /// library the shown note belongs to has published. When a new snapshot arrives the window
@@ -84,6 +85,10 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
 
     /// Called on Escape in the editor (S-7: clear the query and return to the search field).
     public var onCancel: (@MainActor () -> Void)?
+
+    /// Called on Shift-Tab in the editor (S-12: move focus back to the list). Tab itself is
+    /// left to the text view, which inserts a tab.
+    public var onBacktab: (@MainActor () -> Void)?
 
     /// The note the editor shows, or is about to show once its read completes.
     public private(set) var noteID: NoteID?
@@ -322,6 +327,10 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         for completion in completions where completion.handle(commandSelector) { return true }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)), let onCancel {
             onCancel()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertBacktab(_:)), let onBacktab {
+            onBacktab()
             return true
         }
         return false

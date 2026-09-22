@@ -1,7 +1,7 @@
 import AppKit
 
 /// The note list's table view. `NSTableView.keyDown` handles arrows, Return and Tab itself
-/// rather than through `interpretKeyEvents`, so the keys S-7 and S-8 give a meaning are
+/// rather than through `interpretKeyEvents`, so the keys S-7, S-8 and S-12 give a meaning are
 /// intercepted here before it sees them; each one is handed to a closure the window
 /// controller installs, and every other key keeps its `NSTableView` behaviour.
 ///
@@ -17,6 +17,8 @@ public final class NoteTableView: NSTableView {
     public var onActivateSelectedRow: (@MainActor () -> Void)?
     /// Escape (S-7: clear the query and return to the search field).
     public var onCancel: (@MainActor () -> Void)?
+    /// Shift-Tab (S-12: move focus back to the search field).
+    public var onMoveBackward: (@MainActor () -> Void)?
     /// R-4: the context menu for the row at the given index, or nil for none.
     public var contextMenuForRow: (@MainActor (Int) -> NSMenu?)?
 
@@ -47,6 +49,7 @@ public final class NoteTableView: NSTableView {
     /// The closure an unmodified press of one of the flow keys maps to in the current
     /// selection state, or nil when the table's own handling should run.
     private func handler(for event: NSEvent) -> (@MainActor () -> Void)? {
+        if Self.isBacktab(event) { return onMoveBackward }
         guard Self.hasNoCommandModifiers(event), let key = event.charactersIgnoringModifiers?.unicodeScalars.first
         else { return nil }
         switch key {
@@ -67,9 +70,19 @@ public final class NoteTableView: NSTableView {
         event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty
     }
 
+    /// Shift-Tab: AppKit reports it as the back-tab character, with Shift down; a Tab with
+    /// Shift alone down counts too.
+    private static func isBacktab(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.control, .option, .command]).isEmpty,
+            let key = event.charactersIgnoringModifiers?.unicodeScalars.first
+        else { return false }
+        return key == backtab || (key == tab && event.modifierFlags.contains(.shift))
+    }
+
     private static let upArrow: UnicodeScalar = "\u{F700}"  // NSUpArrowFunctionKey
     private static let carriageReturn: UnicodeScalar = "\r"
     private static let enter: UnicodeScalar = "\u{03}"
     private static let tab: UnicodeScalar = "\t"
+    private static let backtab: UnicodeScalar = "\u{19}"
     private static let escape: UnicodeScalar = "\u{1B}"
 }
