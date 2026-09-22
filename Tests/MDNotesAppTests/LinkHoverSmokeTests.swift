@@ -249,6 +249,32 @@ final class LinkHoverSmokeTests: XCTestCase {
         XCTAssertNil(fixture.textView.hoveredLinkRange, "over a link without Cmd nothing hovers")
     }
 
+    /// I-12: `flagsChanged` goes to the first responder alone, so with the search field or the
+    /// list focused the window itself hands the modifier change to the editor's hover.
+    func testED12_commandHoversALinkWhateverHasFocus() throws {
+        let fixture = try makeFixture()
+        let link = range(of: "[[Bar]]")
+        let over = try point(overCharacterAt: link.location + 3, in: fixture)
+        let focused: [(String, NSView)] = [
+            ("search field", fixture.controller.mainView.searchField),
+            ("list", fixture.controller.mainView.tableView),
+        ]
+        for (name, view) in focused {
+            XCTAssertTrue(fixture.window.makeFirstResponder(view), "\(name) takes focus")
+            XCTAssertFalse(fixture.window.firstResponder === fixture.textView, "\(name) has focus, not the editor")
+
+            try changeFlags(command: true, at: over, in: fixture)
+            XCTAssertEqual(fixture.textView.hoveredLinkRange, link, "Cmd with the \(name) focused")
+            XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "the hand with the \(name) focused")
+            XCTAssertEqual(fixture.hoverUnderlines(in: link), Array(repeating: solid, count: link.length))
+
+            try changeFlags(command: false, at: over, in: fixture)
+            XCTAssertNil(fixture.textView.hoveredLinkRange, "released with the \(name) focused")
+            XCTAssertEqual(NSCursor.current, NSCursor.iBeam)
+            XCTAssertEqual(fixture.hoverUnderlines(in: link), Array(repeating: nil, count: link.length))
+        }
+    }
+
     func testED12_thePointerLeavingTheEditorEndsTheHover() throws {
         let fixture = try makeFixture()
         let link = range(of: "<https://example.org/x>")

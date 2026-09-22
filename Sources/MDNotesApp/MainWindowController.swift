@@ -185,7 +185,7 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// thumbnails (E-9) share (PF-8); tests pass one they can observe.
     public init(autosaveClock: any AutosaveClock = SystemAutosaveClock(), thumbnails: ThumbnailCache = ThumbnailCache())
     {
-        let window = NSWindow(
+        let window = MainWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
@@ -205,6 +205,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         let view = MainView(frame: window.contentLayoutRect)
         window.contentView = view
         window.initialFirstResponder = view.searchField
+        // ED-12, I-12: Command pressed or released reaches the editor's hover whatever has focus.
+        window.modifierHoverView = view.textView
         mainView = view
         listController = NoteListController(tableView: view.tableView, thumbnails: thumbnails)
         editorController = EditorController(textView: view.textView, clock: autosaveClock, thumbnails: thumbnails)

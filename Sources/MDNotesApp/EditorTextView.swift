@@ -189,14 +189,20 @@ public final class EditorTextView: NSTextView {
         updateHover(at: nil, modifiers: event.modifierFlags)
     }
 
-    /// Command pressed or released with the pointer where the window says it is (not where the
-    /// event says, see `pointerLocationInWindow`): over a link, the hover starts or ends with
-    /// the key. A pointer outside the view's visible rect is over none of its text.
     public override func flagsChanged(with event: NSEvent) {
         super.flagsChanged(with: event)
+        modifiersDidChange(event.modifierFlags)
+    }
+
+    /// Command pressed or released with the pointer where the window says it is (not where the
+    /// event says, see `pointerLocationInWindow`): over a link, the hover starts or ends with
+    /// the key. A pointer outside the view's visible rect is over none of its text. Reached from
+    /// `flagsChanged` while the editor has focus and from `MainWindow` while anything else
+    /// does, since the event goes to the first responder alone (I-12).
+    public func modifiersDidChange(_ modifiers: NSEvent.ModifierFlags) {
         var pointer = pointerLocationInWindow?() ?? window?.mouseLocationOutsideOfEventStream
         if let location = pointer, !visibleRect.contains(convert(location, from: nil)) { pointer = nil }
-        updateHover(at: pointer, modifiers: event.modifierFlags)
+        updateHover(at: pointer, modifiers: modifiers)
     }
 
     /// AppKit's cursor-rect pass would put the I-beam back over a hovered link; the pointing
