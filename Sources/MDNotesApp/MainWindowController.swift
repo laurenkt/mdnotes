@@ -41,6 +41,15 @@ import MDNotesCore
 /// the note in other notes as part of the rename (R-3); those notes arrive in the same
 /// snapshot, already indexed under their new bodies.
 ///
+/// A note row's context menu (R-4) is built here for the row `NoteTableView` reports clicked:
+/// Rename, Show in Finder, Copy Link, a separator and Move to Trash, each item carrying the
+/// row's note as its `representedObject`, so it acts on that note whatever is selected. Rename
+/// edits that row's title in place without selecting it; Show in Finder goes through
+/// `revealInFinder`; Copy Link writes `[[Title]]`, or the relative path without `.md` when
+/// the title is ambiguous (K-2), to `pasteboard`; Move to Trash is D-1's move for that note,
+/// so the X-4 path moves the selection on only when the note was the selected one. Template
+/// rows (TP-5) get no menu.
+///
 /// Link opening (K-3) is a Cmd-click in the editor or Cmd-Enter with the caret in a link, both
 /// intercepted by `EditorTextView` and handed here: the editor names the link's target, the
 /// snapshot's link index resolves it (K-2), and the note is opened as Enter in the search
@@ -164,6 +173,14 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// launching a browser.
     public var openURL: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
 
+    /// Reveals files, selected, in Finder (R-4). `NSWorkspace.activateFileViewerSelecting`;
+    /// tests replace it to see what would have been revealed without activating Finder.
+    public var revealInFinder: @MainActor ([URL]) -> Void = { NSWorkspace.shared.activateFileViewerSelecting($0) }
+
+    /// Where Copy Link puts a note's link (R-4): the general pasteboard. Tests pass a private
+    /// one so the user's clipboard is never touched.
+    public var pasteboard: NSPasteboard = .general
+
     /// Called on the main thread once an image paste or drop (I-1) has settled: with the name
     /// of the file written under `i/`, which the editor has embedded, or the error that kept it
     /// from being written.
@@ -240,6 +257,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         view.onDeleteNote = { [weak self] in self?.deleteSelectedNote() ?? false }
         // R-1, R-2: Cmd-R from anywhere in the window; the list's edited title comes back here.
         view.onRenameNote = { [weak self] in self?.renameSelectedNote() ?? false }
+        // R-4: a right-click or Ctrl-click on a note row.
+        view.tableView.contextMenuForRow = { [weak self] row in self?.contextMenu(forRow: row) }
         listController.onCommitTitle = { [weak self] id, text in self?.commitTitle(of: id, to: text) ?? false }
         // K-3: Cmd-click on a link in the editor, or Cmd-Enter with the caret in one.
         view.textView.onCommandClick = { [weak self] index in self?.openLink(at: index) ?? false }
@@ -875,8 +894,17 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// reason under the search field. `onDeleteNote` reports the outcome.
     @discardableResult
     public func deleteSelectedNote() -> Bool {
-        guard let entry = listController.selectedEntry, let library else { return false }
-        let id = entry.id
+        guard let entry = listController.selectedEntry, library != nil else { return false }
+        return trash(entry.id)
+    }
+
+    /// Moves `id` to the Trash as `deleteSelectedNote()` does (D-1), whether or not its row is
+    /// selected (R-4). The selection moves on only when the note was the one selected: another
+    /// note's disappearance leaves the selected note selected, wherever its row moves. Returns
+    /// false, doing nothing, with no library attached.
+    @discardableResult
+    public func trash(_ id: NoteID) -> Bool {
+        guard let library else { return false }
         hideInlineMessage()
         let recycle: @MainActor () -> Void = { [weak self] in
             library.delete(id) { [weak self] outcome in
@@ -904,6 +932,81 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     public func renameSelectedNote() -> Bool {
         guard listController.selectedEntry != nil else { return false }
         return listController.beginEditingTitle(ofRow: mainView.tableView.selectedRow)
+    }
+
+    // MARK: - Row context menu (R-4)
+
+    /// The row context menu's item titles, in order; a separator comes before Move to Trash.
+    nonisolated public static let renameRowItemTitle = "Rename"
+    nonisolated public static let showInFinderRowItemTitle = "Show in Finder"
+    nonisolated public static let copyLinkRowItemTitle = "Copy Link"
+    nonisolated public static let moveToTrashRowItemTitle = "Move to Trash"
+
+    /// The context menu for the note on `row` (R-4), or nil when the row is not a note's (a
+    /// template row, TP-5, or out of range) or no library is attached. Every item acts on that
+    /// note, carried as its `representedObject`, never on the selection.
+    public func contextMenu(forRow row: Int) -> NSMenu? {
+        guard library != nil, !listController.isShowingTemplates, row >= 0, row < listController.results.count
+        else { return nil }
+        let id = listController.results[row].id
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let items: [(String, Selector)?] = [
+            (Self.renameRowItemTitle, #selector(renameClickedNote(_:))),
+            (Self.showInFinderRowItemTitle, #selector(showClickedNoteInFinder(_:))),
+            (Self.copyLinkRowItemTitle, #selector(copyLinkToClickedNote(_:))),
+            nil,
+            (Self.moveToTrashRowItemTitle, #selector(trashClickedNote(_:))),
+        ]
+        for item in items {
+            guard let (title, action) = item else {
+                menu.addItem(.separator())
+                continue
+            }
+            let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = id
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    /// The link Copy Link puts on the pasteboard for `id` (R-4): `[[Title]]`, or, when other
+    /// notes share the title so that it would not name this one alone (K-2), `[[relative/path]]`
+    /// without `.md`.
+    public func wikilink(to id: NoteID) -> String {
+        let links = (library?.snapshot ?? .empty).links
+        let target = links.resolve(id.title).isAmbiguous ? NoteCreation.queryForm(of: id) : id.title
+        return "[[\(target)]]"
+    }
+
+    /// R-4 Rename: edits the clicked note's title in its row (R-1), leaving the selection as
+    /// it is. The commit goes through `commitTitle(of:to:)` like any other (R-2, R-3).
+    @objc private func renameClickedNote(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? NoteID,
+            let row = listController.results.firstIndex(where: { $0.id == id })
+        else { return }
+        listController.beginEditingTitle(ofRow: row, selecting: false)
+    }
+
+    /// R-4 Show in Finder: reveals the clicked note's file, selected, in Finder.
+    @objc private func showClickedNoteInFinder(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? NoteID, let library else { return }
+        revealInFinder([library.store.url(for: id)])
+    }
+
+    /// R-4 Copy Link: the clicked note's wikilink, as plain text, replaces the pasteboard's
+    /// contents.
+    @objc private func copyLinkToClickedNote(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? NoteID else { return }
+        pasteboard.clearContents()
+        pasteboard.setString(wikilink(to: id), forType: .string)
+    }
+
+    /// R-4 Move to Trash: the clicked note goes to the Trash (D-1).
+    @objc private func trashClickedNote(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? NoteID else { return }
+        trash(id)
     }
 
     // MARK: - Menu actions (MainMenu)

@@ -238,18 +238,19 @@ public final class NoteListController: NSObject, NSTableViewDataSource, NSTableV
 
     // MARK: - Inline title editing (R-1, R-2)
 
-    /// Edits the title of `row` inline (R-1: Cmd-R). The row is selected if it is not, scrolled
-    /// into view, and its title label becomes a field with focus and the whole title selected.
-    /// Returns false, changing nothing, when the row is out of range or the field cannot take
-    /// focus. Editing the row already being edited is a no-op; another row's edit in progress
-    /// is dropped first, as a focus loss would drop it.
+    /// Edits the title of `row` inline (R-1: Cmd-R). The row is selected if it is not, unless
+    /// `selecting` is false (R-4: Rename from the row's context menu leaves the selection
+    /// alone), scrolled into view, and its title label becomes a field with focus and the whole
+    /// title selected. Returns false, changing nothing, when the row is out of range or the
+    /// field cannot take focus. Editing the row already being edited is a no-op; another row's
+    /// edit in progress is dropped first, as a focus loss would drop it.
     @discardableResult
-    public func beginEditingTitle(ofRow row: Int) -> Bool {
+    public func beginEditingTitle(ofRow row: Int, selecting: Bool = true) -> Bool {
         guard row >= 0, row < results.count else { return false }
         let id = results[row].id
         if editingTitleOfID == id { return true }
         if editingTitleOfID != nil { endEditingTitle(movingFocus: false) }
-        if tableView.selectedRow != row {
+        if selecting, tableView.selectedRow != row {
             tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             syncSelection()
         }

@@ -4,6 +4,11 @@ import AppKit
 /// rather than through `interpretKeyEvents`, so the keys S-7 and S-8 give a meaning are
 /// intercepted here before it sees them; each one is handed to a closure the window
 /// controller installs, and every other key keeps its `NSTableView` behaviour.
+///
+/// R-4: a right-click or Ctrl-click asks `contextMenuForRow` for the clicked row's menu. The
+/// menu is shown through `NSTableView`'s own path, so `clickedRow` names the row and AppKit
+/// draws its clicked-row outline while the selection stays as it was. Empty space, and a row
+/// the closure gives no menu (a template row, TP-5), show nothing.
 @MainActor
 public final class NoteTableView: NSTableView {
     /// Up arrow with the first row selected (S-7: return to the search field).
@@ -12,6 +17,24 @@ public final class NoteTableView: NSTableView {
     public var onActivateSelectedRow: (@MainActor () -> Void)?
     /// Escape (S-7: clear the query and return to the search field).
     public var onCancel: (@MainActor () -> Void)?
+    /// R-4: the context menu for the row at the given index, or nil for none.
+    public var contextMenuForRow: (@MainActor (Int) -> NSMenu?)?
+
+    /// R-4: the clicked row's menu, installed as the table's `menu` so that `super` records
+    /// `clickedRow` and returns it. Nil, recording nothing, off the rows or for a row with no
+    /// menu.
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        guard row >= 0, let rowMenu = contextMenuForRow?(row) else { return nil }
+        menu = rowMenu
+        return super.menu(for: event)
+    }
+
+    /// The menu was made for one row and one click; it is not kept for the next.
+    public override func didCloseMenu(_ menu: NSMenu, with event: NSEvent?) {
+        super.didCloseMenu(menu, with: event)
+        if self.menu === menu { self.menu = nil }
+    }
 
     public override func keyDown(with event: NSEvent) {
         if let handler = handler(for: event) {

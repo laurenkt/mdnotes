@@ -345,7 +345,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testE9_retinaImageAtPointSizeNotPixels`, `testE9_refitsOnEditorResize`,
       `testE9_aspectRatioLocked`; PF-3 and PF-8 gates green unchanged. V-1: an editor snapshot
       with a wide, a tall and a small image, light and dark.
-- [ ] M10.24 Row context menu (R-4): right-click (or Ctrl-click) on a note row opens a menu acting on
+- [x] M10.24 Row context menu (R-4): right-click (or Ctrl-click) on a note row opens a menu acting on
       the clicked row, not the selection, with AppKit's clicked-row outline and the selection
       unchanged: Rename (inline edit on that row, R-1 to R-3), Show in Finder
       (`NSWorkspace.activateFileViewerSelecting`), Copy Link (`[[Title]]`, or
