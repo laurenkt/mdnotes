@@ -316,7 +316,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       glyphs' bounding box, for a rule at document start, mid-document and at several font
       sizes), bitmap check of the pixel rows above and below the midline. V-1: editor-bands
       light and dark.
-- [ ] M10.20 Cmd-hover cursor in the running app (ED-12, bug): the `testED12_*` tests pass, but in the
+- [x] M10.20 Cmd-hover cursor in the running app (ED-12, bug): the `testED12_*` tests pass, but in the
       bundled app holding Cmd over a link leaves the I-beam. Find what resets it (likely
       `NSTextView`'s own cursor rects / `mouseMoved` / `cursorUpdate` handling running after
       ours) and fix it so the hand holds while the hover does. Tests:

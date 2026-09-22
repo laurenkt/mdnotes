@@ -91,6 +91,13 @@ public final class EditorTextView: NSTextView {
     /// with none installed nothing hovers.
     public var linkRange: (@MainActor (Int) -> NSRange?)?
 
+    /// ED-12: where the pointer is, in window coordinates, when a modifier changes. A
+    /// `flagsChanged` event's `locationInWindow` is not the pointer's (AppKit leaves a key
+    /// event's location undefined, and the running app reports the window's top-left corner),
+    /// so the window is asked: nil uses its `mouseLocationOutsideOfEventStream`. Tests, whose
+    /// pointer is wherever the real one is, install their own.
+    public var pointerLocationInWindow: (@MainActor () -> NSPoint)?
+
     /// ED-12: the storage range of the link under the pointer while Command is held, which
     /// carries the hover underline; nil while nothing hovers.
     public private(set) var hoveredLinkRange: NSRange?
@@ -167,6 +174,11 @@ public final class EditorTextView: NSTextView {
         hoverTrackingArea = area
     }
 
+    /// `NSTextView`'s own `mouseMoved` sets the I-beam on every move over its text while the
+    /// view is in the frontmost window at the pointer (its private `_mouseInside:`), so it runs
+    /// first and the hover then puts the pointing hand back over a hovered link on every move,
+    /// not only when the hover starts: a second move within the same link would otherwise leave
+    /// the I-beam the user sees. `super` still runs for its tooltips (ED-11).
     public override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
         updateHover(at: event.locationInWindow, modifiers: event.modifierFlags)
@@ -177,11 +189,14 @@ public final class EditorTextView: NSTextView {
         updateHover(at: nil, modifiers: event.modifierFlags)
     }
 
-    /// Command pressed or released with the pointer where the event says it is: over a link,
-    /// the hover starts or ends with the key.
+    /// Command pressed or released with the pointer where the window says it is (not where the
+    /// event says, see `pointerLocationInWindow`): over a link, the hover starts or ends with
+    /// the key. A pointer outside the view's visible rect is over none of its text.
     public override func flagsChanged(with event: NSEvent) {
         super.flagsChanged(with: event)
-        updateHover(at: event.locationInWindow, modifiers: event.modifierFlags)
+        var pointer = pointerLocationInWindow?() ?? window?.mouseLocationOutsideOfEventStream
+        if let location = pointer, !visibleRect.contains(convert(location, from: nil)) { pointer = nil }
+        updateHover(at: pointer, modifiers: event.modifierFlags)
     }
 
     /// AppKit's cursor-rect pass would put the I-beam back over a hovered link; the pointing
@@ -205,9 +220,11 @@ public final class EditorTextView: NSTextView {
             range = linkRange(index)
         }
         setHoveredLink(range)
+        if hoveredLinkRange != nil { NSCursor.pointingHand.set() }
     }
 
-    /// Moves the hover underline and the cursor to `range`, or clears both for nil. The
+    /// Moves the hover underline to `range`, or clears it for nil and restores the I-beam (the
+    /// pointing hand is set by `updateHover` after every event while a link hovers). The
     /// underline is a temporary attribute of the layout manager (drawn, never in the storage);
     /// the old one is removed over what is left of its range should the text have changed.
     private func setHoveredLink(_ range: NSRange?) {
@@ -222,7 +239,6 @@ public final class EditorTextView: NSTextView {
         if let range {
             editorLayoutManager.addTemporaryAttribute(
                 .underlineStyle, value: Self.hoverUnderline.rawValue, forCharacterRange: range)
-            NSCursor.pointingHand.set()
         } else {
             NSCursor.iBeam.set()
         }

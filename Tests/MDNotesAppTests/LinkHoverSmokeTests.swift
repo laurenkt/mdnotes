@@ -5,9 +5,11 @@ import MDNotesCore
 import XCTest
 
 /// Headless smoke tests for the Cmd-hover over links (ED-12). The modifier change is a real
-/// `flagsChanged` `NSEvent` sent through the window to the focused editor, carrying the pointer's
-/// location as the running app's events do; mouse moves are real `mouseMoved` events handed to
-/// the view as its tracking area would hand them. The cursor is read back from `NSCursor.current`
+/// `flagsChanged` `NSEvent` sent through the window to the focused editor, with the pointer's
+/// location given to the view through `pointerLocationInWindow` (the running app's modifier
+/// events do not carry it); mouse moves are real `mouseMoved` events handed to the view as its
+/// tracking area would hand them, and in `testED12_handSurvivesTextViewCursorHandling` sent
+/// through an on-screen window so `NSTextView`'s own cursor handling runs as it does in the app. The cursor is read back from `NSCursor.current`
 /// and the underline from the layout manager's temporary attributes, where the hover keeps it
 /// so the storage, the undo stack and the file never see it.
 @MainActor
@@ -105,11 +107,16 @@ final class LinkHoverSmokeTests: XCTestCase {
     }
 
     /// Command pressed (`down`) or released with the pointer at `point`: a `flagsChanged`
-    /// dispatched by the window to its first responder, the editor.
-    private func changeFlags(command down: Bool, at point: NSPoint, in fixture: Fixture) throws {
+    /// dispatched by the window to its first responder, the editor. The view asks where the
+    /// pointer is rather than trusting the event, so the test tells it; the event carries
+    /// `eventLocation`, the point itself unless a test says otherwise.
+    private func changeFlags(
+        command down: Bool, at point: NSPoint, eventLocation: NSPoint? = nil, in fixture: Fixture
+    ) throws {
+        fixture.textView.pointerLocationInWindow = { point }
         let event = try XCTUnwrap(
             NSEvent.keyEvent(
-                with: .flagsChanged, location: point, modifierFlags: down ? .command : [],
+                with: .flagsChanged, location: eventLocation ?? point, modifierFlags: down ? .command : [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: fixture.window.windowNumber,
                 context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55))
         fixture.window.sendEvent(event)
@@ -266,6 +273,112 @@ final class LinkHoverSmokeTests: XCTestCase {
                 context: nil, eventNumber: 1, trackingNumber: 0, userData: nil))
         fixture.textView.cursorUpdate(with: event)
         XCTAssertEqual(NSCursor.current, NSCursor.pointingHand)
+    }
+
+    /// ED-12's last sentence: the cursor the user sees. The window is put on screen, frontmost
+    /// at the pointer, so `NSTextView`'s own `mouseMoved` does what it does in the running app
+    /// (sets the I-beam on every move over its text), and every event goes through
+    /// `window.sendEvent`: a mouse move, a cursor update, a modifier change and a second move
+    /// within the same link, the pointing hand read back from `NSCursor.current` after each.
+    func testED12_handSurvivesTextViewCursorHandling() throws {
+        let fixture = try makeFixture()
+        try putOnScreen(fixture)
+        defer { fixture.window.orderOut(nil) }
+        let link = range(of: "[standard link](https://example.com/a)")
+        let first = try point(overCharacterAt: link.location + 3, in: fixture)
+        let second = try point(overCharacterAt: link.location + 20, in: fixture)
+        let prose = try point(overCharacterAt: range(of: "prose").location + 2, in: fixture)
+
+        NSCursor.arrow.set()
+        try sendMouseMoved(to: prose, flags: [], in: fixture)
+        XCTAssertEqual(
+            NSCursor.current, NSCursor.iBeam, "the text view's own cursor handling runs: a plain move sets the I-beam")
+
+        try sendMouseMoved(to: first, flags: .command, in: fixture)
+        XCTAssertEqual(fixture.textView.hoveredLinkRange, link, "a move with Cmd held hovers the link")
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after the mouse moved")
+
+        try sendCursorUpdate(at: first, in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after a cursor update")
+
+        // The running app's modifier change carries the window's top-left corner, not the pointer.
+        let corner = NSPoint(x: 0, y: fixture.window.contentLayoutRect.maxY)
+        try changeFlags(command: false, at: first, eventLocation: corner, in: fixture)
+        XCTAssertNil(fixture.textView.hoveredLinkRange)
+        try changeFlags(command: true, at: first, eventLocation: corner, in: fixture)
+        XCTAssertEqual(fixture.textView.hoveredLinkRange, link, "Cmd pressed with the pointer resting on the link")
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after the flags changed")
+
+        try sendMouseMoved(to: second, flags: .command, in: fixture)
+        XCTAssertEqual(fixture.textView.hoveredLinkRange, link, "a second move within the same link keeps it")
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after a second move within the link")
+        try sendMouseMoved(to: second, flags: .command, in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after a move to the same point")
+
+        try sendMouseMoved(to: prose, flags: .command, in: fixture)
+        XCTAssertNil(fixture.textView.hoveredLinkRange)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "off the link the I-beam is back")
+
+        try sendMouseMoved(to: second, flags: .command, in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "back onto the link")
+        try changeFlags(command: false, at: second, in: fixture)
+        XCTAssertNil(fixture.textView.hoveredLinkRange)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "released Cmd restores the I-beam")
+        try sendMouseMoved(to: first, flags: [], in: fixture)
+        XCTAssertNil(fixture.textView.hoveredLinkRange)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "a move without Cmd keeps the I-beam")
+    }
+
+    /// Orders the window front above every other app's windows and waits until the window
+    /// server reports it as the window under the editor, which `NSTextView`'s `mouseMoved`
+    /// checks before it touches the cursor.
+    /// The test process is never the active app, so the tracking areas (active in the key
+    /// window or the active app) hand the window's mouse moves to nobody; the window is told to
+    /// accept them instead, which hands each to its first responder, the text view, as the
+    /// tracking areas do in the running app.
+    private func putOnScreen(_ fixture: Fixture) throws {
+        fixture.window.acceptsMouseMovedEvents = true
+        fixture.window.level = .popUpMenu
+        fixture.window.orderFrontRegardless()
+        let probe = fixture.window.convertPoint(toScreen: pointOverNoCharacter(in: fixture))
+        let deadline = Date().addingTimeInterval(5)
+        while NSWindow.windowNumber(at: probe, belowWindowWithWindowNumber: 0) != fixture.window.windowNumber,
+            Date() < deadline
+        {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertEqual(
+            NSWindow.windowNumber(at: probe, belowWindowWithWindowNumber: 0), fixture.window.windowNumber,
+            "the window is frontmost under the editor")
+    }
+
+    /// A `mouseMoved` to `point` with `flags` held, dispatched by the window to the tracking
+    /// areas under it (the text view's own and the hover's) and its first responder.
+    private func sendMouseMoved(to point: NSPoint, flags: NSEvent.ModifierFlags, in fixture: Fixture) throws {
+        let event = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .mouseMoved, location: point, modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: fixture.window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 0, pressure: 0))
+        fixture.window.sendEvent(event)
+    }
+
+    /// A `cursorUpdate` at `point` with Command held, sent through the window. A synthesized
+    /// cursor update carries no tracking area, so the window routes it nowhere; it is then
+    /// handed to the owner of the text view's own cursor-update tracking area, as the window
+    /// hands a real one.
+    private func sendCursorUpdate(at point: NSPoint, in fixture: Fixture) throws {
+        let event = try XCTUnwrap(
+            NSEvent.enterExitEvent(
+                with: .cursorUpdate, location: point, modifierFlags: .command,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: fixture.window.windowNumber,
+                context: nil, eventNumber: 1, trackingNumber: 0, userData: nil))
+        fixture.window.sendEvent(event)
+        let area = try XCTUnwrap(
+            fixture.textView.trackingAreas.first { $0.options.contains(.cursorUpdate) },
+            "the text view tracks cursor updates itself")
+        let owner = try XCTUnwrap(area.owner as? NSResponder)
+        owner.cursorUpdate(with: event)
     }
 
     // MARK: - ED-12 the underline is display only
