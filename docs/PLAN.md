@@ -294,3 +294,96 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.15 Manual acceptance pass for M10 against `docs/ACCEPTANCE.md` (one line per ED bullet);
       discrepancies become tasks above this line.
 - [x] M10.16 Tag `v0.3.0`.
+- [ ] M10.17 List markers and typed rules in secondary label colour (ED-2): `-`, `*`, `+` and `<n>.`
+      list markers (task items' `- ` included) and a thematic break's typed characters set in
+      `secondaryLabelColor`; every other ED-2 marker stays tertiary. Tests:
+      `testED2_listMarkersSecondaryLabel` (bullet, ordered, nested, task), `testED2_ruleCharactersSecondaryLabel`,
+      `testED2_otherMarkersStayTertiary`. V-1: editor snapshot light and dark, bullets and numbers
+      checked legible.
+- [ ] M10.18 Rule extension across the whole view (ED-8): the faded hyphens are drawn in
+      `quaternaryLabelColor` from the editor view's leading edge to the typed rule's first
+      glyph and from its last glyph to the view's trailing edge, margins included, on the
+      rule's baseline in its font; drawn from `EditorTextView`'s own pass as the bands are
+      (the layout manager's glyph pass is clipped to the container); still not text. Tests:
+      `testED8_extensionReachesBothViewEdges` (rendered bitmap has hyphen pixels in the left
+      margin and within one hyphen of the right edge), `testED8_extensionQuaternaryLabel`,
+      existing not-selectable/not-copied tests kept green. V-1: editor-rules snapshot light and
+      dark, typed rule visibly darker than the extension.
+- [ ] M10.19 Bands meet at rule midlines (ED-10): each band edge moves from the top of the rule's line
+      fragment to the vertical centre of the rule's drawn hyphens, so a filled section runs from
+      one rule's hyphen midline to the next's (the last to the bottom of the text). Tests:
+      `testED10_bandEdgeAtHyphenMidline` (band rect minY/maxY equal the midline of the rule
+      glyphs' bounding box, for a rule at document start, mid-document and at several font
+      sizes), bitmap check of the pixel rows above and below the midline. V-1: editor-bands
+      light and dark.
+- [ ] M10.20 Cmd-hover cursor in the running app (ED-12, bug): the `testED12_*` tests pass, but in the
+      bundled app holding Cmd over a link leaves the I-beam. Find what resets it (likely
+      `NSTextView`'s own cursor rects / `mouseMoved` / `cursorUpdate` handling running after
+      ours) and fix it so the hand holds while the hover does. Tests:
+      `testED12_handSurvivesTextViewCursorHandling` driving the whole AppKit path through
+      `window.sendEvent` (mouse moved, cursor update, flags changed, a second move within the
+      same link) and asserting `NSCursor.current` after each; the existing ED-12 tests kept.
+      Add the manual check to `docs/ACCEPTANCE.md`'s ED-12 line and do it in
+      `scripts/bundle.sh`'s app before committing; say so in the commit message.
+- [ ] M10.21 Images are links for Cmd (ED-12, K-3): `![alt](url)` joins `EditorController.link(containingCharacterAt:)`
+      as a URL destination, so Cmd-hover shows the hand and underline over it and Cmd-click or
+      Cmd-Enter opens its URL (a relative URL resolved against the note's folder). Tests: `testED12_imageLinkHover`, `testK3_cmdClickImageOpensURL`,
+      `testK3_cmdEnterInImageOpensURL`; update the ED-12 test that asserts no hand over an image.
+- [ ] M10.22 Plain hover hand over click targets (ED-12, E-9, T-4, ED-6): with no modifier held, the
+      pointer over an inline thumbnail, a tag or a task box is the pointing hand, and back to
+      the I-beam off it; no underline. Tests: `testED12_plainHoverHandOverThumbnail`,
+      `testED12_plainHoverHandOverTag`, `testED12_plainHoverHandOverTaskBox`,
+      `testED12_plainHoverIBeamOverProseAndLinks` (links still need Cmd).
+- [ ] M10.23 Inline thumbnails fit the editor (E-9, PF-8): drop the 240 × 160 pt cap; each image is
+      drawn aspect-locked at the largest size no bigger than its own point size
+      (`NSImageRep` size, DPI-aware), the text container's usable width (margins and line
+      fragment padding excluded) and the editor scroll view's visible height; never scaled up.
+      Refit when the editor's width or visible height changes (window resize, split drag) and
+      on Cmd-plus/minus, re-requesting the cached image at the new pixel size (drawn size ×
+      backing scale) off the main thread. Tests: `testE9_wideImageFillsTextWidth`,
+      `testE9_tallImageFitsVisibleHeight`, `testE9_smallImageAtNaturalPointSize`,
+      `testE9_retinaImageAtPointSizeNotPixels`, `testE9_refitsOnEditorResize`,
+      `testE9_aspectRatioLocked`; PF-3 and PF-8 gates green unchanged. V-1: an editor snapshot
+      with a wide, a tall and a small image, light and dark.
+- [ ] M10.24 Row context menu (R-4): right-click (or Ctrl-click) on a note row opens a menu acting on
+      the clicked row, not the selection, with AppKit's clicked-row outline and the selection
+      unchanged: Rename (inline edit on that row, R-1 to R-3), Show in Finder
+      (`NSWorkspace.activateFileViewerSelecting`), Copy Link (`[[Title]]`, or
+      `[[relative/path]]` without `.md` when the title is ambiguous per K-2, as plain text on
+      the general pasteboard), separator, Move to Trash (D-1; the selection moves on only if
+      the trashed row was the selected one). No menu on template rows (TP-5) or empty space.
+      Tests: `testR4_menuItemsInOrder`, `testR4_actsOnClickedRowNotSelection`,
+      `testR4_renameEditsClickedRow`, `testR4_showInFinderRevealsFile` (workspace stubbed),
+      `testR4_copyLinkTitle`, `testR4_copyLinkAmbiguousUsesPath`,
+      `testR4_moveToTrashUnselectedKeepsSelection`, `testR4_noMenuOnTemplateRows`.
+- [ ] M10.25 Keyboard focus order (S-12, S-8): Tab in the search field focuses the list, selecting the
+      first row when none is selected (as Down does, S-7), and stays put when the list is
+      empty; Tab in the list still moves to the editor (S-8); Tab in the editor still inserts a
+      tab. Shift-Tab: editor to list, list to search field (query kept), nothing in the search field. Ctrl-Tab in the editor focuses the search field.
+      Tests: `testS12_tabFromSearchFocusesListSelectsFirst`,
+      `testS12_tabFromSearchKeepsExistingSelection`, `testS12_tabFromSearchEmptyListStays`,
+      `testS12_tabInEditorInsertsTab`, `testS12_shiftTabEditorToList`,
+      `testS12_shiftTabListToSearch`, `testS12_controlTabEditorToSearch`; S-7 and S-8 tests
+      kept green.
+- [ ] M10.26 Selection transforms (ED-16): with a non-empty selection, the editor's context menu gets
+      Quote and Code Block, then a separator, above the standard `NSTextView` items; with no
+      selection they are absent. Both act on every line the selection touches. Quote prefixes
+      each line with `> `, or removes one leading `> ` from each when every touched non-blank
+      line already has it. Code Block inserts a ```` ``` ```` line before the first touched
+      line and after the last, or, when the touched lines are a fenced block (fences
+      included) or lie inside one, removes that block's two fence lines. One undoable edit
+      each, autosaved (E-4), restyled paragraph-scoped (E-3); the selection afterwards covers
+      the transformed lines. Tests: `testED16_menuItemsOnlyWithSelection`,
+      `testED16_quotePrefixesEachLine`, `testED16_quoteTogglesOff`,
+      `testED16_quotePartialLineSelectionWholeLines`, `testED16_codeBlockWrapsLines`,
+      `testED16_codeBlockTogglesOffFromInside`, `testED16_singleUndoStep`,
+      `testED16_fileUpdated`.
+- [ ] M10.27 Newline keeps indentation (ED-17): Return in the editor inserts a line break followed by
+      the current line's leading spaces and tabs (only those before the caret, when the caret
+      is inside them), as one undoable edit; list markers, `>` prefixes and task boxes are not
+      carried. An open completion popover (K-4, T-3) still takes Return first; Cmd-Return
+      still opens links (K-3). Tests: `testED17_returnCopiesSpaces`,
+      `testED17_returnCopiesTabs`, `testED17_returnInFencedCodeKeepsIndent`,
+      `testED17_noIndentNoInsertion`, `testED17_caretInsideIndentCopiesUpToCaret`,
+      `testED17_listMarkerNotContinued`, `testED17_singleUndoStep`,
+      `testED17_completionPopoverTakesReturn`.

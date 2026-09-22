@@ -80,6 +80,11 @@ Version 2 (ADR-0009 to ADR-0015, 2026-09-07) amends this document in place. Rule
   Cmd-L focuses the search field from anywhere.
 - **S-8** Selecting a row loads the note into the editor without stealing focus from the list.
   Tab or Enter on a selected row moves focus to the editor.
+- **S-12** *(ADR-0021)* Keyboard focus order: Tab in the search field moves focus to the list,
+  selecting the first row if none is selected (S-7), and does nothing when the list is empty.
+  Tab in the list moves to the editor (S-8). In the editor Tab inserts a tab. Shift-Tab moves
+  back: editor to list, list to search field; in the search field it does nothing. Ctrl-Tab in
+  the editor moves focus to the search field.
 
 ## 4. Creation
 
@@ -119,7 +124,10 @@ Version 2 (ADR-0009 to ADR-0015, 2026-09-07) amends this document in place. Rule
   menu: Bigger, Smaller, Actual Size) between 9 and 36 pt, persisted in `EditorFontSize`.
 - **E-9** *(v2, ADR-0012)* An image embed `![[target]]` whose target resolves to an existing
   image file is followed, on the line directly below it, by a thumbnail attachment of that
-  image scaled to at most 240 pt wide and 160 pt tall. The embed text stays visible and
+  image. *(ADR-0021)* It is drawn aspect-locked at the largest size that is no bigger than the
+  image's own point size (pixels over its DPI scale), the width of the text area excluding
+  margins, and the height of the editor's visible area; it is never scaled up, and it refits
+  when the editor is resized or the font size changes. The embed text stays visible and
   editable; the attachment is display-only, is not part of the file, is excluded from copy,
   undo and search, and disappears when the embed text is edited so that it no longer resolves.
   Clicking the thumbnail opens the image with the default application. Thumbnails load off the
@@ -146,6 +154,12 @@ Version 2 (ADR-0009 to ADR-0015, 2026-09-07) amends this document in place. Rule
 - **R-3** After a rename, every `[[old title]]` or `[[old/path]]` in other notes that resolved to
   this note is rewritten to reference the new title. Each affected file is written atomically.
   The rewrite is logged to stderr with file count.
+- **R-4** *(ADR-0021)* Right-clicking a note row opens a context menu that acts on the clicked
+  row without changing the selection: Rename (inline edit of that row, R-1 to R-3), Show in
+  Finder (reveals the file, selected, in Finder), Copy Link (puts `[[Title]]` on the
+  pasteboard as plain text, or `[[relative/path]]` without `.md` when the title is ambiguous,
+  K-2), a separator, and Move to Trash (D-1; the selection moves to the next row only if the
+  trashed row was selected). Template rows (TP-5) have no menu.
 - **D-1** Cmd-Delete with a row selected moves the file to the macOS Trash via
   `NSWorkspace.recycle`. No confirmation. Selection moves to the next row.
 - **D-2** A rename or delete is reflected in the list immediately, not only after the watcher fires.
@@ -159,8 +173,9 @@ Version 2 (ADR-0009 to ADR-0015, 2026-09-07) amends this document in place. Rule
   to the most recently modified candidate and is styled as ambiguous.
 - **K-3** *(v3)* Cmd-click, or Cmd-Enter with the caret inside a link, opens the target. For a
   wikilink with no resolving note, one is created at the root with that title (C-2 rules) and
-  opened. For a standard link, autolink or bare URL (ED-1) the URL opens with the default
-  application.
+  opened. For a standard link, image `![alt](url)` *(ADR-0021)*, autolink or bare URL (ED-1)
+  the URL opens with the default application; a relative image URL resolves against the
+  note's folder.
 - **K-4** Typing `[[` opens a completion popover listing titles matched with the S-2 rules on the
   text typed since `[[`. Enter inserts the title and closing `]]`. Escape dismisses.
 - **K-5** A link index maps each note to its outgoing targets and each target to its incoming
@@ -301,8 +316,10 @@ place, and every marker that produced the styling stays visible and editable.
   task items `- [ ]` and `- [x]`; blockquote prefixes `> ` (nesting by repetition); pipe-table
   rows and separator rows; thematic breaks (ED-8); inline and fenced code. Each token carries
   its marker ranges and its content range separately.
-- **ED-2** Markers (`#`, `*`, `_`, `~`, `>`, list markers, link brackets and URLs, table
-  pipes, setext underlines) are shown in tertiary label colour at the surrounding size.
+- **ED-2** Markers (`#`, `*`, `_`, `~`, `>`, link brackets and URLs, table pipes, setext
+  underlines) are shown in tertiary label colour at the surrounding size. *(ADR-0021)* List
+  markers (`-`, `*`, `+`, `<n>.`) and a thematic break's typed characters are shown in
+  secondary label colour at the surrounding size, so bullets, numbers and rules stay legible.
 - **ED-3** Emphasis content gets the bold, italic or strikethrough trait. Never inside code.
 - **ED-4** Heading content is bold at 1.4, 1.25, 1.1 and 1.0 times the body size for levels
   1, 2, 3 and 4 or more, following the Cmd-plus size (E-8). Re-styling stays paragraph-scoped.
@@ -315,21 +332,30 @@ place, and every marker that produced the styling stays visible and editable.
   Pipe-table lines are set in the monospaced font; the separator row is dimmed.
 - **ED-8** A thematic break is a line of three or more `-`, `*` or `_` (spaces allowed) that
   follows a blank line or starts the document, per CommonMark. The typed characters stay
-  text; the layout manager draws faded hyphens in tertiary label colour from their end to the
-  trailing edge of the text container. The extension is not text: it cannot be selected,
-  copied or reached by the caret.
+  text, in secondary label colour (ED-2). *(ADR-0021)* Faded hyphens in quaternary label
+  colour are drawn on the rule's baseline across the full width of the editor view, margins
+  included: from the view's leading edge to the typed characters, and from their end to the
+  view's trailing edge. The extension is not text: it cannot be selected, copied or reached by
+  the caret.
 - **ED-9** A line of `=` or `-` directly under a paragraph line is a setext heading underline
   (level 1 or 2) per CommonMark, styled per ED-4 with the underline dimmed. This means `---`
   under text is a heading, not a rule.
 - **ED-10** Sections between thematic breaks alternate backgrounds: the first section on the
   text background, the next on a subtle system fill (about 4 % label colour, adapting to
-  appearance), and so on. A break line is the first line of its section. Bands span the full
-  editor width including margins and are drawn by the layout manager for the visible rect only.
+  appearance), and so on. *(ADR-0021)* A section boundary is the vertical centre of its rule's
+  drawn hyphens, so a band runs from one rule's hyphen midline to the next rule's (the last
+  band to the bottom of the text). Bands span the full editor width including margins and are
+  drawn for the visible rect only.
 - **ED-11** Wikilinks whose target resolves are in link colour; those with no resolving note
   keep link colour with a dotted underline and the tooltip "Cmd-click to create"; ambiguous
   targets stay per K-2. Standard links, autolinks and bare URLs are styled as links.
-- **ED-12** While Cmd is held and the pointer is over any link, the cursor is the pointing
-  hand and the link shows a solid underline. Released Cmd restores the I-beam.
+- **ED-12** While Cmd is held and the pointer is over any link (wikilink, embed, standard link,
+  image `![alt](url)`, autolink, bare URL), the cursor is the pointing hand and the link shows
+  a solid underline. Released Cmd restores the I-beam. *(ADR-0021)* With no modifier held, the
+  pointer over an inline thumbnail (E-9), a tag (T-4) or a task box (ED-6) is the pointing
+  hand, since a plain click acts on them; no underline is shown. This is the cursor the user
+  sees in the running app: the text view's own cursor handling must not restore the I-beam
+  while either holds.
 - **ED-13** Paste conversion: when the pasteboard carries HTML, it is converted to markdown by
   walking the parsed document: headings, bold, italic, strikethrough, links, bulleted and
   numbered lists with nesting, task items, inline code and code blocks, blockquotes, tables as
@@ -340,3 +366,13 @@ place, and every marker that produced the styling stays visible and editable.
   data on the pasteboard is still handled per I-1. Conversion is bounded by PF-9.
 - **ED-15** Out of scope: hiding markers, WYSIWYG editing, real checkbox controls, rendered
   preview, table editing aids, downloading remote images, CommonMark edge cases beyond ED-1.
+- **ED-16** *(ADR-0021)* With a non-empty selection, the editor's context menu offers Quote and
+  Code Block above the standard items. Both act on whole lines: every line the selection
+  touches. Quote prefixes each with `> `; if every touched non-blank line already starts with
+  `> `, it removes that prefix instead. Code Block puts a ```` ``` ```` fence line before the
+  first touched line and after the last; if the touched lines are a fenced block or lie inside
+  one, it removes that block's fences instead. Each is one undoable edit, autosaved (E-4).
+  Other formatting transforms are out of scope.
+- **ED-17** *(ADR-0021)* Return in the editor inserts a line break followed by the leading
+  spaces and tabs of the line the caret is on (those before the caret, if it is within them),
+  as one undoable edit. List markers, blockquote prefixes and task boxes are not continued.
