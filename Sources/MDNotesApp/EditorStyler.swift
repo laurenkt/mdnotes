@@ -6,13 +6,14 @@ import MDNotesCore
 /// scaled by level (ED-4), `[[wikilinks]]` in the link colour, `#tags` in theirs, inline or
 /// fenced code in the system monospaced font (E-8) and their own colour, emphasis content with
 /// the bold, italic or strikethrough trait (ED-3), and every markdown marker the scanner yields
-/// (`#`, emphasis delimiters, list markers, `>`, link brackets and URLs, table pipes, setext
-/// underlines, rules) in tertiary label colour at the surrounding size (ED-2), list items
+/// (`#`, emphasis delimiters, `>`, link brackets and URLs, table pipes, setext underlines) in
+/// tertiary label colour at the surrounding size, list markers and a rule's typed characters
+/// in secondary label colour so bullets, numbers and rules stay legible (ED-2), list items
 /// with a hanging indent so their wrapped lines align under the item text (ED-5), task
 /// boxes in the monospaced font with a done item's content in secondary label colour (ED-6),
 /// blockquote lines with a hanging indent under the quoted text and pipe-table lines in the
 /// monospaced font with the separator row dimmed (ED-7), and a thematic break's typed
-/// characters dimmed and marked `.rule` so `EditorLayoutManager` draws the extension to the
+/// characters in the list-marker colour and marked `.rule` so `EditorLayoutManager` draws the extension to the
 /// trailing edge after them (ED-8), and every link in a state of its own (ED-11). Only
 /// `.font`, `.foregroundColor`, `.strikethroughStyle`, `.underlineStyle`, `.toolTip` and
 /// `.paragraphStyle` are ever set: headings change weight and size, emphasis changes weight
@@ -224,6 +225,18 @@ public final class EditorStyler {
         }
     }
 
+    /// ED-2: the colour a token's markers are set in when `dimsMarkers` says they are: the
+    /// list-marker colour for a list item's marker and a rule's typed characters, the marker
+    /// colour for every other construct's.
+    static func markerColor(for kind: MarkdownScanner.Kind) -> NSColor {
+        switch kind {
+        case .listItem, .thematicBreak: listMarkerColor
+        case .heading, .wikilink, .emphasis, .link, .autolink, .bareURL, .blockquote, .tableRow, .tableSeparator,
+            .inlineCode, .fencedCode, .tag, .taskBox:
+            markerColor
+        }
+    }
+
     public let textView: NSTextView
 
     /// The font unstyled text is set in (E-8). Setting a different one re-styles the whole text.
@@ -252,9 +265,14 @@ public final class EditorStyler {
     /// text's own colour (link colour).
     nonisolated public static let missingLinkUnderline: NSUnderlineStyle = [.single, .patternDot]
 
-    /// The colour every markdown marker is set in (ED-2), and of a rule's drawn extension
-    /// (ED-8, `EditorLayoutManager.extensionColor`).
+    /// The colour markdown markers are set in (ED-2), and of a rule's drawn extension
+    /// (ED-8, `EditorLayoutManager.extensionColor`); list markers and rules use
+    /// `listMarkerColor` instead.
     nonisolated public static let markerColor: NSColor = .tertiaryLabelColor
+
+    /// ED-2 (ADR-0021): the colour list markers (`-`, `*`, `+`, `<n>.`, a task item's `- `
+    /// included) and a thematic break's typed characters are set in, so they stay legible.
+    nonisolated public static let listMarkerColor: NSColor = .secondaryLabelColor
 
     /// The colour a ticked task item's content is set in (ED-6).
     public static let doneItemColor: NSColor = .secondaryLabelColor
@@ -629,9 +647,10 @@ public final class EditorStyler {
             }
         }
         guard Self.dimsMarkers(token.kind) else { return }
+        let color = Self.markerColor(for: token.kind)
         for marker in token.markers {
             storage.addAttribute(
-                .foregroundColor, value: Self.markerColor, range: text.storageRange(forFileRange: marker))
+                .foregroundColor, value: color, range: text.storageRange(forFileRange: marker))
         }
     }
 

@@ -294,7 +294,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
 - [x] M10.15 Manual acceptance pass for M10 against `docs/ACCEPTANCE.md` (one line per ED bullet);
       discrepancies become tasks above this line.
 - [x] M10.16 Tag `v0.3.0`.
-- [ ] M10.17 List markers and typed rules in secondary label colour (ED-2): `-`, `*`, `+` and `<n>.`
+- [x] M10.17 List markers and typed rules in secondary label colour (ED-2): `-`, `*`, `+` and `<n>.`
       list markers (task items' `- ` included) and a thematic break's typed characters set in
       `secondaryLabelColor`; every other ED-2 marker stays tertiary. Tests:
       `testED2_listMarkersSecondaryLabel` (bullet, ordered, nested, task), `testED2_ruleCharactersSecondaryLabel`,

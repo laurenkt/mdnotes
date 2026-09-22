@@ -152,7 +152,8 @@ final class RuleExtensionSmokeTests: XCTestCase {
             XCTAssertEqual(
                 fixture.styles(in: rule).count, rule.length, "the rule is styled over exactly its own characters")
             for location in rule.location..<(rule.location + rule.length) {
-                XCTAssertEqual(fixture.color(at: location), EditorStyler.markerColor, "a rule is a marker (ED-2)")
+                XCTAssertEqual(
+                    fixture.color(at: location), EditorStyler.listMarkerColor, "a rule is secondary (ED-2)")
             }
             XCTAssertNotEqual(
                 fixture.style(at: rule.location + rule.length), .rule, "the line break after is not a rule")

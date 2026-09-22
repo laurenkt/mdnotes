@@ -109,6 +109,8 @@ final class EditorStylingSmokeTests: XCTestCase {
 
     /// The colour every markdown marker is dimmed to (ED-2).
     private var tertiary: NSColor { EditorStyler.markerColor }
+    /// The colour list markers and a rule's typed characters are set in (ED-2, ADR-0021).
+    private var secondary: NSColor { EditorStyler.listMarkerColor }
 
     /// A character inside a wikilink's brackets: the last one before `]]`.
     private func inside(_ link: NSRange) -> Int { link.location + link.length - 3 }
@@ -1100,9 +1102,10 @@ final class EditorStylingSmokeTests: XCTestCase {
     }
 
     /// Every markdown marker the scanner yields is in the marker colour and its content is
-    /// not: heading hashes and setext underlines, list markers, blockquote prefixes, link
-    /// brackets and URLs, autolink brackets, table pipes, wikilink brackets and rules. A tag's
-    /// `#` keeps the tag colour, code delimiters the code colour, and a task box its own.
+    /// not: heading hashes and setext underlines, blockquote prefixes, link brackets and URLs,
+    /// autolink brackets, table pipes and wikilink brackets; list markers and rules in the
+    /// list-marker colour. A tag's `#` keeps the tag colour, code delimiters the code colour,
+    /// and a task box its own.
     func testED2_markersOfEveryConstructAreDimmedAndTheirContentIsNot() {
         let fixture = makeFixture()
         let text =
@@ -1123,12 +1126,12 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(colors(of: "Setext"), [base])
         XCTAssertTrue(isBold(fixture.font(at: range(of: "Setext", in: text).location)))
 
-        XCTAssertEqual(colors(of: "- item"), [tertiary, base])
-        XCTAssertEqual(colors(of: "- "), [tertiary], "the bullet and its space")
+        XCTAssertEqual(colors(of: "- item"), [secondary, base])
+        XCTAssertEqual(colors(of: "- "), [secondary], "the bullet and its space")
         XCTAssertEqual(colors(of: "item"), [base])
-        XCTAssertEqual(colors(of: "1. "), [tertiary])
+        XCTAssertEqual(colors(of: "1. "), [secondary])
         XCTAssertEqual(colors(of: "num"), [base])
-        XCTAssertEqual(colors(of: "- ", occurrence: 1), [tertiary])
+        XCTAssertEqual(colors(of: "- ", occurrence: 1), [secondary])
         XCTAssertEqual(colors(of: "[ ]"), [base], "a task box is ED-6's")
         XCTAssertEqual(colors(of: "task"), [base])
         XCTAssertEqual(colors(of: ">"), [tertiary])
@@ -1158,9 +1161,96 @@ final class EditorStylingSmokeTests: XCTestCase {
             Set(fixture.styles(in: link).map { $0?.rawValue }), ["missingLink"], "no note has the title (ED-11)")
         XCTAssertEqual(colors(of: "#tag"), [NSColor.systemPurple], "a tag's hash keeps the tag colour (T-4)")
         XCTAssertEqual(colors(of: "`code`"), [NSColor.secondaryLabelColor], "code delimiters keep the code colour")
-        XCTAssertEqual(colors(of: "---\n"), [tertiary, base], "the rule")
-        XCTAssertEqual(colors(of: "---", occurrence: 2), [tertiary])
+        XCTAssertEqual(colors(of: "---\n"), [secondary, base], "the rule")
+        XCTAssertEqual(colors(of: "---", occurrence: 2), [secondary])
         XCTAssertEqual(fixture.textView.string, text)
+    }
+
+    /// ED-2 (ADR-0021): every list marker, `-`, `*`, `+` and `<n>.` with the spaces after it,
+    /// at every nesting level, inside a quote and before a task box, is in secondary label
+    /// colour at the surrounding size; the item text keeps the text colour and the leading
+    /// indent is not a marker.
+    func testED2_listMarkersSecondaryLabel() {
+        let fixture = makeFixture()
+        let text =
+            "- dash\n* star\n+ plus\n1. one\n12. twelve\n  - nested\n    3. deep\n- [ ] open\n1. [ ] todo\n> - quoted\n"
+        fixture.show(text)
+        let base = fixture.styler.baseColor
+        XCTAssertEqual(secondary, NSColor.secondaryLabelColor)
+
+        let items: [(marker: String, content: String, occurrence: Int)] = [
+            ("- ", "dash", 0), ("* ", "star", 0), ("+ ", "plus", 0), ("1. ", "one", 0), ("12. ", "twelve", 0),
+            ("- ", "nested", 1), ("3. ", "deep", 0), ("- ", "[ ] open", 2), ("1. ", "[ ] todo", 1),
+            ("- ", "quoted", 3),
+        ]
+        for item in items {
+            let marker = range(of: item.marker, in: text, occurrence: item.occurrence)
+            XCTAssertEqual(
+                fixture.colors(in: marker), Array(repeating: secondary, count: marker.length),
+                "\(item.marker)\(item.content): the marker and its space")
+            XCTAssertEqual(fixture.font(at: marker.location), self.base, "\(item.content): at the surrounding size")
+            XCTAssertEqual(
+                fixture.color(at: marker.location + marker.length + item.content.count - 1), base,
+                "\(item.content): the item text keeps the text colour")
+        }
+        let nested = range(of: "  - nested", in: text)
+        XCTAssertEqual(fixture.colors(in: NSRange(location: nested.location, length: 2)), [base, base], "the indent")
+        let deep = range(of: "    3. deep", in: text)
+        XCTAssertEqual(
+            fixture.colors(in: NSRange(location: deep.location, length: 4)), Array(repeating: base, count: 4))
+        XCTAssertEqual(fixture.color(at: range(of: "> - quoted", in: text).location), tertiary, "the quote prefix")
+        XCTAssertEqual(fixture.textView.string, text)
+    }
+
+    /// ED-2, ED-8 (ADR-0021): a thematic break's typed characters, `-`, `*` or `_` with any
+    /// spaces between them, are in secondary label colour at the surrounding size, and the
+    /// line breaks around them are not.
+    func testED2_ruleCharactersSecondaryLabel() {
+        let fixture = makeFixture()
+        let text = "---\n\n***\n\n* * *\n\n___\n\nafter\n"
+        fixture.show(text)
+        let base = fixture.styler.baseColor
+
+        for needle in ["---", "***", "* * *", "___"] {
+            let rule = range(of: needle, in: text)
+            XCTAssertEqual(fixture.style(at: rule.location), .rule, needle)
+            XCTAssertEqual(
+                fixture.colors(in: rule), Array(repeating: secondary, count: rule.length), "\(needle) is secondary")
+            XCTAssertEqual(fixture.font(at: rule.location), self.base, "\(needle) at the surrounding size")
+            XCTAssertEqual(fixture.color(at: rule.location + rule.length), base, "\(needle): the line break after")
+        }
+        XCTAssertEqual(fixture.color(at: range(of: "after", in: text).location), base)
+        XCTAssertEqual(EditorLayoutManager.extensionColor, tertiary, "the drawn extension is ED-8's, not this task's")
+    }
+
+    /// ED-2 (ADR-0021): only list markers and rules move to secondary; every other marker,
+    /// including a setext `---` underline and emphasis `*` that look like them, stays tertiary.
+    func testED2_otherMarkersStayTertiary() {
+        let fixture = makeFixture()
+        let text =
+            "# Head\nSetext\n---\n\n*it* **b** ~~s~~ _u_\n> quote\n[t](u) <http://x.y> [[Link]]\n"
+            + "| a | b |\n|---|---|\n- *em* in an item\n"
+        fixture.show(text)
+
+        func colors(of needle: String, occurrence: Int = 0) -> Set<NSColor?> {
+            Set(fixture.colors(in: range(of: needle, in: text, occurrence: occurrence)))
+        }
+        XCTAssertEqual(fixture.color(at: 0), tertiary, "the heading hash")
+        XCTAssertEqual(colors(of: "---"), [tertiary], "a setext underline is not a rule")
+        XCTAssertEqual(colors(of: "*", occurrence: 0), [tertiary], "an italic star")
+        XCTAssertEqual(colors(of: "**"), [tertiary])
+        XCTAssertEqual(colors(of: "~~"), [tertiary])
+        XCTAssertEqual(colors(of: "_"), [tertiary])
+        XCTAssertEqual(colors(of: ">"), [tertiary], "the quote prefix")
+        XCTAssertEqual(colors(of: "]("), [tertiary], "link brackets and URL")
+        XCTAssertEqual(colors(of: "<"), [tertiary], "autolink brackets")
+        XCTAssertEqual(colors(of: "[["), [tertiary])
+        XCTAssertEqual(colors(of: "|", occurrence: 0), [tertiary], "table pipes")
+        XCTAssertEqual(colors(of: "|---|---|"), [tertiary], "the separator row")
+        let item = range(of: "- *em*", in: text)
+        XCTAssertEqual(fixture.color(at: item.location), secondary, "the item's bullet")
+        XCTAssertEqual(fixture.color(at: item.location + 2), tertiary, "emphasis inside the item keeps tertiary")
+        XCTAssertNotEqual(tertiary, secondary)
     }
 
     /// On a heading line the markers keep the heading's weight, emphasis adds to it, and a
@@ -1524,9 +1614,10 @@ final class EditorStylingSmokeTests: XCTestCase {
             XCTAssertEqual(fixture.color(at: content), styler.baseColor, line)
             XCTAssertEqual(fixture.font(at: content), base, "\(line): list text is at the base size")
         }
-        XCTAssertEqual(fixture.color(at: range(of: "- one", in: text).location), tertiary, "the bullet is dimmed")
-        XCTAssertEqual(fixture.colors(in: range(of: "10. ", in: text)), Array(repeating: tertiary, count: 4))
-        XCTAssertEqual(fixture.colors(in: range(of: "2. ", in: text)), Array(repeating: tertiary, count: 3))
+        XCTAssertEqual(
+            fixture.color(at: range(of: "- one", in: text).location), secondary, "the bullet in the list-marker colour")
+        XCTAssertEqual(fixture.colors(in: range(of: "10. ", in: text)), Array(repeating: secondary, count: 4))
+        XCTAssertEqual(fixture.colors(in: range(of: "2. ", in: text)), Array(repeating: secondary, count: 3))
         XCTAssertGreaterThan(headIndent(fixture, at: range(of: "10. tenth", in: text).location), bullet)
         XCTAssertGreaterThan(
             headIndent(fixture, at: range(of: "10. tenth", in: text).location),
@@ -1615,7 +1706,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.textView.string, "- first\nsecond\n\n- item\n")
         XCTAssertEqual(headIndent(fixture, at: 0), bullet, accuracy: 0.001)
         XCTAssertEqual(headIndent(fixture, at: 7), bullet, accuracy: 0.001, "the line break is in the paragraph")
-        XCTAssertEqual(fixture.color(at: 0), tertiary)
+        XCTAssertEqual(fixture.color(at: 0), secondary)
         XCTAssertEqual(headIndent(fixture, at: 8), 0, "`second` is not an item")
         XCTAssertEqual(headIndent(fixture, at: 16), bullet, accuracy: 0.001, "`- item` still is")
 
@@ -1702,7 +1793,7 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.color(at: item.location), tertiary)
         XCTAssertEqual(
             fixture.colors(in: range(of: "- item", in: text)),
-            [tertiary, tertiary] + Array(repeating: styler.baseColor, count: 4))
+            [secondary, secondary] + Array(repeating: styler.baseColor, count: 4), "a quoted item's bullet (ED-2)")
         XCTAssertEqual(fixture.style(at: item.location + 4), .listItem, "the item text is the list item's")
         XCTAssertEqual(fixture.style(at: item.location), .blockquote)
         XCTAssertEqual(fixture.color(at: range(of: "  > spaced", in: text).location + 2), tertiary)

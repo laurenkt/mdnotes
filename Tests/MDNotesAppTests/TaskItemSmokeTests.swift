@@ -250,7 +250,9 @@ final class TaskItemSmokeTests: XCTestCase {
                 "\(name): the box keeps the text colour, its brackets undimmed")
             XCTAssertEqual(fixture.font(at: box.location - 1), base, "\(name): the space before it is prose")
             XCTAssertEqual(fixture.font(at: box.location + 3), base, "\(name): the space after it is prose")
-            XCTAssertEqual(fixture.color(at: box.location - 2), tertiary, "\(name): the list marker is dimmed (ED-2)")
+            XCTAssertEqual(
+                fixture.color(at: box.location - 2), EditorStyler.listMarkerColor,
+                "\(name): the list marker in the list-marker colour (ED-2)")
         }
 
         // Laid out, the two boxes advance the same and the item text after each starts at the
