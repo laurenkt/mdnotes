@@ -365,7 +365,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testS12_tabInEditorInsertsTab`, `testS12_shiftTabEditorToList`,
       `testS12_shiftTabListToSearch`, `testS12_controlTabEditorToSearch`; S-7 and S-8 tests
       kept green.
-- [ ] M10.26 Selection transforms (ED-16): with a non-empty selection, the editor's context menu gets
+- [x] M10.26 Selection transforms (ED-16): with a non-empty selection, the editor's context menu gets
       Quote and Code Block, then a separator, above the standard `NSTextView` items; with no
       selection they are absent. Both act on every line the selection touches. Quote prefixes
       each line with `> `, or removes one leading `> ` from each when every touched non-blank

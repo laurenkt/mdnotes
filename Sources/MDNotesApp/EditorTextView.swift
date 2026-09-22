@@ -323,6 +323,73 @@ public final class EditorTextView: NSTextView {
         return pboard.setString(string, forType: .string)
     }
 
+    // MARK: - Selection transforms (ED-16)
+
+    /// The context menu's Quote item (ED-16).
+    nonisolated public static let quoteItemTitle = "Quote"
+
+    /// The context menu's Code Block item (ED-16).
+    nonisolated public static let codeBlockItemTitle = "Code Block"
+
+    /// `NSTextView`'s context menu, with Quote and Code Block and a separator above its own
+    /// items while the selection is not empty (ED-16); with nothing selected it is left as it
+    /// is. What counts is the selection the user made before the click: `NSTextView` selects
+    /// the word under a right-click on a caret, and that is no selection of theirs. The standard
+    /// menu may be one shared by every text view, so the items go on a copy.
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        let hadSelection = selectedRange().length > 0
+        let standard = super.menu(for: event)
+        guard hadSelection, selectedRange().length > 0 else { return standard }
+        let menu = (standard?.copy() as? NSMenu) ?? NSMenu()
+        let quote = NSMenuItem(title: Self.quoteItemTitle, action: #selector(quoteLines(_:)), keyEquivalent: "")
+        let codeBlock = NSMenuItem(
+            title: Self.codeBlockItemTitle, action: #selector(codeBlockLines(_:)), keyEquivalent: "")
+        quote.target = self
+        codeBlock.target = self
+        let hasStandardItems = !menu.items.isEmpty
+        menu.insertItem(quote, at: 0)
+        menu.insertItem(codeBlock, at: 1)
+        if hasStandardItems { menu.insertItem(.separator(), at: 2) }
+        return menu
+    }
+
+    /// Quote (ED-16): `> ` before every line the selection touches, or taken off them when every
+    /// touched non-blank line has it (`SelectionTransform.quote`).
+    @objc public func quoteLines(_ sender: Any?) {
+        applyLineTransform(SelectionTransform.quote)
+    }
+
+    /// Code Block (ED-16): fence lines around the lines the selection touches, or the fences of
+    /// the block they are or lie in taken away (`SelectionTransform.codeBlock`).
+    @objc public func codeBlockLines(_ sender: Any?) {
+        applyLineTransform(SelectionTransform.codeBlock)
+    }
+
+    /// Applies a selection transform to the file's text (E-9: display-only runs are neither
+    /// read nor replaced) as one undoable edit of its own, apart from any typing run either side
+    /// (E-7). The storage delegate restyles the paragraphs it touches (E-3) and restarts the
+    /// autosave delay (E-4). The selection then covers the transformed lines.
+    private func applyLineTransform(_ transform: ([UInt16], NSRange) -> SelectionTransform.Result) {
+        guard isEditable, let storage = textStorage else { return }
+        let text = EditorText(storage: storage)
+        let result = transform(text.units, text.fileRange(forStorageRange: selectedRange()))
+        guard !result.edits.isEmpty else { return }
+        let ranges = result.edits.map { text.storageRange(forFileRange: $0.range) }
+        let strings = result.edits.map(\.replacement)
+        breakUndoCoalescing()
+        guard shouldChangeText(inRanges: ranges.map { NSValue(range: $0) }, replacementStrings: strings) else {
+            return
+        }
+        storage.beginEditing()
+        for (range, string) in zip(ranges, strings).reversed() {
+            storage.replaceCharacters(in: range, with: string)
+        }
+        storage.endEditing()
+        didChangeText()
+        breakUndoCoalescing()
+        setSelectedRange(EditorText(storage: storage).storageRange(forFileRange: result.selection))
+    }
+
     // MARK: - Paste (ED-13, ED-14) and image paste and drop (I-1)
 
     /// `NSTextView` enables Paste only for the types it reads itself, which for a plain text
@@ -330,7 +397,8 @@ public final class EditorTextView: NSTextView {
     /// disabled and Cmd-V, which goes through the same validation, is dead, so `paste(_:)` is
     /// never reached. Paste is enabled here whenever the pasteboard carries an image the
     /// handler could take, or HTML, RTF or a string to paste (ED-13), and the shown note is
-    /// writable; Paste and Match Style (ED-14) whenever it carries an image or a string. Every
+    /// writable; Paste and Match Style (ED-14) whenever it carries an image or a string; Quote
+    /// and Code Block (ED-16) whenever the selection is not empty and the text editable. Every
     /// other item, and either over anything else, is validated as `NSTextView` validates it.
     /// Reads no data (PF-6): validation runs on every menu open and key press.
     public override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
@@ -340,6 +408,9 @@ public final class EditorTextView: NSTextView {
         if item.action == #selector(NSTextView.pasteAsPlainText(_:)), acceptsImagePaste() || acceptsTextPaste([.string])
         {
             return true
+        }
+        if item.action == #selector(quoteLines(_:)) || item.action == #selector(codeBlockLines(_:)) {
+            return isEditable && selectedRange().length > 0
         }
         return super.validateUserInterfaceItem(item)
     }
