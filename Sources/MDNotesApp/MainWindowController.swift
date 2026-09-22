@@ -67,7 +67,8 @@ import MDNotesCore
 /// there, the editor inserts `![[<name>]]` at the caret as typed text. A Cmd-click or Cmd-Enter
 /// on an embed (I-2) does not open a note: the library finds the file the embed names and it is
 /// opened with its default application through `openFile`. Nor does one on a standard link,
-/// an autolink or a bare URL (K-3): its URL is opened through `openURL`. While Command is held
+/// an image `![alt](url)`, an autolink or a bare URL (K-3): its URL is opened through `openURL`,
+/// an image's relative URL resolved against the note's folder. While Command is held
 /// the editor asks here which link the pointer is over, to underline it (ED-12).
 ///
 /// The eviction bar (L-10) is fed from here: the library's eviction status names how many
@@ -158,8 +159,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     /// opened without launching anything.
     public var openFile: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
 
-    /// Opens a standard link's, an autolink's or a bare URL's destination with the default
-    /// application (K-3). `NSWorkspace.open`; tests replace it to capture the URL instead of
+    /// Opens a standard link's, an image's, an autolink's or a bare URL's destination with the
+    /// default application (K-3). `NSWorkspace.open`; tests replace it to capture the URL instead of
     /// launching a browser.
     public var openURL: @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
 
@@ -639,8 +640,31 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         switch link?.destination {
         case .note(let target): return openLink(target)
         case .url(let string): return openExternalLink(string)
+        case .image(let string): return openImageLink(string)
         case nil: return false
         }
+    }
+
+    /// Opens an image `![alt](url)`'s URL with the default application (K-3, ADR-0021). One with
+    /// a scheme opens as a standard link's does; a relative one (`pics/a.png`, `../a.png`,
+    /// `/abs/a.png`) resolves against the folder of the note shown in the editor, as a file
+    /// URL. With no library or note to resolve against, or a URL the system will not open, it
+    /// goes through `openExternalLink(_:)` as spelt and is reported there. Always true: the
+    /// link was acted on.
+    @discardableResult
+    public func openImageLink(_ string: String) -> Bool {
+        guard URL(string: string)?.scheme == nil, let library, let id = editorController.noteID else {
+            return openExternalLink(string)
+        }
+        let folder = library.root.appendingPathComponent(id.relativePath).deletingLastPathComponent()
+        let resolved =
+            URL(string: string, relativeTo: folder)?.absoluteURL
+            ?? folder.appendingPathComponent(string).standardizedFileURL
+        hideInlineMessage()
+        if openURL(resolved.standardizedFileURL) { return true }
+        FileHandle.standardError.write(Data("MDNotes: could not open \(resolved.path) for \(string)\n".utf8))
+        showInlineMessage("\u{201C}\(string)\u{201D} could not be opened.")
+        return true
     }
 
     /// Opens the destination of a standard link, an autolink or a bare URL with the default

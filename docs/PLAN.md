@@ -325,7 +325,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       same link) and asserting `NSCursor.current` after each; the existing ED-12 tests kept.
       Add the manual check to `docs/ACCEPTANCE.md`'s ED-12 line and do it in
       `scripts/bundle.sh`'s app before committing; say so in the commit message.
-- [ ] M10.21 Images are links for Cmd (ED-12, K-3): `![alt](url)` joins `EditorController.link(containingCharacterAt:)`
+- [x] M10.21 Images are links for Cmd (ED-12, K-3): `![alt](url)` joins `EditorController.link(containingCharacterAt:)`
       as a URL destination, so Cmd-hover shows the hand and underline over it and Cmd-click or
       Cmd-Enter opens its URL (a relative URL resolved against the note's folder). Tests: `testED12_imageLinkHover`, `testK3_cmdClickImageOpensURL`,
       `testK3_cmdEnterInImageOpensURL`; update the ED-12 test that asserts no hand over an image.

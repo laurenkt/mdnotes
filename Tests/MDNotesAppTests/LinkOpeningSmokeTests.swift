@@ -482,15 +482,92 @@ final class LinkOpeningSmokeTests: XCTestCase {
         XCTAssertNil(editor.link(containingCharacterAt: (Self.alphaBody as NSString).length))
     }
 
-    func testK3_anImageAndAURLInCodeAreNotLinks() async throws {
+    func testK3_aURLInCodeIsNotALink() async throws {
         let (controller, _) = try await makeControllerShowingAlpha()
         let editor = controller.editorController
         let opened = captureURLs(controller)
-        XCTAssertNil(editor.link(at: range(of: "![i](https://example.com/i.png)").location + 8), "an image (ED-11)")
         XCTAssertNil(editor.link(at: range(of: "`https://example.com/c`").location + 5), "a URL in a code span (E-2)")
-        XCTAssertFalse(controller.openLink(at: range(of: "![i](https://example.com/i.png)").location + 8))
         XCTAssertFalse(controller.openLink(at: range(of: "`https://example.com/c`").location + 5))
         XCTAssertEqual(opened(), [])
+    }
+
+    // MARK: K-3 an image `![alt](url)` opens its URL (ADR-0021)
+
+    func testK3_cmdClickImageOpensURL() async throws {
+        let (controller, window) = try await makeControllerShowingAlpha()
+        let editor = controller.editorController
+        let image = range(of: "![i](https://example.com/i.png)")
+        let expected = EditorLink(range: image, destination: .image("https://example.com/i.png"))
+        XCTAssertEqual(editor.link(at: image.location), expected, "just before the `!`")
+        XCTAssertEqual(editor.link(at: image.location + image.length), expected, "just after the `)`")
+        XCTAssertEqual(editor.link(containingCharacterAt: image.location), expected, "the `!` is in it")
+        XCTAssertNil(editor.link(containingCharacterAt: image.location + image.length), "the character after is not")
+        XCTAssertNil(editor.linkTarget(at: image.location + 3), "not a wikilink")
+
+        let opened = captureURLs(controller)
+        var noteOpens = 0
+        controller.onOpenLink = { _, _ in noteOpens += 1 }
+        try commandClick(onCharacterAt: image.location + 8, in: controller, window: window)
+        XCTAssertEqual(opened(), [URL(string: "https://example.com/i.png")], "the opener receives the image's URL")
+        XCTAssertEqual(noteOpens, 0, "no note is opened")
+        XCTAssertEqual(controller.editorController.noteID, alpha, "the editor stays on Alpha")
+        XCTAssertNil(controller.inlineMessage)
+        XCTAssertEqual(try filesOnDisk(), fixtureFiles, "nothing was created")
+    }
+
+    /// A relative image URL resolves against the note's folder, not the library root: Beta is in
+    /// `daily/`, so `pics/b%20one.png` is `daily/pics/b one.png` and `../top.png` is the root's.
+    func testK3_cmdEnterInImageOpensURL() async throws {
+        let betaBody = "img ![b](pics/b%20one.png) up ![t](../top.png) web ![w](https://example.com/w.png)\n"
+        let betaURL = root.appendingPathComponent(beta.relativePath)
+        let betaDate = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: betaURL.path)[.modificationDate] as? Date)
+        try betaBody.write(to: betaURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: betaDate], ofItemAtPath: betaURL.path)
+
+        let (controller, window) = try await makeControllerShowingAlpha()
+        XCTAssertTrue(controller.listController.select(beta))
+        await waitForEditor(controller, toShow: beta)
+        XCTAssertEqual(controller.mainView.textView.string, betaBody)
+        XCTAssertTrue(window.makeFirstResponder(controller.mainView.textView))
+        let opened = captureURLs(controller)
+        var noteOpens = 0
+        controller.onOpenLink = { _, _ in noteOpens += 1 }
+        let folder = root.appendingPathComponent("daily", isDirectory: true)
+        let text = betaBody as NSString
+
+        placeCaret(at: text.range(of: "![b]").location + 2, in: controller)
+        XCTAssertEqual(
+            controller.editorController.linkAtCaret(),
+            EditorLink(range: text.range(of: "![b](pics/b%20one.png)"), destination: .image("pics/b%20one.png")))
+        try pressCommandReturn(in: window)
+        placeCaret(at: text.range(of: "../top.png").location + 3, in: controller)
+        try pressCommandReturn(in: window)
+        placeCaret(at: text.range(of: "![w]").location + 1, in: controller)
+        try pressCommandReturn(in: window)
+
+        let urls = opened()
+        XCTAssertEqual(urls.count, 3)
+        XCTAssertEqual(
+            urls.first?.standardizedFileURL.path,
+            folder.appendingPathComponent("pics/b one.png").standardizedFileURL.path,
+            "resolved against the note's folder, percent escapes decoded")
+        XCTAssertEqual(urls.first?.isFileURL, true)
+        XCTAssertEqual(
+            urls.dropFirst().first?.standardizedFileURL.path,
+            root.appendingPathComponent("top.png").standardizedFileURL.path, "`..` climbs out of the folder")
+        XCTAssertEqual(urls.last, URL(string: "https://example.com/w.png"), "a URL with a scheme opens as spelt")
+        XCTAssertEqual(noteOpens, 0, "no note is opened")
+        XCTAssertEqual(controller.editorController.noteID, beta, "the editor stays on Beta")
+        XCTAssertNil(controller.inlineMessage)
+        XCTAssertEqual(try filesOnDisk(), fixtureFiles, "nothing was created")
+
+        // One the system will not open is reported under the search field, as a URL is.
+        _ = captureURLs(controller, opens: false)
+        placeCaret(at: text.range(of: "![b]").location + 2, in: controller)
+        try pressCommandReturn(in: window)
+        let message = try XCTUnwrap(controller.inlineMessage)
+        XCTAssertTrue(message.contains("pics/b%20one.png"), "the message names the link: \(message)")
     }
 
     func testK3_aURLTheSystemWillNotOpenIsReportedInline() async throws {

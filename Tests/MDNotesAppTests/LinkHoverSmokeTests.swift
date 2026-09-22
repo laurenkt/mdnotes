@@ -187,10 +187,35 @@ final class LinkHoverSmokeTests: XCTestCase {
         }
     }
 
+    /// ADR-0021: an image `![alt](url)` is a link for Cmd, hovered over its whole range, the
+    /// `!` and the URL included, as a standard link is.
+    func testED12_imageLinkHover() throws {
+        let fixture = try makeFixture()
+        let image = range(of: "![alt](https://example.com/i.png)")
+        for offset in [0, 3, 12, image.length - 1] {
+            let index = image.location + offset
+            try changeFlags(command: true, at: try point(overCharacterAt: index, in: fixture), in: fixture)
+            XCTAssertEqual(fixture.textView.hoveredLinkRange, image, "offset \(offset)")
+            XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "offset \(offset)")
+            XCTAssertEqual(
+                fixture.hoverUnderlines(in: image), Array(repeating: solid, count: image.length), "offset \(offset)")
+            XCTAssertNil(fixture.hoverUnderline(at: image.location - 1), "the space before is not underlined")
+            XCTAssertNil(fixture.hoverUnderline(at: image.location + image.length), "nor the one after")
+            try changeFlags(command: false, at: try point(overCharacterAt: index, in: fixture), in: fixture)
+            XCTAssertNil(fixture.textView.hoveredLinkRange)
+            XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "released Cmd restores the I-beam")
+            XCTAssertEqual(fixture.hoverUnderlines(in: image), Array(repeating: nil, count: image.length))
+        }
+        let after = image.location + image.length
+        try moveMouse(to: try point(overCharacterAt: after, in: fixture), flags: .command, in: fixture)
+        XCTAssertNil(fixture.textView.hoveredLinkRange, "the character after the image is not the image")
+        try moveMouse(to: try point(overCharacterAt: image.location + 5, in: fixture), flags: [], in: fixture)
+        XCTAssertNil(fixture.textView.hoveredLinkRange, "over an image without Cmd nothing hovers")
+    }
+
     func testED12_whatIsNotALinkDoesNotHover() throws {
         let fixture = try makeFixture()
         let notLinks: [(needle: String, offset: Int, why: String)] = [
-            ("![alt](https://example.com/i.png)", 12, "an image is not a link (ED-11)"),
             ("`[[Bar]]`", 4, "a wikilink in a code span is not a link (E-2)"),
             ("prose", 2, "prose"),
             ("# Links", 3, "a heading"),

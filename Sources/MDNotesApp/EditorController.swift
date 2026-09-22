@@ -421,8 +421,8 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
     }
 
     /// The link whose text, brackets and markers included, contains the insertion index
-    /// `index`, or nil when no link does (K-3): a wikilink or embed, a standard link, an
-    /// autolink or a bare URL; an image `![alt](url)` is not a link (ED-11). Both ends count: a
+    /// `index`, or nil when no link does (K-3): a wikilink or embed, a standard link, an image
+    /// `![alt](url)` (ADR-0021), an autolink or a bare URL. Both ends count: a
     /// caret just before the `[[` or just after the `]]` is touching the link, and a click
     /// resolved to an insertion index lands on an end when it hits the outer half of a bracket.
     /// Where two links meet, the earlier one wins. A link inside a code span or fenced block is
@@ -462,6 +462,8 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
                 destination = .note(LinkTarget(text: text.string(inFileRange: target), isEmbed: isEmbed))
             case .link(let url, isImage: false), .autolink(let url), .bareURL(let url):
                 destination = .url(text.string(inFileRange: url))
+            case .link(let url, isImage: true):
+                destination = .image(text.string(inFileRange: url))
             default:
                 continue
             }
@@ -795,6 +797,9 @@ public struct EditorLink: Equatable, Sendable {
         /// A standard link's destination, an autolink's or a bare URL, as spelt: opened with
         /// the default application.
         case url(String)
+        /// An image `![alt](url)`'s URL, as spelt: opened with the default application, a
+        /// relative one resolved against the note's folder (K-3, ADR-0021).
+        case image(String)
     }
 
     public let range: NSRange
