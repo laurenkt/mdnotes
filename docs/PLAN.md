@@ -334,7 +334,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       the I-beam off it; no underline. Tests: `testED12_plainHoverHandOverThumbnail`,
       `testED12_plainHoverHandOverTag`, `testED12_plainHoverHandOverTaskBox`,
       `testED12_plainHoverIBeamOverProseAndLinks` (links still need Cmd).
-- [ ] M10.23 Inline thumbnails fit the editor (E-9, PF-8): drop the 240 × 160 pt cap; each image is
+- [x] M10.23 Inline thumbnails fit the editor (E-9, PF-8): drop the 240 × 160 pt cap; each image is
       drawn aspect-locked at the largest size no bigger than its own point size
       (`NSImageRep` size, DPI-aware), the text container's usable width (margins and line
       fragment padding excluded) and the editor scroll view's visible height; never scaled up.

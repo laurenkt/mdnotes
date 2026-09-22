@@ -177,6 +177,19 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         // K-2: links are resolved against the same snapshot, so an ambiguous title is styled
         // as ambiguous the moment it is loaded or typed.
         styler.linkIndex = { [weak self] in self?.library?.snapshot.links ?? .empty }
+        // E-9: the thumbnails fit the editor's usable width and visible height, so they are
+        // refitted whenever the text view's frame or the scroll view's visible area changes
+        // (a window resize, a split drag).
+        for view in [textView, textView.enclosingScrollView?.contentView].compactMap({ $0 }) {
+            view.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(editorFrameDidChange(_:)), name: NSView.frameDidChangeNotification,
+                object: view)
+        }
+    }
+
+    @objc private func editorFrameDidChange(_ notification: Notification) {
+        thumbnails.refit()
     }
 
     /// K-2: the snapshot changed, so a link's resolution may have changed under text that did

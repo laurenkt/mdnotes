@@ -231,7 +231,11 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
             if let notice { mainView.readOnlyNotice.show(notice) } else { mainView.readOnlyNotice.hide() }
         }
         // E-8 into E-2: a new editor font is the styling's new base.
-        view.onEditorFontChange = { [weak self] font in self?.editorController.styler.baseFont = font }
+        // E-8, E-9: the styling follows the new size, and the inline thumbnails are fitted again.
+        view.onEditorFontChange = { [weak self] font in
+            self?.editorController.styler.baseFont = font
+            self?.editorController.thumbnails.refit(force: true)
+        }
         // D-1: Cmd-Delete from anywhere in the window.
         view.onDeleteNote = { [weak self] in self?.deleteSelectedNote() ?? false }
         // R-1, R-2: Cmd-R from anywhere in the window; the list's edited title comes back here.

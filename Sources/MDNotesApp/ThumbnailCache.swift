@@ -110,6 +110,60 @@ public final class ThumbnailCache: Sendable {
         image.bytesPerRow * image.height
     }
 
+    // MARK: - Source size
+
+    /// An image file's own size (E-9): its pixels, and its points, the pixels over its DPI
+    /// scale as `NSImageRep.size` reports them (a 144 DPI screenshot is half its pixels in
+    /// points; a file that states no DPI is 72, one point a pixel). Both are as the image is
+    /// shown, after its orientation, as the thumbnails are.
+    public struct SourceSize: Sendable, Equatable {
+        public let pixels: CGSize
+        public let points: CGSize
+
+        public init(pixels: CGSize, points: CGSize) {
+            self.pixels = pixels
+            self.points = points
+        }
+    }
+
+    /// Reads the size of the image file at `url` from its header, decoding nothing, and calls
+    /// `completion` on the main thread with it, or with nil when the file is not an image
+    /// ImageIO can read. The read runs on the background queue; the main thread never touches
+    /// the file (PF-8).
+    public func requestSourceSize(_ url: URL, completion: @escaping @MainActor @Sendable (SourceSize?) -> Void) {
+        queue.async {
+            let size = Self.sourceSize(of: url)
+            DispatchQueue.main.async { completion(size) }
+        }
+    }
+
+    /// The size of the image file at `url`, read from its header; nil when it is not an image
+    /// ImageIO can read. Does file I/O: never call it on the main thread.
+    public static func sourceSize(of url: URL) -> SourceSize? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, sourceOptions as CFDictionary)
+                as? [CFString: Any],
+            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+            width > 0, height > 0
+        else { return nil }
+        let dpi = { (key: CFString) -> Double in
+            guard let value = (properties[key] as? NSNumber)?.doubleValue, value > 0 else { return 72 }
+            return value
+        }
+        var pixels = CGSize(width: width, height: height)
+        var points = CGSize(
+            width: width * 72 / dpi(kCGImagePropertyDPIWidth), height: height * 72 / dpi(kCGImagePropertyDPIHeight))
+        // EXIF orientations 5 to 8 turn the image a quarter: its shown width is its stored height.
+        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        if (5...8).contains(orientation) {
+            pixels = CGSize(width: pixels.height, height: pixels.width)
+            points = CGSize(width: points.height, height: points.width)
+        }
+        return SourceSize(pixels: pixels, points: points)
+    }
+
     // MARK: - Requests
 
     /// Asks for the thumbnail of the file at `url` with its longest side at most `pixelSize`

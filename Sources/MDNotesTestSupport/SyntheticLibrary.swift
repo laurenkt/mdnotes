@@ -223,8 +223,10 @@ extension SyntheticLibrary {
     /// A valid 8-bit RGB PNG of `width` by `height` pixels whose colours depend on `seed`: a
     /// gradient with a diagonal band, so two images are told apart and a thumbnail of one is
     /// recognisable in a snapshot. Written by hand with stored (uncompressed) deflate blocks,
-    /// so it needs nothing but Foundation and is byte-for-byte deterministic.
-    public static func pngData(seed: Int, width: Int, height: Int) -> Data {
+    /// so it needs nothing but Foundation and is byte-for-byte deterministic. A `dpi` adds a
+    /// `pHYs` chunk stating that resolution (144 is a Retina screenshot, E-9); without one the
+    /// file states none and readers take it as 72.
+    public static func pngData(seed: Int, width: Int, height: Int, dpi: Double? = nil) -> Data {
         precondition(width > 0 && height > 0)
         var raw = Data(capacity: height * (1 + width * 3))
         for y in 0..<height {
@@ -246,6 +248,15 @@ extension SyntheticLibrary {
         header.append(contentsOf: [8, 2, 0, 0, 0])  // 8 bits, truecolour, deflate, no filter, no interlace
         var png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
         png.append(chunk: "IHDR", header)
+        if let dpi {
+            // Pixels per metre on both axes, unit 1 (the metre).
+            let perMetre = UInt32((dpi / 0.0254).rounded())
+            var physical = Data()
+            physical.append(bigEndian: perMetre)
+            physical.append(bigEndian: perMetre)
+            physical.append(1)
+            png.append(chunk: "pHYs", physical)
+        }
         png.append(chunk: "IDAT", zlibStored(raw))
         png.append(chunk: "IEND", Data())
         return png

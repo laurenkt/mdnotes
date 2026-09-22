@@ -44,9 +44,8 @@ final class EditorThumbnailSmokeTests: XCTestCase {
     private let pics = NoteID(relativePath: "Pics.md")
     private let other = NoteID(relativePath: "Other.md")
 
-    /// Pixel sizes of the generated images: `one` is 3:2 and fills the 240 by 160 box exactly
-    /// at 2x (and is shrunk to it at 1x); `tall` is 1:4 and is capped by the height at either
-    /// scale; `tiny` is smaller than the box at either scale and is never enlarged.
+    /// Pixel sizes of the generated images, all stating no DPI, so a pixel is a point: `one`
+    /// is 3:2, `tall` 1:4 and `tiny` smaller than any editor.
     private static let images: [(name: String, width: Int, height: Int)] = [
         ("one.png", 480, 320), ("tall.png", 100, 400), ("tiny.png", 40, 30),
     ]
@@ -233,37 +232,217 @@ final class EditorThumbnailSmokeTests: XCTestCase {
         }
     }
 
-    func testE9_thumbnailsAreAtMost240By160AndKeepTheImagesProportions() async throws {
-        let fixture = try await showPics()
-        let bounds = Dictionary(
-            uniqueKeysWithValues: fixture.thumbnails.map { ($0.attachment.target, $0.attachment.bounds.size) })
-        let one = try XCTUnwrap(bounds["one.png"])
-        XCTAssertEqual(one.width, 240, accuracy: 0.01, "3:2 fills the box's width at 1x and 2x alike")
-        XCTAssertEqual(one.height, 160, accuracy: 0.01)
-        let tall = try XCTUnwrap(bounds["tall.png"])
-        XCTAssertEqual(tall.height, 160, accuracy: 0.01, "1:4 is capped by the height")
-        XCTAssertEqual(tall.width, 40, accuracy: 0.01)
-        let tiny = try XCTUnwrap(bounds["tiny.png"])
-        XCTAssertLessThanOrEqual(tiny.width, 40, "a small image is never enlarged")
-        XCTAssertLessThanOrEqual(tiny.height, 30)
-        XCTAssertEqual(tiny.width / tiny.height, 4.0 / 3.0, accuracy: 0.01)
-        for size in bounds.values {
-            XCTAssertLessThanOrEqual(size.width, EditorThumbnails.maximumSize.width)
-            XCTAssertLessThanOrEqual(size.height, EditorThumbnails.maximumSize.height)
+    // MARK: - Fitting the editor (E-9, ADR-0021)
+
+    private let sizes = NoteID(relativePath: "Sizes.md")
+
+    /// The images the Sizes note embeds, beyond `tiny`: `wide` (6:1) and `column` (1:10) far
+    /// bigger than any editor, and `retina` a 400 by 200 pixel image stating 144 DPI, so
+    /// 200 by 100 points.
+    private static let sizesBody = """
+        # Sizes
+
+        ![[tiny.png]]
+
+        ![[retina.png]]
+
+        ![[wide.png]]
+
+        ![[column.png]]
+
+        """
+
+    /// Writes the Sizes note and its images, then shows it with its four thumbnails on show.
+    private func showSizes(size: NSSize = NSSize(width: 800, height: 600)) async throws -> Fixture {
+        let images = root.appendingPathComponent("i", isDirectory: true)
+        try SyntheticLibrary.pngData(seed: 11, width: 1200, height: 200).write(
+            to: images.appendingPathComponent("wide.png"))
+        try SyntheticLibrary.pngData(seed: 12, width: 120, height: 1200)
+            .write(to: images.appendingPathComponent("column.png"))
+        try SyntheticLibrary.pngData(seed: 13, width: 400, height: 200, dpi: 144)
+            .write(to: images.appendingPathComponent("retina.png"))
+        try Data(Self.sizesBody.utf8).write(to: root.appendingPathComponent(sizes.relativePath))
+        let fixture = try await makeFixture(size: size)
+        try await show(sizes, in: fixture)
+        await waitUntil("four thumbnails") { fixture.thumbnails.count == 4 }
+        return fixture
+    }
+
+    /// The thumbnail on show for `target`.
+    private func thumbnail(_ target: String, in fixture: Fixture) throws -> ThumbnailAttachment {
+        try XCTUnwrap(fixture.thumbnails.first { $0.attachment.target == target }?.attachment, target)
+    }
+
+    /// The text's usable width, measured apart from `fitBox`: the container's width less its
+    /// line fragment padding on both sides (the text container inset is outside it).
+    private func usableWidth(_ fixture: Fixture) throws -> CGFloat {
+        let container = try XCTUnwrap(fixture.textView.textContainer)
+        return container.size.width - 2 * container.lineFragmentPadding
+    }
+
+    /// The height of the editor scroll view's visible area.
+    private func visibleHeight(_ fixture: Fixture) -> CGFloat {
+        fixture.controller.mainView.editorScrollView.contentView.bounds.height
+    }
+
+    /// The line fragment the thumbnail's attachment character is laid out in.
+    private func lineFragment(of thumbnail: ThumbnailAttachment, in fixture: Fixture) throws -> NSRect {
+        let index = try XCTUnwrap(fixture.thumbnails.first { $0.attachment === thumbnail }?.index)
+        let layoutManager = try XCTUnwrap(fixture.textView.layoutManager)
+        let glyph = layoutManager.glyphIndexForCharacter(at: index)
+        return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+    }
+
+    /// Waits until `thumbnail`'s image has been asked for again at the pixel size its drawn
+    /// size wants on this window, and checks the image is that size.
+    private func waitUntilSharp(_ thumbnail: ThumbnailAttachment, in fixture: Fixture) async {
+        let scale = fixture.window.backingScaleFactor
+        let wanted = EditorThumbnails.pixelSize(forDrawnSize: thumbnail.bounds.size, of: thumbnail.source, scale: scale)
+        await waitUntil("\(thumbnail.target) at \(wanted) pixels") { thumbnail.pixelSize == wanted }
+        XCTAssertEqual(
+            max(thumbnail.cgImage.width, thumbnail.cgImage.height), wanted,
+            "\(thumbnail.target) decoded at the drawn size")
+    }
+
+    func testE9_wideImageFillsTextWidth() async throws {
+        let fixture = try await showSizes()
+        let wide = try thumbnail("wide.png", in: fixture)
+        let width = try usableWidth(fixture)
+        XCTAssertGreaterThan(width, 300, "the editor is laid out")
+        XCTAssertEqual(fixture.editor.thumbnails.fitBox.width, width, accuracy: 0.01)
+        XCTAssertEqual(wide.bounds.width, width, accuracy: 0.01, "the full usable width, margins and padding excluded")
+        XCTAssertEqual(wide.bounds.height, width / 6, accuracy: 0.01)
+        // It fits on its line: the fragment starts at the container's edge, holds the image
+        // whole, and no wider than the container.
+        let fragment = try lineFragment(of: wide, in: fixture)
+        XCTAssertGreaterThanOrEqual(fragment.height, wide.bounds.height)
+        XCTAssertLessThanOrEqual(fragment.maxX, try XCTUnwrap(fixture.textView.textContainer).size.width + 0.01)
+        await waitUntilSharp(wide, in: fixture)
+    }
+
+    func testE9_tallImageFitsVisibleHeight() async throws {
+        let fixture = try await showSizes()
+        let column = try thumbnail("column.png", in: fixture)
+        let height = visibleHeight(fixture)
+        XCTAssertGreaterThan(height, 100, "the editor is laid out")
+        XCTAssertLessThan(height, 1200, "the image is taller than the editor")
+        XCTAssertEqual(fixture.editor.thumbnails.fitBox.height, height, accuracy: 0.01)
+        XCTAssertEqual(column.bounds.height, height, accuracy: 0.01, "the visible height, not the width, bounds it")
+        XCTAssertEqual(column.bounds.width, height / 10, accuracy: 0.01)
+        XCTAssertGreaterThanOrEqual(try lineFragment(of: column, in: fixture).height, column.bounds.height)
+        await waitUntilSharp(column, in: fixture)
+    }
+
+    func testE9_smallImageAtNaturalPointSize() async throws {
+        let fixture = try await showSizes()
+        let tiny = try thumbnail("tiny.png", in: fixture)
+        XCTAssertEqual(tiny.source.points, CGSize(width: 40, height: 30), "no DPI stated: a pixel is a point")
+        XCTAssertEqual(tiny.bounds.size, NSSize(width: 40, height: 30), "its own size, never enlarged to the width")
+        // Asked for in full: the window's scale never asks for more pixels than the file has.
+        XCTAssertEqual(tiny.pixelSize, 40)
+        XCTAssertEqual(tiny.cgImage.width, 40)
+        XCTAssertEqual(tiny.cgImage.height, 30)
+    }
+
+    func testE9_retinaImageAtPointSizeNotPixels() async throws {
+        let fixture = try await showSizes()
+        let retina = try thumbnail("retina.png", in: fixture)
+        XCTAssertEqual(retina.source.pixels, CGSize(width: 400, height: 200))
+        XCTAssertEqual(retina.source.points.width, 200, accuracy: 0.1, "144 DPI: pixels over a scale of two")
+        XCTAssertEqual(retina.source.points.height, 100, accuracy: 0.1)
+        XCTAssertEqual(retina.bounds.width, 200, accuracy: 0.1, "drawn at its point size, not its pixel size")
+        XCTAssertEqual(retina.bounds.height, 100, accuracy: 0.1)
+        // Its pixels are what the window's scale needs of the drawn size, at most the file's.
+        let scale = fixture.window.backingScaleFactor
+        XCTAssertEqual(retina.pixelSize, min(Int(ceil(retina.bounds.width * scale)), 400))
+        XCTAssertEqual(retina.cgImage.width, retina.pixelSize)
+        XCTAssertEqual(
+            EditorThumbnails.pixelSize(forDrawnSize: NSSize(width: 200, height: 100), of: retina.source, scale: 2), 400)
+        XCTAssertEqual(
+            EditorThumbnails.pixelSize(forDrawnSize: NSSize(width: 200, height: 100), of: retina.source, scale: 1), 200)
+        XCTAssertEqual(
+            EditorThumbnails.pixelSize(forDrawnSize: NSSize(width: 200, height: 100), of: retina.source, scale: 3), 400)
+    }
+
+    func testE9_refitsOnEditorResize() async throws {
+        let fixture = try await showSizes(size: NSSize(width: 900, height: 700))
+        let wide = try thumbnail("wide.png", in: fixture)
+        let column = try thumbnail("column.png", in: fixture)
+        let tiny = try thumbnail("tiny.png", in: fixture)
+        await waitUntilSharp(wide, in: fixture)
+        let before = wide.bounds.size
+
+        // A narrower window: the wide image follows the text width at once, its line laid out
+        // again, and its image is asked for again at the new pixel size.
+        fixture.window.setContentSize(NSSize(width: 600, height: 700))
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        let narrower = try usableWidth(fixture)
+        XCTAssertLessThan(narrower, before.width - 100)
+        XCTAssertEqual(wide.bounds.width, narrower, accuracy: 0.01, "refitted on the resize, not on the next edit")
+        XCTAssertEqual(wide.bounds.height, narrower / 6, accuracy: 0.01)
+        let fragment = try lineFragment(of: wide, in: fixture)
+        XCTAssertGreaterThanOrEqual(fragment.height, wide.bounds.height)
+        XCTAssertLessThan(fragment.height, before.height, "the line shrank with it")
+        await waitUntilSharp(wide, in: fixture)
+        XCTAssertEqual(tiny.bounds.size, NSSize(width: 40, height: 30), "a small image stays as it is")
+
+        // A split drag: the editor's visible height changes and the column follows it.
+        let split = fixture.controller.mainView.splitView
+        let heightBefore = visibleHeight(fixture)
+        split.setPosition(split.minPossiblePositionOfDivider(at: 0) + 60, ofDividerAt: 0)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        let heightAfter = visibleHeight(fixture)
+        XCTAssertNotEqual(heightAfter, heightBefore, accuracy: 1, "the split moved")
+        XCTAssertEqual(column.bounds.height, heightAfter, accuracy: 0.01)
+        XCTAssertEqual(column.bounds.width, heightAfter / 10, accuracy: 0.01)
+        await waitUntilSharp(column, in: fixture)
+
+        // A wider window again: back up to the new width, never past the image's own size.
+        fixture.window.setContentSize(NSSize(width: 1000, height: 700))
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(wide.bounds.width, try usableWidth(fixture), accuracy: 0.01)
+        XCTAssertEqual(tiny.bounds.size, NSSize(width: 40, height: 30))
+
+        // Cmd-plus (E-8): the font size changes and every thumbnail is fitted again.
+        defer { UserDefaults.standard.removeObject(forKey: EditorFontPreference.sizeDefaultsKey) }
+        fixture.controller.makeTextBigger(nil)
+        for (_, thumbnail) in fixture.thumbnails {
+            XCTAssertEqual(
+                thumbnail.bounds.size,
+                EditorThumbnails.displaySize(
+                    forPointSize: thumbnail.source.points, fitting: fixture.editor.thumbnails.fitBox),
+                thumbnail.target)
         }
-        // The rule itself, scale by scale.
-        let fit = { (w: CGFloat, h: CGFloat, scale: CGFloat) in
-            EditorThumbnails.displaySize(forPixelSize: CGSize(width: w, height: h), scale: scale)
+        XCTAssertFalse(fixture.editor.hasUnsavedEdits, "refitting is not an edit")
+    }
+
+    func testE9_aspectRatioLocked() async throws {
+        let fixture = try await showSizes()
+        func checkProportions(_ when: String) {
+            for (_, thumbnail) in fixture.thumbnails {
+                let source = thumbnail.source.pixels
+                XCTAssertEqual(
+                    thumbnail.bounds.width / thumbnail.bounds.height, source.width / source.height, accuracy: 0.001,
+                    "\(thumbnail.target) \(when)")
+            }
         }
-        XCTAssertEqual(fit(480, 320, 2), NSSize(width: 240, height: 160))
-        XCTAssertEqual(fit(480, 320, 1), NSSize(width: 240, height: 160))
-        XCTAssertEqual(fit(100, 400, 2), NSSize(width: 40, height: 160))
-        XCTAssertEqual(fit(40, 30, 2), NSSize(width: 20, height: 15), "natural size at 2x")
-        XCTAssertEqual(fit(40, 30, 1), NSSize(width: 40, height: 30), "natural size at 1x")
-        let photo = fit(4000, 3000, 2)
-        XCTAssertEqual(photo.height, 160, accuracy: 0.001)
-        XCTAssertEqual(photo.width, 640.0 / 3.0, accuracy: 0.001)
-        XCTAssertEqual(fit(0, 0, 2), .zero)
+        checkProportions("as placed")
+        fixture.window.setContentSize(NSSize(width: 520, height: 420))
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        checkProportions("after a resize")
+
+        // The rule itself: the smallest of the image's size, the width and the height bound
+        // it, both sides scaled alike, never up; a side of the box not known bounds nothing.
+        let fit = { (w: CGFloat, h: CGFloat, boxW: CGFloat, boxH: CGFloat) in
+            EditorThumbnails.displaySize(
+                forPointSize: CGSize(width: w, height: h), fitting: NSSize(width: boxW, height: boxH))
+        }
+        XCTAssertEqual(fit(4000, 3000, 600, 300), NSSize(width: 400, height: 300), "height bounds")
+        XCTAssertEqual(fit(4000, 1000, 600, 300), NSSize(width: 600, height: 150), "width bounds")
+        XCTAssertEqual(fit(100, 50, 600, 300), NSSize(width: 100, height: 50), "never enlarged")
+        XCTAssertEqual(fit(1200, 200, 600, 0), NSSize(width: 600, height: 100))
+        XCTAssertEqual(fit(1200, 200, 0, 0), NSSize(width: 1200, height: 200))
+        XCTAssertEqual(fit(0, 0, 600, 300), .zero)
     }
 
     // MARK: - Following the text (E-9)
@@ -402,7 +581,9 @@ final class EditorThumbnailSmokeTests: XCTestCase {
     /// a plain click opens the image, with no underline; over the embed's text and the prose
     /// around it the I-beam is back (the embed is a link, which needs Cmd).
     func testED12_plainHoverHandOverThumbnail() async throws {
-        let fixture = try await showPics()
+        // Tall enough that the thumbnail, at its own 480 by 320 points, and the line after it
+        // are both in view: `firstRect` answers nothing for text scrolled out of sight.
+        let fixture = try await showPics(size: NSSize(width: 800, height: 1000))
         NSCursor.arrow.set()
         defer { NSCursor.arrow.set() }
         let (index, _) = try XCTUnwrap(fixture.thumbnails.first)
@@ -509,6 +690,23 @@ final class EditorThumbnailSmokeTests: XCTestCase {
         // The list is short, so the editor has most of the height; pull the split up further.
         let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-thumbnails")
         XCTAssertEqual(written.count, 2)
+        for url in written {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
+    }
+
+    /// E-9 (ADR-0021): a small, a Retina, a wide and a tall image fitted to the editor, each
+    /// at its sharp pixel size before the capture.
+    func testV1_rendersTheEditorWithWideTallAndSmallImagesFitted() async throws {
+        let fixture = try await showSizes(size: NSSize(width: 800, height: 720))
+        for (_, thumbnail) in fixture.thumbnails { await waitUntilSharp(thumbnail, in: fixture) }
+        var written = try writeWindowSnapshots(of: fixture.controller, named: "editor-thumbnail-fit")
+        // The same after the window is made narrower: refitted and redrawn, sharp again.
+        fixture.window.setContentSize(NSSize(width: 520, height: 720))
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        for (_, thumbnail) in fixture.thumbnails { await waitUntilSharp(thumbnail, in: fixture) }
+        written += try writeWindowSnapshots(of: fixture.controller, named: "editor-thumbnail-fit-narrow")
+        XCTAssertEqual(written.count, 4)
         for url in written {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
         }
