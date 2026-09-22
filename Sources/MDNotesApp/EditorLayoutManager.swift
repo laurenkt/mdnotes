@@ -25,8 +25,8 @@ import Foundation
 /// The rules also divide the text into sections, which alternate backgrounds (ED-10): the
 /// first section on the text background, the second on `bandColor`, and so on. A rule's line
 /// is the first line of its section. Before the glyphs are drawn, every filled section that
-/// crosses them is painted as a band from the top of its first line to the top of the next
-/// section's first line (the bottom of the text for the last), across the full width of the
+/// crosses them is painted as a band from the vertical centre of its rule's drawn hyphens to
+/// the centre of the next rule's (the bottom of the text for the last), across the full width of the
 /// editor including its margins: `EditorTextView` asks `drawBands` for them from its own
 /// background pass, because `NSTextView` clips the layout manager's background pass to the
 /// text container and the band must reach past the `textContainerInset` to the view's edges.
@@ -215,27 +215,41 @@ public final class EditorLayoutManager: NSLayoutManager {
         return bands
     }
 
-    /// The rects, in `container`'s coordinates, of the bands that cross `characterRange`,
-    /// clipped to the lines that hold `characterRange` so no line outside it is laid out. A
-    /// band runs from the top of its section's first line to the top of the next section's
-    /// first line, or to the bottom of the text (the empty last line after a final line break
-    /// included) for the last section. Each rect spans the container's width; the drawing
-    /// widens it to the editor's.
+    /// The rects, in `container`'s coordinates, of the bands that cross the lines holding
+    /// `characterRange`, clipped to those lines so no line outside them is laid out. A band
+    /// runs from the vertical centre of its rule's drawn hyphens (`hyphenMidline(of:)`) to the
+    /// centre of the next rule's, or to the bottom of the text (the empty last line after a
+    /// final line break included) for the last section, so the upper half of a rule's line
+    /// belongs to the section before it. A band whose rule line is not drawn starts at the top
+    /// of the first drawn line; one whose next rule line is not drawn stops at the bottom of
+    /// the last. Each rect spans the container's width; the drawing widens it to the editor's.
     public func bandRects(in characterRange: NSRange, in container: NSTextContainer) -> [NSRect] {
         guard let storage = textStorage else { return [] }
         let length = storage.length
         let drawn = NSIntersectionRange(characterRange, NSRange(location: 0, length: length))
         guard drawn.length > 0 else { return [] }
         let drawnEnd = NSMaxRange(drawn)
-        return bandRanges(in: drawn).map { band in
-            let top = lineFragmentRect(
-                forGlyphAt: glyphIndexForCharacter(at: max(band.location, drawn.location)), effectiveRange: nil
-            ).minY
+        let string = storage.mutableString
+        // A band that ends where the first drawn line starts still reaches down to the middle
+        // of that line, its next rule's, so the character before the line is asked for too.
+        let firstLine = string.lineRange(for: NSRange(location: drawn.location, length: 0)).location
+        let asked = NSRange(location: max(0, firstLine - 1), length: drawnEnd - max(0, firstLine - 1))
+        let drawnTop = lineFragmentRect(
+            forGlyphAt: glyphIndexForCharacter(at: drawn.location), effectiveRange: nil
+        ).minY
+        return bandRanges(in: asked).compactMap { band in
+            let ruleLineEnd = NSMaxRange(string.lineRange(for: NSRange(location: band.location, length: 0)))
+            let top: CGFloat
+            if drawn.location < ruleLineEnd, let rule = rule(onLineStartingAt: band.location) {
+                top = hyphenMidline(of: rule)
+            } else {
+                top = drawnTop
+            }
             let bandEnd = NSMaxRange(band)
             let bottom: CGFloat
-            if bandEnd < drawnEnd {
-                // The next section's first line is drawn too: the band stops where it starts.
-                bottom = lineFragmentRect(forGlyphAt: glyphIndexForCharacter(at: bandEnd), effectiveRange: nil).minY
+            if bandEnd < drawnEnd, let next = rule(onLineStartingAt: bandEnd) {
+                // The next section's rule line is drawn too: the band stops at its midline.
+                bottom = hyphenMidline(of: next)
             } else {
                 let lastLine = lineFragmentRect(
                     forGlyphAt: glyphIndexForCharacter(at: drawnEnd - 1), effectiveRange: nil)
@@ -245,8 +259,44 @@ public final class EditorLayoutManager: NSLayoutManager {
                     bottom = lastLine.maxY
                 }
             }
+            guard bottom > top else { return nil }
             return NSRect(x: 0, y: top, width: container.size.width, height: bottom - top)
         }
+    }
+
+    /// The typed rule on the line that starts at `lineStart` (a section start), found by a
+    /// binary search of `allRules`: the first rule at or after the line's start is on it.
+    private func rule(onLineStartingAt lineStart: Int) -> NSRange? {
+        let rules = allRules
+        var low = 0
+        var high = rules.count
+        while low < high {
+            let mid = (low + high) / 2
+            if rules[mid].location < lineStart { low = mid + 1 } else { high = mid }
+        }
+        return low < rules.count ? rules[low] : nil
+    }
+
+    /// The y, in container coordinates, of the vertical centre of the hyphens drawn for
+    /// `rule` (ED-10, ADR-0021): the middle of a hyphen's ink in the rule's font, on the
+    /// baseline of the rule's first line, which is where the typed `---` and the extension's
+    /// hyphens sit. A `* * *` or `___` rule has the same midline as a `---` would, since its
+    /// extension is hyphens too.
+    public func hyphenMidline(of rule: NSRange) -> CGFloat {
+        let glyph = glyphIndexForCharacter(at: rule.location)
+        let baseline = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + location(forGlyphAt: glyph).y
+        let font =
+            textStorage?.attribute(.font, at: rule.location, effectiveRange: nil) as? NSFont
+            ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        return baseline - Self.hyphenInkMiddle(in: font)
+    }
+
+    /// How far above the baseline the middle of `font`'s hyphen ink lies.
+    private static func hyphenInkMiddle(in font: NSFont) -> CGFloat {
+        var character = UniChar(0x2D)
+        var glyph = CGGlyph(0)
+        guard CTFontGetGlyphsForCharacters(font, &character, &glyph, 1) else { return font.xHeight / 2 }
+        return font.boundingRect(forCGGlyph: glyph).midY
     }
 
     // MARK: - Drawing

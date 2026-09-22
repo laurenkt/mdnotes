@@ -309,7 +309,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       margin and within one hyphen of the right edge), `testED8_extensionQuaternaryLabel`,
       existing not-selectable/not-copied tests kept green. V-1: editor-rules snapshot light and
       dark, typed rule visibly darker than the extension.
-- [ ] M10.19 Bands meet at rule midlines (ED-10): each band edge moves from the top of the rule's line
+- [x] M10.19 Bands meet at rule midlines (ED-10): each band edge moves from the top of the rule's line
       fragment to the vertical centre of the rule's drawn hyphens, so a filled section runs from
       one rule's hyphen midline to the next's (the last to the bottom of the text). Tests:
       `testED10_bandEdgeAtHyphenMidline` (band rect minY/maxY equal the midline of the rule

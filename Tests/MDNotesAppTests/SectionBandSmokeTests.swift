@@ -5,10 +5,11 @@ import MDNotesCore
 import XCTest
 
 /// Headless smoke tests for section banding (ED-10): the thematic breaks divide the text into
-/// sections, every second one is painted on `EditorLayoutManager.bandColor` from the rule's
-/// line down to the next rule's line, across the editor's full width, for the drawn range
-/// only, and the layout manager's rule list follows edits. Text goes into the real text view's
-/// storage as a load does, and edits go through `insertText`, the path a keystroke takes.
+/// sections, every second one is painted on `EditorLayoutManager.bandColor` from the middle of
+/// its rule's hyphens down to the middle of the next rule's, across the editor's full width,
+/// for the drawn range only, and the layout manager's rule list follows edits. Text goes into
+/// the real text view's storage as a load does, and edits go through `insertText`, the path a
+/// keystroke takes.
 @MainActor
 final class SectionBandSmokeTests: XCTestCase {
     private let keys = [EditorFontPreference.sizeDefaultsKey, MainView.listHeightDefaultsKey]
@@ -80,6 +81,21 @@ final class SectionBandSmokeTests: XCTestCase {
             layoutManager.lineFragmentRect(
                 forGlyphAt: layoutManager.glyphIndexForCharacter(at: location), effectiveRange: nil
             ).maxY
+        }
+
+        /// The vertical centre of the ink of `rule`'s own glyphs (a `---`), in container
+        /// coordinates: the union of the glyphs' bounding boxes in the rule's font, placed on
+        /// the rule's baseline. Read from Core Text, not from the layout manager's midline.
+        func inkMidline(of rule: NSRange) throws -> CGFloat {
+            let glyphs = layoutManager.glyphRange(forCharacterRange: rule, actualCharacterRange: nil)
+            let font = try XCTUnwrap(storage.attribute(.font, at: rule.location, effectiveRange: nil) as? NSFont)
+            var cgGlyphs = (glyphs.location..<NSMaxRange(glyphs)).map { layoutManager.cgGlyph(at: $0) }
+            var boxes = [CGRect](repeating: .zero, count: cgGlyphs.count)
+            _ = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &cgGlyphs, &boxes, cgGlyphs.count)
+            let ink = boxes.dropFirst().reduce(try XCTUnwrap(boxes.first)) { $0.union($1) }
+            XCTAssertGreaterThan(ink.height, 0, "a hyphen has ink")
+            let baseline = lineTop(at: rule.location) + layoutManager.location(forGlyphAt: glyphs.location).y
+            return baseline - ink.midY
         }
 
         /// The band rects for `range`, in container coordinates.
@@ -184,7 +200,108 @@ final class SectionBandSmokeTests: XCTestCase {
 
     // MARK: - ED-10: band geometry
 
-    func testED10_bandRunsFromTheRuleLineTopToTheNextRuleLineTop() throws {
+    /// Three `---` rules, so every band edge sits on hyphens the test can measure.
+    private let dashRules = """
+        The first section, on the text background.
+
+        ---
+
+        The second section, on the band.
+
+        ---
+
+        The third section, on the text background again.
+
+        ---
+
+        The fourth section, on the band, to the end of the text.
+
+        """
+
+    func testED10_bandEdgeAtHyphenMidline() throws {
+        for size: CGFloat in [EditorFontPreference.defaultSize, 9, 18, 30] {
+            EditorFontPreference.setSize(size)
+            let fixture = makeFixture()
+            // Mid-document: the band runs from one rule's hyphen midline to the next's.
+            fixture.show(dashRules)
+            let font = try XCTUnwrap(
+                fixture.storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont, "\(size)")
+            XCTAssertEqual(font.pointSize, size, accuracy: 0.01, "the editor follows the size preference")
+            let rules = (0..<3).map { fixture.range(of: "---", occurrence: $0) }
+            XCTAssertEqual(fixture.layoutManager.allRules, rules)
+            let rects = try fixture.bandRects(in: fixture.whole)
+            XCTAssertEqual(rects.count, 2, "\(size)")
+            let second = try XCTUnwrap(rects.first)
+            let fourth = try XCTUnwrap(rects.last)
+            for (index, rule) in rules.enumerated() {
+                let midline = try fixture.inkMidline(of: rule)
+                XCTAssertEqual(
+                    fixture.layoutManager.hyphenMidline(of: rule), midline, accuracy: 0.01, "rule \(index), \(size)")
+                XCTAssertGreaterThan(midline, fixture.lineTop(at: rule.location), "inside the rule's line")
+                XCTAssertLessThan(midline, fixture.lineBottom(at: rule.location), "inside the rule's line")
+            }
+            XCTAssertEqual(second.minY, try fixture.inkMidline(of: rules[0]), accuracy: 0.01, "\(size)")
+            XCTAssertEqual(second.maxY, try fixture.inkMidline(of: rules[1]), accuracy: 0.01, "\(size)")
+            XCTAssertEqual(fourth.minY, try fixture.inkMidline(of: rules[2]), accuracy: 0.01, "\(size)")
+            XCTAssertEqual(fourth.maxY, fixture.layoutManager.extraLineFragmentRect.maxY, accuracy: 0.01)
+
+            // Drawn from a rule's line only: the half above the midline belongs to the section
+            // before (the band ending there), the half below to the one after.
+            let upper = try XCTUnwrap(try fixture.bandRects(in: fixture.line(at: rules[1].location)).first)
+            XCTAssertEqual(upper.minY, fixture.lineTop(at: rules[1].location), accuracy: 0.01)
+            XCTAssertEqual(upper.maxY, try fixture.inkMidline(of: rules[1]), accuracy: 0.01)
+            XCTAssertEqual(try fixture.bandRects(in: fixture.line(at: rules[1].location)).count, 1)
+            let lower = try XCTUnwrap(try fixture.bandRects(in: fixture.line(at: rules[2].location)).first)
+            XCTAssertEqual(lower.minY, try fixture.inkMidline(of: rules[2]), accuracy: 0.01)
+            XCTAssertEqual(lower.maxY, fixture.lineBottom(at: rules[2].location), accuracy: 0.01)
+
+            // The bitmap: the row just above each opening midline is clear and the row just
+            // below is filled; the other way round where a band closes.
+            let whole = fixture.layoutManager.glyphRange(forCharacterRange: fixture.whole, actualCharacterRange: nil)
+            let rep = try drawBackground(whole, with: fixture)
+            for (index, opens) in [(0, true), (1, false), (2, true)] {
+                let midline = try fixture.inkMidline(of: rules[index])
+                let above = Int(midline.rounded(.down)) - 1
+                let below = Int(midline.rounded(.up))
+                for x in [0, rep.pixelsWide / 2, rep.pixelsWide - 1] {
+                    XCTAssertEqual(isPainted(rep, x: x, row: above), !opens, "above rule \(index), x \(x), \(size)")
+                    XCTAssertEqual(isPainted(rep, x: x, row: below), opens, "below rule \(index), x \(x), \(size)")
+                }
+            }
+            fixture.controller.close()
+        }
+    }
+
+    func testED10_bandEdgeAtHyphenMidlineNearTheDocumentStart() throws {
+        let fixture = makeFixture()
+        // A rule on line one opens the first, unfilled section: nothing is banded above the
+        // next rule's midline, not even the half of line one below the first rule's.
+        fixture.show("---\n\nThe first section starts with its rule.\n\n---\n\nThe second section.\n")
+        let first = fixture.range(of: "---")
+        let second = fixture.range(of: "---", occurrence: 1)
+        XCTAssertEqual(first.location, 0)
+        let rects = try fixture.bandRects(in: fixture.whole)
+        XCTAssertEqual(rects.count, 1)
+        XCTAssertEqual(try XCTUnwrap(rects.first).minY, try fixture.inkMidline(of: second), accuracy: 0.01)
+        XCTAssertEqual(try fixture.bandRects(in: fixture.line(at: 0)), [])
+
+        // A rule at the start of the text proper (after one empty line): its band opens at its
+        // hyphens' midline, and the empty line and the rule's upper half stay clear.
+        fixture.show("\n---\n\nBanded from the rule's midline.\n")
+        let rule = fixture.range(of: "---")
+        XCTAssertEqual(rule.location, 1)
+        let band = try XCTUnwrap(try fixture.bandRects(in: fixture.whole).first)
+        let midline = try fixture.inkMidline(of: rule)
+        XCTAssertEqual(band.minY, midline, accuracy: 0.01)
+        XCTAssertGreaterThan(band.minY, fixture.lineTop(at: rule.location))
+        let whole = fixture.layoutManager.glyphRange(forCharacterRange: fixture.whole, actualCharacterRange: nil)
+        let rep = try drawBackground(whole, with: fixture)
+        XCTAssertFalse(isPainted(rep, x: 2, row: Int(midline.rounded(.down)) - 1))
+        XCTAssertTrue(isPainted(rep, x: 2, row: Int(midline.rounded(.up))))
+        XCTAssertFalse(isPainted(rep, x: 2, row: 0), "the empty first line is not banded")
+    }
+
+    func testED10_bandRunsFromTheRuleMidlineToTheNextRuleMidline() throws {
         let fixture = makeFixture()
         fixture.show(threeRules)
         let container = try XCTUnwrap(fixture.textView.textContainer)
@@ -196,9 +313,16 @@ final class SectionBandSmokeTests: XCTestCase {
         let second = try XCTUnwrap(rects.first)
         let fourth = try XCTUnwrap(rects.last)
 
-        XCTAssertEqual(second.minY, fixture.lineTop(at: dash.location), accuracy: 0.01, "from the rule's line")
-        XCTAssertEqual(second.maxY, fixture.lineTop(at: spaced.location), accuracy: 0.01, "to the next rule's line")
-        XCTAssertEqual(fourth.minY, fixture.lineTop(at: under.location), accuracy: 0.01)
+        XCTAssertEqual(second.minY, try fixture.inkMidline(of: dash), accuracy: 0.01, "from the rule's midline")
+        // A `* * *` or `___` rule's boundary is the midline of the hyphens drawn beside it.
+        XCTAssertEqual(
+            second.maxY, fixture.layoutManager.hyphenMidline(of: spaced), accuracy: 0.01, "to the next rule's")
+        XCTAssertEqual(fourth.minY, fixture.layoutManager.hyphenMidline(of: under), accuracy: 0.01)
+        for rule in [spaced, under] {
+            let midline = fixture.layoutManager.hyphenMidline(of: rule)
+            XCTAssertGreaterThan(midline, fixture.lineTop(at: rule.location))
+            XCTAssertLessThan(midline, fixture.lineBottom(at: rule.location))
+        }
         // The text ends with a line break, so the empty last line is part of the last section.
         let extra = fixture.layoutManager.extraLineFragmentRect
         XCTAssertGreaterThan(extra.height, 0, "a final line break leaves an empty last line")
@@ -233,7 +357,7 @@ final class SectionBandSmokeTests: XCTestCase {
         let across = NSRange(location: secondProse.location, length: thirdProse.location - secondProse.location)
         let stopped = try XCTUnwrap(try fixture.bandRects(in: across).first)
         XCTAssertEqual(stopped.minY, fixture.lineTop(at: secondProse.location), accuracy: 0.01)
-        XCTAssertEqual(stopped.maxY, fixture.lineTop(at: spaced.location), accuracy: 0.01)
+        XCTAssertEqual(stopped.maxY, fixture.layoutManager.hyphenMidline(of: spaced), accuracy: 0.01)
         XCTAssertEqual(try fixture.bandRects(in: across).count, 1, "the third section is not filled")
         XCTAssertEqual(try fixture.bandRects(in: NSRange(location: 0, length: 0)), [])
     }
@@ -268,9 +392,14 @@ final class SectionBandSmokeTests: XCTestCase {
     /// `location`, is painted at all.
     private func isPainted(_ rep: NSBitmapImageRep, x: CGFloat, atLineOf location: Int, in fixture: Fixture) -> Bool {
         let y = Int(((fixture.lineTop(at: location) + fixture.lineBottom(at: location)) / 2).rounded(.down))
-        let column = Int(x.rounded(.down))
-        guard column >= 0, column < rep.pixelsWide, y >= 0, y < rep.pixelsHigh else { return false }
-        guard let color = rep.colorAt(x: column, y: y) else { return false }
+        return isPainted(rep, x: Int(x.rounded(.down)), row: y)
+    }
+
+    /// Whether the pixel at column `x`, row `row` (the flipped bitmap's, one per point) is
+    /// painted at all.
+    private func isPainted(_ rep: NSBitmapImageRep, x: Int, row: Int) -> Bool {
+        guard x >= 0, x < rep.pixelsWide, row >= 0, row < rep.pixelsHigh else { return false }
+        guard let color = rep.colorAt(x: x, y: row) else { return false }
         return color.alphaComponent > 0.005
     }
 
@@ -283,13 +412,21 @@ final class SectionBandSmokeTests: XCTestCase {
         let width = CGFloat(rep.pixelsWide)
         let columns: [CGFloat] = [0, 1, width / 2, width - 2]
         let filled = [
-            fixture.range(of: "---").location, fixture.range(of: "The second section").location,
-            fixture.range(of: "___").location, fixture.range(of: "The fourth section").location,
+            fixture.range(of: "The second section").location, fixture.range(of: "The fourth section").location,
         ]
         let clear = [
-            0, fixture.range(of: "The first section").location, fixture.range(of: "* * *").location,
-            fixture.range(of: "The third section").location,
+            0, fixture.range(of: "The first section").location, fixture.range(of: "The third section").location,
         ]
+        // A rule's line is split at its hyphens' midline: above it the section before, below
+        // it the rule's own section.
+        for (rule, opens) in [("---", true), ("* * *", false), ("___", true)] {
+            let midline = fixture.layoutManager.hyphenMidline(of: fixture.range(of: rule))
+            for x in columns {
+                let column = Int(x.rounded(.down))
+                XCTAssertEqual(isPainted(rep, x: column, row: Int(midline.rounded(.down)) - 1), !opens, "\(rule) \(x)")
+                XCTAssertEqual(isPainted(rep, x: column, row: Int(midline.rounded(.up))), opens, "\(rule) \(x)")
+            }
+        }
         for location in filled {
             for x in columns {
                 XCTAssertTrue(isPainted(rep, x: x, atLineOf: location, in: fixture), "band at x \(x), \(location)")
@@ -419,10 +556,17 @@ final class SectionBandSmokeTests: XCTestCase {
             let offBand = try pixel(rep, column: column, atLineOf: unbanded, in: fixture)
             XCTAssertTrue(same(offBand, clearMiddle), "column \(column) of an unbanded line is the text background")
         }
-        // The rule's own line is banded too (the break line is first in its section), edge to edge.
-        let ruleLine = fixture.range(of: "___").location
+        // The rule's own line is banded below its hyphens' midline and not above, edge to edge.
+        let midline = fixture.layoutManager.hyphenMidline(of: fixture.range(of: "___"))
+        let scale = CGFloat(rep.pixelsHigh) / view.bounds.height
+        let inset = view.textContainerInset.height
+        let rowAbove = Int(((midline + inset) * scale).rounded(.down)) - 1
+        let rowBelow = Int(((midline + inset) * scale).rounded(.up))
         for column in [first, last] {
-            XCTAssertTrue(same(try pixel(rep, column: column, atLineOf: ruleLine, in: fixture), bandedMiddle))
+            let above = try XCTUnwrap(rep.colorAt(x: column, y: rowAbove)?.usingColorSpace(.deviceRGB))
+            let below = try XCTUnwrap(rep.colorAt(x: column, y: rowBelow)?.usingColorSpace(.deviceRGB))
+            XCTAssertTrue(same(below, bandedMiddle), "below the midline, column \(column)")
+            XCTAssertTrue(same(above, clearMiddle), "above the midline, column \(column)")
         }
     }
 
@@ -506,7 +650,7 @@ final class SectionBandSmokeTests: XCTestCase {
 
             ---
 
-            The second section is banded: a subtle system fill from the rule's line to the line of the next rule, across the whole editor width, margins included.
+            The second section is banded: a subtle system fill from the middle of the rule's hyphens to the middle of the next rule's, across the whole editor width, margins included.
 
             - A list item in the band
             - Another
