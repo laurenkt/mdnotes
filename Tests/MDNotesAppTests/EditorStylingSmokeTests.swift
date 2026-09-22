@@ -1220,7 +1220,9 @@ final class EditorStylingSmokeTests: XCTestCase {
             XCTAssertEqual(fixture.color(at: rule.location + rule.length), base, "\(needle): the line break after")
         }
         XCTAssertEqual(fixture.color(at: range(of: "after", in: text).location), base)
-        XCTAssertEqual(EditorLayoutManager.extensionColor, tertiary, "the drawn extension is ED-8's, not this task's")
+        XCTAssertEqual(
+            EditorLayoutManager.extensionColor, NSColor.quaternaryLabelColor,
+            "the drawn extension (ED-8) is fainter than the typed rule")
     }
 
     /// ED-2 (ADR-0021): only list markers and rules move to secondary; every other marker,

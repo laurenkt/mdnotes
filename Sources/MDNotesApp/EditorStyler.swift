@@ -265,9 +265,9 @@ public final class EditorStyler {
     /// text's own colour (link colour).
     nonisolated public static let missingLinkUnderline: NSUnderlineStyle = [.single, .patternDot]
 
-    /// The colour markdown markers are set in (ED-2), and of a rule's drawn extension
-    /// (ED-8, `EditorLayoutManager.extensionColor`); list markers and rules use
-    /// `listMarkerColor` instead.
+    /// The colour markdown markers are set in (ED-2); list markers and rules use
+    /// `listMarkerColor` instead, and a rule's drawn extension the fainter
+    /// `EditorLayoutManager.extensionColor` (ED-8).
     nonisolated public static let markerColor: NSColor = .tertiaryLabelColor
 
     /// ED-2 (ADR-0021): the colour list markers (`-`, `*`, `+`, `<n>.`, a task item's `- `

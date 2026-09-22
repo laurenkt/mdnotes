@@ -6,8 +6,9 @@ import XCTest
 
 /// Headless smoke tests for thematic breaks (ED-8): the typed rule is styled as a marker and
 /// carries the `.rule` token style over exactly its characters, and the editor's
-/// `EditorLayoutManager` paints the faded extension from its end to the trailing edge while
-/// the text, the selection, the caret and copy never see it. Text goes into the real text
+/// `EditorLayoutManager` paints the faded extension from the view's leading edge to the rule
+/// and from its end to the view's trailing edge while the text, the selection, the caret and
+/// copy never see it. Text goes into the real text
 /// view's storage as a load does, and edits go through `insertText`, the path a keystroke
 /// takes.
 @MainActor
@@ -303,9 +304,12 @@ final class RuleExtensionSmokeTests: XCTestCase {
 
     // MARK: - ED-8: drawing
 
-    /// Draws `glyphs` through the layout manager into a transparent bitmap the size of the
-    /// text container, flipped as the text view is, and returns the bitmap.
-    private func draw(_ glyphs: NSRange, with fixture: Fixture) throws -> NSBitmapImageRep {
+    /// Draws the rule extensions for `glyphs` through the layout manager's
+    /// `drawRuleExtensions`, as the text view's background pass does but out to the
+    /// container's trailing edge, into a transparent bitmap the size of the text container,
+    /// flipped as the text view is, and returns the bitmap. With `glyphPass` the layout
+    /// manager's own `drawGlyphs` is drawn instead.
+    private func draw(_ glyphs: NSRange, with fixture: Fixture, glyphPass: Bool = false) throws -> NSBitmapImageRep {
         let container = try XCTUnwrap(fixture.textView.textContainer)
         let used = fixture.layoutManager.usedRect(for: container)
         let width = Int(container.size.width.rounded(.up))
@@ -320,7 +324,12 @@ final class RuleExtensionSmokeTests: XCTestCase {
         NSGraphicsContext.current = context
         context.cgContext.translateBy(x: 0, y: CGFloat(height))
         context.cgContext.scaleBy(x: 1, y: -1)
-        fixture.layoutManager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+        if glyphPass {
+            fixture.layoutManager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+        } else {
+            fixture.layoutManager.drawRuleExtensions(
+                forGlyphRange: glyphs, at: .zero, fromX: 0, toX: container.size.width - container.lineFragmentPadding)
+        }
         context.flushGraphics()
         NSGraphicsContext.restoreGraphicsState()
         return rep
@@ -409,6 +418,152 @@ final class RuleExtensionSmokeTests: XCTestCase {
             let extent = try fixture.extent(of: rule)
             XCTAssertTrue(
                 isPainted(restRep, along: extent, from: extent.rect.minX + 2, to: extent.rect.maxX - 2), "\(rule)")
+        }
+    }
+
+    // MARK: - ED-8: the real view's draw pass
+
+    /// Renders the real text view, as the window does, into a bitmap the size of its bounds at
+    /// the backing scale through `cacheDisplay`, so every clip `NSTextView`'s own draw pass
+    /// applies is in force, in `appearance`.
+    private func render(_ fixture: Fixture, in appearance: NSAppearance.Name = .aqua) throws -> NSBitmapImageRep {
+        let view = fixture.textView
+        fixture.controller.window?.appearance = NSAppearance(named: appearance)
+        defer { fixture.controller.window?.appearance = nil }
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
+
+    /// How far any pixel of `rep` in `columns` (bitmap pixels), on the rows between the middle
+    /// of `line` and `baseline` (view points, where a hyphen's stroke sits), departs from the
+    /// same column's pixel at the top of the line, which only the background covers.
+    private func ink(
+        _ rep: NSBitmapImageRep, columns: Range<Int>, line: NSRect, baseline: CGFloat, in view: NSView
+    ) -> CGFloat {
+        let scale = CGFloat(rep.pixelsWide) / view.bounds.width
+        let reference = Int(((line.minY + 1) * scale).rounded(.down))
+        let rows = Int((line.midY * scale).rounded(.down))...Int((baseline * scale).rounded(.down))
+        var most: CGFloat = 0
+        for x in columns where x >= 0 && x < rep.pixelsWide {
+            guard let back = rep.colorAt(x: x, y: reference)?.usingColorSpace(.deviceRGB) else { continue }
+            for y in rows where y >= 0 && y < rep.pixelsHigh {
+                guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                most = max(
+                    most, abs(color.redComponent - back.redComponent), abs(color.greenComponent - back.greenComponent),
+                    abs(color.blueComponent - back.blueComponent))
+            }
+        }
+        return most
+    }
+
+    /// The line fragment holding `location` and the baseline of its first glyph, in the view's
+    /// coordinates.
+    private func line(at location: Int, in fixture: Fixture) -> (rect: NSRect, baseline: CGFloat) {
+        let layoutManager = fixture.layoutManager
+        let glyph = layoutManager.glyphIndexForCharacter(at: location)
+        let origin = fixture.textView.textContainerOrigin
+        let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let rect = fragment.offsetBy(dx: origin.x, dy: origin.y)
+        return (rect, rect.minY + layoutManager.location(forGlyphAt: glyph).y)
+    }
+
+    func testED8_extensionReachesBothViewEdges() throws {
+        let fixture = makeFixture()
+        fixture.show(document)
+        let view = fixture.textView
+        let margin = view.textContainerInset.width
+        XCTAssertGreaterThan(margin, 0, "the margins the extension must cross")
+        XCTAssertEqual(view.bounds.minX, 0)
+        let rep = try render(fixture)
+        let scale = CGFloat(rep.pixelsWide) / view.bounds.width
+        let leftMargin = 0..<Int((margin * scale).rounded(.down))
+        XCTAssertFalse(fixture.rules.isEmpty)
+
+        for rule in fixture.rules {
+            let (rect, baseline) = line(at: rule.location, in: fixture)
+            let font = try XCTUnwrap(
+                fixture.storage.attribute(.font, at: rule.location, effectiveRange: nil) as? NSFont)
+            let hyphen = NSAttributedString(string: "-", attributes: [.font: font]).size().width
+            XCTAssertGreaterThan(
+                ink(rep, columns: leftMargin, line: rect, baseline: baseline, in: view), 0.03,
+                "hyphens in the left margin, before the rule at \(rule)")
+            let lastHyphen = Int(((view.bounds.maxX - hyphen - 1) * scale).rounded(.down))..<rep.pixelsWide
+            XCTAssertGreaterThan(
+                ink(rep, columns: lastHyphen, line: rect, baseline: baseline, in: view), 0.03,
+                "hyphens within one hyphen of the right edge, after the rule at \(rule)")
+        }
+
+        // A prose line's margins stay clear: only rules extend.
+        let prose = range(of: "A paragraph before the first rule.", in: view.string)
+        let (proseRect, proseBaseline) = line(at: prose.location, in: fixture)
+        XCTAssertLessThan(ink(rep, columns: leftMargin, line: proseRect, baseline: proseBaseline, in: view), 0.01)
+        let rightMargin = Int(((view.bounds.maxX - margin) * scale).rounded(.up))..<rep.pixelsWide
+        XCTAssertLessThan(ink(rep, columns: rightMargin, line: proseRect, baseline: proseBaseline, in: view), 0.01)
+
+        // The layout manager's glyph pass leaves the extension to the view's pass, which
+        // reaches the margins: painting it in both would draw it twice.
+        XCTAssertNotNil(view.textContainer?.textView)
+        let whole = fixture.layoutManager.glyphRange(
+            forCharacterRange: NSRange(location: 0, length: fixture.storage.length), actualCharacterRange: nil)
+        let glyphsOnly = try draw(whole, with: fixture, glyphPass: true)
+        let dash = try fixture.extent(of: range(of: "---", in: view.string))
+        XCTAssertFalse(isPainted(glyphsOnly, along: dash, from: dash.rect.minX + 2, to: dash.rect.maxX - 2))
+    }
+
+    func testED8_extensionQuaternaryLabel() throws {
+        XCTAssertEqual(EditorLayoutManager.extensionColor, NSColor.quaternaryLabelColor)
+        let fixture = makeFixture()
+        fixture.show(document)
+        let dash = range(of: "---", in: fixture.textView.string)
+        let extent = try fixture.extent(of: dash)
+
+        // Drawn alone into a transparent bitmap, the hyphens are no more opaque than the
+        // quaternary label colour and plainly fainter than the tertiary.
+        let aqua = try XCTUnwrap(NSAppearance(named: .aqua))
+        var quaternary: CGFloat = 0
+        var tertiary: CGFloat = 0
+        var drawn: NSBitmapImageRep?
+        let glyphs = fixture.layoutManager.glyphRange(forCharacterRange: dash, actualCharacterRange: nil)
+        var failure: (any Error)?
+        aqua.performAsCurrentDrawingAppearance {
+            quaternary = NSColor.quaternaryLabelColor.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0
+            tertiary = NSColor.tertiaryLabelColor.usingColorSpace(.deviceRGB)?.alphaComponent ?? 0
+            do { drawn = try draw(glyphs, with: fixture) } catch { failure = error }
+        }
+        if let failure { throw failure }
+        let rep = try XCTUnwrap(drawn)
+        XCTAssertLessThan(quaternary, tertiary)
+        var opaque: CGFloat = 0
+        for y in Int(extent.rect.minY)..<Int(extent.rect.maxY.rounded(.up)) {
+            for x in Int(extent.rect.minX.rounded(.up))..<min(rep.pixelsWide, Int(extent.rect.maxX)) {
+                opaque = max(opaque, rep.colorAt(x: x, y: y)?.alphaComponent ?? 0)
+            }
+        }
+        XCTAssertGreaterThan(opaque, 0, "the hyphens are painted")
+        XCTAssertLessThanOrEqual(opaque, quaternary + 0.02, "in quaternary label colour")
+        XCTAssertLessThan(opaque, tertiary - 0.05, "fainter than the marker colour")
+
+        // In the rendered view the typed rule (secondary, ED-2) is visibly darker than the
+        // extension after it, in either appearance.
+        let view = fixture.textView
+        let (rect, baseline) = line(at: dash.location, in: fixture)
+        let origin = view.textContainerOrigin
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let rendered = try render(fixture, in: appearance)
+            let scale = CGFloat(rendered.pixelsWide) / view.bounds.width
+            let typed =
+                Int(
+                    ((extent.leading.maxX + origin.x) * scale).rounded(.up))..<Int(
+                    ((extent.rect.minX + origin.x) * scale).rounded(.down))
+            let faded =
+                Int(
+                    ((extent.rect.minX + origin.x + 4) * scale).rounded(.up))..<Int(
+                    ((extent.rect.maxX + origin.x) * scale).rounded(.down))
+            let typedInk = ink(rendered, columns: typed, line: rect, baseline: baseline, in: view)
+            let fadedInk = ink(rendered, columns: faded, line: rect, baseline: baseline, in: view)
+            XCTAssertGreaterThan(fadedInk, 0.02, "the extension shows, \(appearance.rawValue)")
+            XCTAssertGreaterThan(typedInk, fadedInk * 1.5, "the typed rule is darker, \(appearance.rawValue)")
         }
     }
 

@@ -124,14 +124,14 @@ public final class EditorTextView: NSTextView {
         super.keyDown(with: event)
     }
 
-    // MARK: - Section bands (ED-10)
+    // MARK: - Section bands (ED-10) and rule extensions (ED-8)
 
-    /// The view's background, then the section bands over it across the view's full width
-    /// (ED-10). `NSTextView` clips the layout manager's `drawBackground` to the text container,
-    /// which would leave the `textContainerInset` margins on the text background, while this
-    /// pass is unclipped, so the bands are painted here for the glyphs `rect` (the dirty rect)
-    /// covers, from the view's left edge to its right, before the text's own background and the
-    /// selection go over them.
+    /// The view's background, then the section bands over it (ED-10) and the rule extensions'
+    /// hyphens (ED-8), both across the view's full width. `NSTextView` clips the layout
+    /// manager's `drawBackground` and `drawGlyphs` to the text container, which would leave the
+    /// `textContainerInset` margins bare, while this pass is unclipped, so both are painted here
+    /// for the glyphs `rect` (the dirty rect) covers, from the view's left edge to its right,
+    /// before the text's own background, the selection and the glyphs go over them.
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard let container = textContainer else { return }
@@ -139,6 +139,18 @@ public final class EditorTextView: NSTextView {
         let inContainer = rect.offsetBy(dx: -origin.x, dy: -origin.y)
         let glyphs = editorLayoutManager.glyphRange(forBoundingRect: inContainer, in: container)
         editorLayoutManager.drawBands(forGlyphRange: glyphs, at: origin, fromX: bounds.minX, toX: bounds.maxX)
+        editorLayoutManager.drawRuleExtensions(
+            forGlyphRange: glyphs, at: origin, fromX: bounds.minX, toX: bounds.maxX)
+    }
+
+    /// Widens every redraw the text system asks for to the view's full width. The layout
+    /// manager invalidates line fragments, which span the text container only, and the bands
+    /// and rule extensions painted in the margins (ED-8, ED-10) belong to those lines, so a
+    /// line that moves or changes takes its margins with it.
+    public override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        guard !rect.isEmpty else { return super.setNeedsDisplay(rect, avoidAdditionalLayout: flag) }
+        let wide = NSRect(x: bounds.minX, y: rect.minY, width: bounds.width, height: rect.height)
+        super.setNeedsDisplay(wide, avoidAdditionalLayout: flag)
     }
 
     // MARK: - Cmd-hover (ED-12)

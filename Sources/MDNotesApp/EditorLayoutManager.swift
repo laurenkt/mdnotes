@@ -9,10 +9,14 @@ import Foundation
 ///
 /// A thematic break is typed as `---`, `* * *` or `___` (ED-8) and the styler marks those
 /// characters with `EditorStyler.TokenStyle.rule`. When a line carrying that mark is drawn,
-/// hyphens in `extensionColor` (tertiary label colour, the marker colour of ED-2) are painted
-/// from the end of the typed rule's last glyph to the trailing edge of its text container, in
-/// the rule's own font and on its baseline, so the typed characters read as the start of a
-/// rule that runs the width of the editor. The hyphens are not text: they are not in the
+/// hyphens in `extensionColor` (quaternary label colour, fainter than the typed rule's
+/// secondary, ED-2) are painted from the editor view's leading edge to the typed rule's first
+/// glyph and from its last glyph to the view's trailing edge, margins included, in the rule's
+/// own font and on its baseline, so the typed characters read as part of a rule that runs the
+/// width of the editor. `EditorTextView` asks `drawRuleExtensions` for them from its own
+/// background pass, as it does the bands, because `NSTextView` clips the layout manager's
+/// glyph pass to the text container and the hyphens must reach past the `textContainerInset`
+/// to the view's edges. The hyphens are not text: they are not in the
 /// storage, so there is nothing there to select, copy or move the caret onto, and a click on
 /// them lands the caret at the rule's end as a click past any line's end does. They are drawn
 /// only for the glyph range the text view asks for, which is the visible rect, and vanish
@@ -37,9 +41,9 @@ import Foundation
 /// would compute by laying out every line to the end before the redraw (PF-3). Estimated
 /// heights and background layout are how `NSTextView` handles large documents under TextKit 1.
 public final class EditorLayoutManager: NSLayoutManager {
-    /// The rule extension's colour (ED-8): the marker colour, since the extension is the
-    /// faded continuation of a marker.
-    nonisolated public static let extensionColor: NSColor = .tertiaryLabelColor
+    /// The rule extension's colour (ED-8, ADR-0021): quaternary label colour, so the typed
+    /// rule (secondary, ED-2) reads darker than the faded hyphens that continue it.
+    nonisolated public static let extensionColor: NSColor = .quaternaryLabelColor
 
     /// The character the extension is made of.
     nonisolated public static let extensionCharacter = "-"
@@ -54,15 +58,26 @@ public final class EditorLayoutManager: NSLayoutManager {
         /// The typed rule, as storage characters.
         public let rule: NSRange
         /// From the end of the rule's last glyph to the container's trailing edge (its width
-        /// less the line fragment padding), as tall as the rule's last line fragment.
+        /// less the line fragment padding), as tall as the rule's last line fragment. The
+        /// drawing widens it to the view's trailing edge.
         public let rect: NSRect
         /// The y of the rule's baseline, which the hyphens sit on.
         public let baseline: CGFloat
+        /// From the container's leading edge to the start of the rule's first glyph, as tall
+        /// as the rule's first line fragment. The drawing widens it to the view's leading edge.
+        public let leading: NSRect
+        /// The y of the baseline of the rule's first line (the same as `baseline` unless the
+        /// rule wraps).
+        public let leadingBaseline: CGFloat
 
-        public init(rule: NSRange, rect: NSRect, baseline: CGFloat) {
+        public init(
+            rule: NSRange, rect: NSRect, baseline: CGFloat, leading: NSRect = .zero, leadingBaseline: CGFloat = 0
+        ) {
             self.rule = rule
             self.rect = rect
             self.baseline = baseline
+            self.leading = leading
+            self.leadingBaseline = leadingBaseline
         }
     }
 
@@ -139,25 +154,32 @@ public final class EditorLayoutManager: NSLayoutManager {
     }
 
     /// The extension of the typed rule at `rule` (a storage range), or nil when that range is
-    /// not exactly a rule (the `.rule` run the styler marked), is not laid out in `container`,
-    /// or its last line has no room after it. The rect starts where the rule's last glyph ends
-    /// on the line that holds it (a rule long enough to wrap extends from its last line) and
-    /// ends at the container's trailing edge.
+    /// not exactly a rule (the `.rule` run the styler marked) or is not laid out in
+    /// `container`. The trailing rect starts where the rule's last glyph ends on the line that
+    /// holds it (a rule long enough to wrap extends from its last line) and ends at the
+    /// container's trailing edge (empty when the line is full); the leading rect runs from the
+    /// container's leading edge to where the rule's first glyph starts.
     public func ruleExtension(for rule: NSRange, in container: NSTextContainer) -> RuleExtension? {
         guard ruleRanges(in: rule) == [rule] else { return nil }
         let glyphs = glyphRange(forCharacterRange: rule, actualCharacterRange: nil)
         guard glyphs.length > 0 else { return nil }
         let last = NSMaxRange(glyphs) - 1
-        guard textContainer(forGlyphAt: last, effectiveRange: nil) === container else { return nil }
+        guard textContainer(forGlyphAt: last, effectiveRange: nil) === container,
+            textContainer(forGlyphAt: glyphs.location, effectiveRange: nil) === container
+        else { return nil }
         var fragmentGlyphs = NSRange()
         let fragment = lineFragmentRect(forGlyphAt: last, effectiveRange: &fragmentGlyphs)
         let tail = NSIntersectionRange(glyphs, fragmentGlyphs)
         guard tail.length > 0 else { return nil }
         let start = boundingRect(forGlyphRange: tail, in: container).maxX
-        let end = fragment.maxX - container.lineFragmentPadding
-        guard end > start else { return nil }
+        let end = max(start, fragment.maxX - container.lineFragmentPadding)
         let rect = NSRect(x: start, y: fragment.minY, width: end - start, height: fragment.height)
-        return RuleExtension(rule: rule, rect: rect, baseline: fragment.minY + location(forGlyphAt: last).y)
+        let first = lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+        let firstGlyph = location(forGlyphAt: glyphs.location)
+        let leading = NSRect(x: 0, y: first.minY, width: max(0, first.minX + firstGlyph.x), height: first.height)
+        return RuleExtension(
+            rule: rule, rect: rect, baseline: fragment.minY + location(forGlyphAt: last).y, leading: leading,
+            leadingBaseline: first.minY + firstGlyph.y)
     }
 
     // MARK: - Sections (ED-10)
@@ -265,12 +287,18 @@ public final class EditorLayoutManager: NSLayoutManager {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
     }
 
-    /// Draws the glyphs as `NSLayoutManager` does, then the extension of every rule among
-    /// them (ED-8). `glyphsToShow` is what the text view's dirty rect covers, so nothing
-    /// outside the visible rect is painted or even looked at.
-    public override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
-        super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
-        guard let storage = textStorage, let context = NSGraphicsContext.current else { return }
+    /// Paints the extension of every rule among `glyphsToShow` (ED-8): hyphens from `minX` to
+    /// the rule's first glyph and from its last glyph to `maxX` (the editor's edges, margins
+    /// included), the container's origin at `origin`. `glyphsToShow` is what the text view's
+    /// dirty rect covers, so nothing outside the visible rect is painted or even looked at.
+    /// `EditorTextView` calls this from its own background pass, which is unclipped, since
+    /// `NSTextView` clips the layout manager's glyph pass to the text container.
+    public func drawRuleExtensions(
+        forGlyphRange glyphsToShow: NSRange, at origin: NSPoint, fromX minX: CGFloat, toX maxX: CGFloat
+    ) {
+        guard glyphsToShow.length > 0, maxX > minX, let storage = textStorage,
+            let context = NSGraphicsContext.current
+        else { return }
         let characters = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
         for rule in ruleRanges(in: characters) {
             guard rule.location < storage.length,
@@ -281,18 +309,51 @@ public final class EditorLayoutManager: NSLayoutManager {
             let font =
                 storage.attribute(.font, at: rule.location, effectiveRange: nil) as? NSFont
                 ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
-            Self.draw(extent, font: font, at: origin, in: context)
+            let trailingStart = extent.rect.minX + origin.x
+            let trailing = NSRect(
+                x: trailingStart, y: extent.rect.minY + origin.y, width: maxX - trailingStart,
+                height: extent.rect.height)
+            Self.drawHyphens(in: trailing, baseline: extent.baseline + origin.y, from: .start, font: font, in: context)
+            let leading = NSRect(
+                x: minX, y: extent.leading.minY + origin.y, width: extent.leading.maxX + origin.x - minX,
+                height: extent.leading.height)
+            Self.drawHyphens(
+                in: leading, baseline: extent.leadingBaseline + origin.y, from: .end, font: font, in: context)
         }
     }
 
-    /// Paints as many hyphens as fit `extent.rect`, in `font` and `extensionColor`, on the
-    /// rule's baseline, clipped to the rect so the last one never crosses the trailing edge.
-    /// Core Text draws them because it places text by baseline, which is what lines the
-    /// hyphens up with the typed rule; the text view is flipped, so the text matrix is too.
-    private static func draw(_ extent: RuleExtension, font: NSFont, at origin: NSPoint, in context: NSGraphicsContext) {
+    /// Draws the glyphs as `NSLayoutManager` does, then, when no text view draws the container
+    /// (a bare layout manager drawing into a bitmap), the rule extensions (ED-8) across the
+    /// container. With a text view they are its background pass's, through
+    /// `drawRuleExtensions`, since this pass is clipped to the container and the hyphens must
+    /// reach the view's edges; painting them here too would draw them twice.
+    public override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+        guard glyphsToShow.length > 0, textStorage != nil,
+            let container = textContainer(forGlyphAt: glyphsToShow.location, effectiveRange: nil),
+            container.textView == nil
+        else { return }
+        drawRuleExtensions(
+            forGlyphRange: glyphsToShow, at: origin, fromX: origin.x,
+            toX: origin.x + container.size.width - container.lineFragmentPadding)
+    }
+
+    /// Which end of a rect the hyphens are laid from: the trailing extension starts at the
+    /// rule's end and the leading one ends at the rule's start, so both keep the typed
+    /// characters' rhythm.
+    private enum Anchor { case start, end }
+
+    /// Paints as many whole hyphens as fit `rect`, in `font` and `extensionColor`, on
+    /// `baseline`, laid from `anchor` and clipped to the rect so none crosses its edges. Core
+    /// Text draws them because it places text by baseline, which is what lines the hyphens up
+    /// with the typed rule; the text view is flipped, so the text matrix is too.
+    private static func drawHyphens(
+        in rect: NSRect, baseline: CGFloat, from anchor: Anchor, font: NSFont, in context: NSGraphicsContext
+    ) {
+        guard rect.width > 0 else { return }
         let hyphenWidth = NSAttributedString(string: extensionCharacter, attributes: [.font: font]).size().width
         guard hyphenWidth > 0 else { return }
-        let count = Int((extent.rect.width / hyphenWidth).rounded(.down))
+        let count = Int((rect.width / hyphenWidth).rounded(.down))
         guard count > 0 else { return }
         let hyphens = NSAttributedString(
             string: String(repeating: extensionCharacter, count: count),
@@ -300,12 +361,13 @@ public final class EditorLayoutManager: NSLayoutManager {
                 .font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
             ])
         let line = CTLineCreateWithAttributedString(hyphens)
+        let x = anchor == .start ? rect.minX : rect.maxX - CGFloat(count) * hyphenWidth
         let cg = context.cgContext
         cg.saveGState()
-        cg.clip(to: extent.rect.offsetBy(dx: origin.x, dy: origin.y))
+        cg.clip(to: rect)
         extensionColor.setFill()
         cg.textMatrix = context.isFlipped ? CGAffineTransform(scaleX: 1, y: -1) : .identity
-        cg.textPosition = CGPoint(x: extent.rect.minX + origin.x, y: extent.baseline + origin.y)
+        cg.textPosition = CGPoint(x: x, y: baseline)
         CTLineDraw(line, cg)
         cg.restoreGState()
     }

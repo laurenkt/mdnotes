@@ -300,7 +300,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testED2_listMarkersSecondaryLabel` (bullet, ordered, nested, task), `testED2_ruleCharactersSecondaryLabel`,
       `testED2_otherMarkersStayTertiary`. V-1: editor snapshot light and dark, bullets and numbers
       checked legible.
-- [ ] M10.18 Rule extension across the whole view (ED-8): the faded hyphens are drawn in
+- [x] M10.18 Rule extension across the whole view (ED-8): the faded hyphens are drawn in
       `quaternaryLabelColor` from the editor view's leading edge to the typed rule's first
       glyph and from its last glyph to the view's trailing edge, margins included, on the
       rule's baseline in its font; drawn from `EditorTextView`'s own pass as the bands are
