@@ -161,3 +161,33 @@ marked `[?]` and PF-1's cold assertion stays as it is until then.
 Answer: Option 1 (the human, 2026-09-15). ADR-0020 and SPEC PF-1a record it. I-11 is reopened:
 apply docs/patches/I-11-cold-launch.patch, add the one-line warm-up to LaunchPerfTests before
 the first clock, delete the patch, and commit as the I-11 fix. Budgets untouched.
+
+## Q6: Which link form names a root-level note whose title other notes share?   (task: I-13, 2026-09-22)
+Context: R-4's Copy Link writes `[[Title]]`, or `[[relative/path]]` without `.md` when the title
+is ambiguous (K-2). For a note at the root, `foo.md`, the relative path without `.md` is `foo`,
+the bare title itself. K-1 says a target is "a title or a relative path without extension" and
+K-2 says a bare ambiguous title resolves to the most recently modified candidate, but neither
+says which reading wins when the text is both, so with `foo.md` and `daily/foo.md` in the
+library the spec gives no link that always names the root `foo`. `LinkIndex.resolve` reads a
+target without `/` as a title, so Copy Link on the root `foo` copies `[[foo]]`, which lands on
+`daily/foo` whenever that one was modified more recently, and flips as either is edited. The
+same gap affects anyone typing a link to the root note by hand, and backlinks (K-6) follow
+the same resolution.
+Options: (1) a bare target that is exactly a root note's path names that note: `[[foo]]` goes
+to the root `foo.md` whenever one exists, and only when none does is it an ambiguous title
+(most recent candidate, styled ambiguous). No new syntax and Copy Link needs no change; it
+reads K-2's "must be given as a relative path" literally, since `foo` is the root note's
+relative path. Cost: an existing bare `[[foo]]` that today reaches the newer `daily/foo`
+starts reaching the root note, and a root note shadows same-titled notes elsewhere, which
+then need their path (as K-2 already demands). (2) a root-anchored form, `[[/foo]]`: a
+leading `/` means a path from the root (K-1 amended), the resolver strips it, and Copy Link
+writes it for an ambiguous root note. Additive, no existing link changes meaning, but it is a
+new syntax other Markdown tools may not resolve, and hand-typed `[[foo]]` stays ambiguous.
+(3) allow the extension, `[[foo.md]]`: a target ending in `.md` is a path with extension
+(K-1 amended), and Copy Link writes it for an ambiguous root note. Additive and reads
+naturally, but it breaks K-1's "without extension" uniformity and a title ending in `.md`
+becomes unreachable by title. (4) accept the gap: amend R-4 to say an ambiguous root note's
+Copy Link is `[[Title]]` and may name another note. No code, but the copied link can be wrong.
+Recommendation: option 1. It needs no syntax, makes the link stable instead of following
+modification times, and matches what K-2 already asks of the other candidates.
+Answer:
