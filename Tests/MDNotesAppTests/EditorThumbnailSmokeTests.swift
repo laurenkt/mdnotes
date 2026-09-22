@@ -396,6 +396,64 @@ final class EditorThumbnailSmokeTests: XCTestCase {
         XCTAssertNil(reported.last?.1)
     }
 
+    // MARK: - Plain hover (ED-12)
+
+    /// ADR-0021: with no modifier held the pointer over a thumbnail is the pointing hand, since
+    /// a plain click opens the image, with no underline; over the embed's text and the prose
+    /// around it the I-beam is back (the embed is a link, which needs Cmd).
+    func testED12_plainHoverHandOverThumbnail() async throws {
+        let fixture = try await showPics()
+        NSCursor.arrow.set()
+        defer { NSCursor.arrow.set() }
+        let (index, _) = try XCTUnwrap(fixture.thumbnails.first)
+        let embed = fixture.location(of: "![[one.png]]") + 4
+        let after = fixture.location(of: "after") + 1
+
+        try moveMouse(to: try centre(ofCharacterAt: index, in: fixture), flags: [], in: fixture)
+        XCTAssertTrue(fixture.textView.hoversClickTarget)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "over the thumbnail")
+        XCTAssertNil(fixture.textView.hoveredLinkRange, "no link hovers")
+        XCTAssertNil(
+            fixture.textView.editorLayoutManager.temporaryAttribute(
+                .underlineStyle, atCharacterIndex: index, effectiveRange: nil),
+            "no underline")
+        try moveMouse(to: try centre(ofCharacterAt: index, in: fixture), flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "a second move over it keeps the hand")
+
+        try moveMouse(to: try centre(ofCharacterAt: after, in: fixture), flags: [], in: fixture)
+        XCTAssertFalse(fixture.textView.hoversClickTarget)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "off the thumbnail the I-beam is back")
+
+        try moveMouse(to: try centre(ofCharacterAt: index, in: fixture), flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand)
+        try moveMouse(to: try centre(ofCharacterAt: embed, in: fixture), flags: [], in: fixture)
+        XCTAssertFalse(fixture.textView.hoversClickTarget, "the embed's text is a link, not a plain click target")
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam)
+        XCTAssertFalse(fixture.editor.hasUnsavedEdits, "hovering is not an edit")
+    }
+
+    /// The window point at the centre of the character at `index`, laid out first.
+    private func centre(ofCharacterAt index: Int, in fixture: Fixture) throws -> NSPoint {
+        let textView = fixture.textView
+        if let layoutManager = textView.layoutManager, let container = textView.textContainer {
+            layoutManager.ensureLayout(for: container)
+        }
+        let screenRect = textView.firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: nil)
+        XCTAssertGreaterThan(screenRect.width, 0, "the character has been laid out")
+        let windowRect = fixture.window.convertFromScreen(screenRect)
+        return NSPoint(x: windowRect.midX, y: windowRect.midY)
+    }
+
+    /// The pointer moving to `point` with `flags` held, as the editor's tracking area reports it.
+    private func moveMouse(to point: NSPoint, flags: NSEvent.ModifierFlags, in fixture: Fixture) throws {
+        let event = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .mouseMoved, location: point, modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: fixture.window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 0, pressure: 0))
+        fixture.textView.mouseMoved(with: event)
+    }
+
     /// Sends a plain click on the character at `index` of the editor's text: a mouse-down then
     /// a mouse-up at the character's centre, delivered to the editor as `NSWindow.sendEvent`
     /// would deliver them.

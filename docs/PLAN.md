@@ -329,7 +329,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       as a URL destination, so Cmd-hover shows the hand and underline over it and Cmd-click or
       Cmd-Enter opens its URL (a relative URL resolved against the note's folder). Tests: `testED12_imageLinkHover`, `testK3_cmdClickImageOpensURL`,
       `testK3_cmdEnterInImageOpensURL`; update the ED-12 test that asserts no hand over an image.
-- [ ] M10.22 Plain hover hand over click targets (ED-12, E-9, T-4, ED-6): with no modifier held, the
+- [x] M10.22 Plain hover hand over click targets (ED-12, E-9, T-4, ED-6): with no modifier held, the
       pointer over an inline thumbnail, a tag or a task box is the pointing hand, and back to
       the I-beam off it; no underline. Tests: `testED12_plainHoverHandOverThumbnail`,
       `testED12_plainHoverHandOverTag`, `testED12_plainHoverHandOverTaskBox`,

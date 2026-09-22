@@ -31,6 +31,10 @@ import MDNotesCore
 /// edit, not undoable and never saved. Releasing Command, moving off the link or leaving the
 /// view restores the I-beam and takes the underline away.
 ///
+/// With no modifier held the pointer over a character a plain click acts on (a thumbnail,
+/// a task box or a tag: ED-12, asked of `isClickTarget`) is the pointing hand too, with no
+/// underline, and the I-beam comes back off it.
+///
 /// The view is built on TextKit 1 with an `EditorLayoutManager` (ED-8, ED-10), which is what
 /// draws the rule extensions and the section bands over the text: the storage, the
 /// layout manager and the text container are made here and the view keeps the storage alive,
@@ -101,6 +105,15 @@ public final class EditorTextView: NSTextView {
     /// ED-12: the storage range of the link under the pointer while Command is held, which
     /// carries the hover underline; nil while nothing hovers.
     public private(set) var hoveredLinkRange: NSRange?
+
+    /// ED-12: whether a plain click on the character at the given storage index acts on it (a
+    /// thumbnail opens, a task box toggles, a tag searches), so a plain hover over it shows the
+    /// pointing hand. Installed by the window controller; with none installed nothing does.
+    public var isClickTarget: (@MainActor (Int) -> Bool)?
+
+    /// ED-12: true while no modifier is held and the pointer is over a character
+    /// `isClickTarget` accepts, which shows the pointing hand with no underline.
+    public private(set) var hoversClickTarget = false
 
     /// ED-12: the underline a hovered link shows, as a temporary attribute: a solid single
     /// line over its whole range.
@@ -205,34 +218,55 @@ public final class EditorTextView: NSTextView {
         updateHover(at: pointer, modifiers: modifiers)
     }
 
-    /// AppKit's cursor-rect pass would put the I-beam back over a hovered link; the pointing
-    /// hand stays while one hovers.
+    /// AppKit's cursor-rect pass would put the I-beam back over a hovered link or click target;
+    /// the pointing hand stays while either hovers.
     public override func cursorUpdate(with event: NSEvent) {
-        if hoveredLinkRange != nil {
+        if showsPointingHand {
             NSCursor.pointingHand.set()
         } else {
             super.cursorUpdate(with: event)
         }
     }
 
-    /// Works out which link, if any, hovers: the one containing the character under
-    /// `locationInWindow` (window coordinates; nil when the pointer has left the view) while
-    /// `modifiers` is Command alone.
-    private func updateHover(at locationInWindow: NSPoint?, modifiers: NSEvent.ModifierFlags) {
-        var range: NSRange?
-        if let locationInWindow, Self.hasOnlyCommand(modifiers), let linkRange,
-            let index = characterIndex(under: convert(locationInWindow, from: nil))
-        {
-            range = linkRange(index)
-        }
-        setHoveredLink(range)
-        if hoveredLinkRange != nil { NSCursor.pointingHand.set() }
+    /// True while the pointer shows the pointing hand: over a link with Command held, or over a
+    /// click target with no modifier (ED-12).
+    private var showsPointingHand: Bool {
+        hoveredLinkRange != nil || hoversClickTarget
     }
 
-    /// Moves the hover underline to `range`, or clears it for nil and restores the I-beam (the
-    /// pointing hand is set by `updateHover` after every event while a link hovers). The
-    /// underline is a temporary attribute of the layout manager (drawn, never in the storage);
-    /// the old one is removed over what is left of its range should the text have changed.
+    /// Works out what, if anything, hovers under `locationInWindow` (window coordinates; nil
+    /// when the pointer has left the view): with Command alone, the link containing the
+    /// character there; with no modifier, whether a plain click on it acts. The pointing hand
+    /// is set after every event while either holds, and the I-beam put back when the last one
+    /// ends.
+    private func updateHover(at locationInWindow: NSPoint?, modifiers: NSEvent.ModifierFlags) {
+        let hadHand = showsPointingHand
+        var range: NSRange?
+        var clickTarget = false
+        let onlyCommand = Self.hasOnlyCommand(modifiers)
+        let noModifiers = Self.hasNoModifiers(modifiers)
+        if let locationInWindow, onlyCommand || noModifiers,
+            let index = characterIndex(under: convert(locationInWindow, from: nil))
+        {
+            if onlyCommand {
+                range = linkRange?(index)
+            } else {
+                clickTarget = isClickTarget?(index) ?? false
+            }
+        }
+        setHoveredLink(range)
+        hoversClickTarget = clickTarget
+        if showsPointingHand {
+            NSCursor.pointingHand.set()
+        } else if hadHand {
+            NSCursor.iBeam.set()
+        }
+    }
+
+    /// Moves the hover underline to `range`, or clears it for nil (the cursor is `updateHover`'s
+    /// to set). The underline is a temporary attribute of the layout manager (drawn, never in
+    /// the storage); the old one is removed over what is left of its range should the text have
+    /// changed.
     private func setHoveredLink(_ range: NSRange?) {
         guard range != hoveredLinkRange else { return }
         if let old = hoveredLinkRange, let storage = textStorage {
@@ -245,8 +279,6 @@ public final class EditorTextView: NSTextView {
         if let range {
             editorLayoutManager.addTemporaryAttribute(
                 .underlineStyle, value: Self.hoverUnderline.rawValue, forCharacterRange: range)
-        } else {
-            NSCursor.iBeam.set()
         }
     }
 
@@ -431,7 +463,11 @@ public final class EditorTextView: NSTextView {
 
     /// True when none of Shift, Control, Option and Command is down.
     private static func hasNoModifiers(_ event: NSEvent) -> Bool {
-        event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty
+        hasNoModifiers(event.modifierFlags)
+    }
+
+    private static func hasNoModifiers(_ flags: NSEvent.ModifierFlags) -> Bool {
+        flags.intersection([.shift, .control, .option, .command]).isEmpty
     }
 
     private static let carriageReturn: UnicodeScalar = "\r"

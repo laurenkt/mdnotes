@@ -426,6 +426,72 @@ final class TaskItemSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.textView.selectedRange(), end)
     }
 
+    // MARK: - ED-12 a plain hover over the box is the pointing hand
+
+    /// ADR-0021: with no modifier held the pointer over any of a box's three characters is the
+    /// pointing hand, since a plain click toggles it, with no underline; off it, over the
+    /// item's text or brackets that are not a box, and out of the view, the I-beam is back.
+    func testED12_plainHoverHandOverTaskBox() async throws {
+        let fixture = try await makeFixtureShowingTasks()
+        let textView = try XCTUnwrap(fixture.textView as? EditorTextView)
+        let text = Self.tasksBody
+        let open = range(of: "[ ]", in: text)
+        let done = range(of: "[x]", in: text)
+        let milk = range(of: "milk", in: text).location + 1
+        let notABox = range(of: "[x] not", in: text).location + 1
+        NSCursor.arrow.set()
+        defer { NSCursor.arrow.set() }
+
+        for index in [open.location, open.location + 1, open.location + 2, done.location + 1] {
+            try moveMouse(to: try centre(ofCharacterAt: index, in: fixture), flags: [], in: fixture)
+            XCTAssertTrue(textView.hoversClickTarget, "index \(index)")
+            XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "index \(index)")
+            XCTAssertNil(textView.hoveredLinkRange, "a box is not a link")
+            XCTAssertNil(
+                textView.editorLayoutManager.temporaryAttribute(
+                    .underlineStyle, atCharacterIndex: index, effectiveRange: nil),
+                "no underline")
+        }
+        try moveMouse(to: try centre(ofCharacterAt: milk, in: fixture), flags: [], in: fixture)
+        XCTAssertFalse(textView.hoversClickTarget)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "off the box the I-beam is back")
+
+        try moveMouse(to: try centre(ofCharacterAt: notABox, in: fixture), flags: [], in: fixture)
+        XCTAssertFalse(textView.hoversClickTarget, "brackets that are not after a list marker are not a box")
+        XCTAssertNotEqual(NSCursor.current, NSCursor.pointingHand)
+
+        try moveMouse(to: try centre(ofCharacterAt: open.location + 1, in: fixture), flags: .shift, in: fixture)
+        XCTAssertFalse(textView.hoversClickTarget, "with a modifier held a plain click is not what would happen")
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam)
+
+        try moveMouse(to: try centre(ofCharacterAt: open.location + 1, in: fixture), flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand)
+        let exit = try XCTUnwrap(
+            NSEvent.enterExitEvent(
+                with: .mouseExited, location: .zero, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: fixture.window?.windowNumber ?? 0,
+                context: nil, eventNumber: 1, trackingNumber: 0, userData: nil))
+        textView.mouseExited(with: exit)
+        XCTAssertFalse(textView.hoversClickTarget)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "leaving the view ends the hover")
+
+        XCTAssertTrue(fixture.controller.isClickTarget(at: open.location + 1))
+        XCTAssertFalse(fixture.controller.isClickTarget(at: milk))
+        XCTAssertEqual(fixture.textView.string, text, "hovering changed nothing")
+        XCTAssertFalse(fixture.editor.hasUnsavedEdits)
+    }
+
+    /// The pointer moving to `point` (window coordinates) with `flags` held, as the editor's
+    /// tracking area reports it.
+    private func moveMouse(to point: NSPoint, flags: NSEvent.ModifierFlags, in fixture: Fixture) throws {
+        let event = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .mouseMoved, location: point, modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: fixture.window?.windowNumber ?? 0,
+                context: nil, eventNumber: 1, clickCount: 0, pressure: 0))
+        fixture.textView.mouseMoved(with: event)
+    }
+
     func testED6_aToggleIsOneUndoableEdit() async throws {
         let fixture = try await makeFixtureShowingTasks()
         let text = Self.tasksBody

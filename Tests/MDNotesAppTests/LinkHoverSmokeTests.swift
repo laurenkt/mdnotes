@@ -20,6 +20,7 @@ final class LinkHoverSmokeTests: XCTestCase {
         wiki [[Bar]] missing [[Not yet]] embed ![[pic.png]]
         std [standard link](https://example.com/a) auto <https://example.org/x> bare https://example.net/y end
         img ![alt](https://example.com/i.png) code `[[Bar]]` prose
+        tagged #topic here `#notatag` done
 
         """
 
@@ -414,14 +415,16 @@ final class LinkHoverSmokeTests: XCTestCase {
         fixture.window.sendEvent(event)
     }
 
-    /// A `cursorUpdate` at `point` with Command held, sent through the window. A synthesized
-    /// cursor update carries no tracking area, so the window routes it nowhere; it is then
-    /// handed to the owner of the text view's own cursor-update tracking area, as the window
-    /// hands a real one.
-    private func sendCursorUpdate(at point: NSPoint, in fixture: Fixture) throws {
+    /// A `cursorUpdate` at `point` with `flags` (Command by default) held, sent through the
+    /// window. A synthesized cursor update carries no tracking area, so the window routes it
+    /// nowhere; it is then handed to the owner of the text view's own cursor-update tracking
+    /// area, as the window hands a real one.
+    private func sendCursorUpdate(
+        at point: NSPoint, flags: NSEvent.ModifierFlags = .command, in fixture: Fixture
+    ) throws {
         let event = try XCTUnwrap(
             NSEvent.enterExitEvent(
-                with: .cursorUpdate, location: point, modifierFlags: .command,
+                with: .cursorUpdate, location: point, modifierFlags: flags,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: fixture.window.windowNumber,
                 context: nil, eventNumber: 1, trackingNumber: 0, userData: nil))
         fixture.window.sendEvent(event)
@@ -430,6 +433,89 @@ final class LinkHoverSmokeTests: XCTestCase {
             "the text view tracks cursor updates itself")
         let owner = try XCTUnwrap(area.owner as? NSResponder)
         owner.cursorUpdate(with: event)
+    }
+
+    // MARK: - ED-12 a plain hover over a click target: the pointing hand, no underline
+
+    /// ADR-0021: with no modifier held the pointer over a tag is the pointing hand, since a
+    /// plain click searches for it (T-4), with no underline, and the I-beam comes back off it.
+    /// On screen, through `window.sendEvent`, so `NSTextView`'s own cursor handling runs first
+    /// and the cursor-rect pass follows, as in the running app.
+    func testED12_plainHoverHandOverTag() throws {
+        let fixture = try makeFixture()
+        let tag = range(of: "#topic")
+        for offset in [0, 3, tag.length - 1] {
+            try moveMouse(to: try point(overCharacterAt: tag.location + offset, in: fixture), flags: [], in: fixture)
+            XCTAssertTrue(fixture.textView.hoversClickTarget, "offset \(offset)")
+            XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "offset \(offset)")
+            XCTAssertNil(fixture.textView.hoveredLinkRange, "a tag is not a link")
+            XCTAssertEqual(
+                fixture.hoverUnderlines(in: tag), Array(repeating: nil, count: tag.length), "no underline")
+        }
+        try moveMouse(to: try point(overCharacterAt: tag.location + tag.length, in: fixture), flags: [], in: fixture)
+        XCTAssertFalse(fixture.textView.hoversClickTarget, "the space after the tag is not the tag")
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "off the tag the I-beam is back")
+        let codeTag = range(of: "#notatag").location + 2
+        try moveMouse(to: try point(overCharacterAt: codeTag, in: fixture), flags: [], in: fixture)
+        XCTAssertFalse(fixture.textView.hoversClickTarget, "a #word in code is not a tag (T-1)")
+
+        // Cmd over a tag: a tag is not a link, so no hand; released, the plain hover is back.
+        let over = try point(overCharacterAt: tag.location + 2, in: fixture)
+        try moveMouse(to: over, flags: [], in: fixture)
+        try changeFlags(command: true, at: over, in: fixture)
+        XCTAssertFalse(fixture.textView.hoversClickTarget)
+        XCTAssertNil(fixture.textView.hoveredLinkRange)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "Cmd over a tag is the I-beam")
+        try changeFlags(command: false, at: over, in: fixture)
+        XCTAssertTrue(fixture.textView.hoversClickTarget)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "released Cmd over a tag: the hand again")
+        try exitMouse(flags: [], in: fixture)
+        XCTAssertFalse(fixture.textView.hoversClickTarget)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "leaving the view ends the hover")
+
+        // The cursor the user sees: NSTextView's own handling must not put the I-beam back.
+        try putOnScreen(fixture)
+        defer { fixture.window.orderOut(nil) }
+        let prose = try point(overCharacterAt: range(of: "prose").location + 2, in: fixture)
+        let second = try point(overCharacterAt: tag.location + 4, in: fixture)
+        NSCursor.arrow.set()
+        try sendMouseMoved(to: prose, flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "the text view's own cursor handling runs")
+        try sendMouseMoved(to: over, flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after the mouse moved onto the tag")
+        try sendCursorUpdate(at: over, flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after a cursor update")
+        try sendMouseMoved(to: second, flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.pointingHand, "after a second move within the tag")
+        try sendMouseMoved(to: prose, flags: [], in: fixture)
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam, "off the tag")
+    }
+
+    /// ADR-0021: with no modifier held, prose, code, a heading and every kind of link keep the
+    /// I-beam: a plain click on a link places the caret, so a link still needs Cmd (K-3).
+    func testED12_plainHoverIBeamOverProseAndLinks() throws {
+        let fixture = try makeFixture()
+        let places: [(needle: String, offset: Int)] = [
+            ("prose", 2), ("# Links", 3), ("`[[Bar]]`", 4), ("[[Bar]]", 3), ("[[Not yet]]", 4),
+            ("![[pic.png]]", 5), ("[standard link](https://example.com/a)", 3), ("<https://example.org/x>", 8),
+            ("https://example.net/y", 10), ("![alt](https://example.com/i.png)", 3),
+        ]
+        let tag = try point(overCharacterAt: range(of: "#topic").location + 2, in: fixture)
+        for (needle, offset) in places {
+            let index = range(of: needle).location + offset
+            // From a click target, so the I-beam is set, not merely left as it was.
+            try moveMouse(to: tag, flags: [], in: fixture)
+            XCTAssertEqual(NSCursor.current, NSCursor.pointingHand)
+            try moveMouse(to: try point(overCharacterAt: index, in: fixture), flags: [], in: fixture)
+            XCTAssertFalse(fixture.textView.hoversClickTarget, needle)
+            XCTAssertNil(fixture.textView.hoveredLinkRange, needle)
+            XCTAssertEqual(NSCursor.current, NSCursor.iBeam, needle)
+            XCTAssertNil(fixture.hoverUnderline(at: index), needle)
+        }
+        try moveMouse(to: tag, flags: [], in: fixture)
+        try moveMouse(to: pointOverNoCharacter(in: fixture), flags: [], in: fixture)
+        XCTAssertFalse(fixture.textView.hoversClickTarget, "over no character")
+        XCTAssertEqual(NSCursor.current, NSCursor.iBeam)
     }
 
     // MARK: - ED-12 the underline is display only

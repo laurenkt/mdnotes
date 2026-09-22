@@ -546,6 +546,13 @@ public final class EditorController: NSObject, NSTextViewDelegate, NSTextStorage
         return nil
     }
 
+    /// True when a plain click on the character at storage index `index` would toggle a task
+    /// box (`toggleTaskBox(at:)`): the character is part of one and a writable note is shown.
+    /// Nothing changes; the plain hover asks it on every mouse move (ED-12).
+    public func canToggleTaskBox(at index: Int) -> Bool {
+        noteID != nil && body?.isWritable == true && taskBox(at: index) != nil
+    }
+
     /// A plain click on the character at storage index `index` (ED-6): when it is part of a
     /// task box, the character between the brackets becomes `x` for an open box or a space for
     /// a ticked one, as a single undoable edit (E-7) that is styled (E-2) and starts the

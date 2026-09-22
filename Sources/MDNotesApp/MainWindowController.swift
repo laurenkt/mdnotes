@@ -247,6 +247,8 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         // E-9, ED-6, T-4: a plain click on a thumbnail opens its image, on a task box toggles
         // it, on a tag searches for it.
         view.textView.onClick = { [weak self] index in self?.clickInEditor(at: index) ?? false }
+        // ED-12: the same three show the pointing hand under a plain hover.
+        view.textView.isClickTarget = { [weak self] index in self?.isClickTarget(at: index) ?? false }
         // I-1: an image pasted into or dropped on the editor is stored and embedded.
         view.textView.onInsertImage = { [weak self] source in self?.insertImage(source) ?? false }
         // K-6: a click on a title in the backlinks strip opens that note.
@@ -807,6 +809,14 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
     @discardableResult
     public func clickInEditor(at index: Int) -> Bool {
         openThumbnail(at: index) || toggleTaskBox(at: index) || searchTag(at: index)
+    }
+
+    /// True when a plain click on the character at storage index `index` would act on it, as
+    /// `clickInEditor(at:)` would: a thumbnail, a task box of a writable note, or a tag. Asked,
+    /// changing nothing, by the editor's plain hover to show the pointing hand (ED-12).
+    public func isClickTarget(at index: Int) -> Bool {
+        editorController.thumbnails.attachment(atCharacter: index) != nil
+            || editorController.canToggleTaskBox(at: index) || editorController.tag(at: index) != nil
     }
 
     // MARK: - Task boxes (ED-6)
