@@ -387,3 +387,15 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testED17_noIndentNoInsertion`, `testED17_caretInsideIndentCopiesUpToCaret`,
       `testED17_listMarkerNotContinued`, `testED17_singleUndoStep`,
       `testED17_completionPopoverTakesReturn`.
+- [ ] M10.28 Root note wins its bare path (K-2, R-4): `LinkIndex.resolve` reads a bare target
+      (no `/`) as a root note's relative path first: when `<target>.md` exists at the root, that
+      note is the target and the link is not styled ambiguous, whatever the modification times
+      of same-titled notes elsewhere; only when no root note matches does it fall back to the
+      title rules (one candidate, else most recently modified, styled ambiguous). Backlinks
+      (K-6) and link opening (K-3) follow the same resolution. Copy Link on a root note writes
+      `[[Title]]` even when the title is shared; on a non-root note with a shared title it still
+      writes `[[relative/path]]`. Tests: `testK2_rootNoteWinsBareTitle`,
+      `testK2_rootNoteWinsWhenOtherNewer`, `testK2_noRootNoteFallsBackToNewest`,
+      `testK2_rootNoteLinkNotStyledAmbiguous`, `testK6_backlinksFollowRootResolution`,
+      `testR4_copyLinkRootNoteSharedTitle`, `testR4_copyLinkNestedSharedTitleUsesPath`;
+      existing K-2, K-6 and R-4 tests kept green or updated to the new rule.

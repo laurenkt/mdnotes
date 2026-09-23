@@ -190,4 +190,8 @@ becomes unreachable by title. (4) accept the gap: amend R-4 to say an ambiguous 
 Copy Link is `[[Title]]` and may name another note. No code, but the copied link can be wrong.
 Recommendation: option 1. It needs no syntax, makes the link stable instead of following
 modification times, and matches what K-2 already asks of the other candidates.
-Answer:
+Answer: Option 1 (2026-09-23). A bare target that is exactly a root note's relative path names
+  that note: `[[foo]]` resolves to the root `foo.md` whenever one exists, and only when none
+  does is it an ambiguous title (most recently modified candidate, styled ambiguous). Copy
+  Link on the root note keeps writing `[[foo]]`; same-titled notes elsewhere need their path.
+  Backlinks (K-6) follow. Recorded in ADR-0023; K-2 and R-4 amended; task M10.28.

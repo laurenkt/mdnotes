@@ -158,7 +158,7 @@ Version 2 (ADR-0009 to ADR-0015, 2026-09-07) amends this document in place. Rule
   row without changing the selection: Rename (inline edit of that row, R-1 to R-3), Show in
   Finder (reveals the file, selected, in Finder), Copy Link (puts `[[Title]]` on the
   pasteboard as plain text, or `[[relative/path]]` without `.md` when the title is ambiguous,
-  K-2), a separator, and Move to Trash (D-1; the selection moves to the next row only if the
+  K-2; *(ADR-0023)* for a root note that is `[[Title]]`, which K-2 resolves to it), a separator, and Move to Trash (D-1; the selection moves to the next row only if the
   trashed row was selected). Template rows (TP-5) have no menu.
 - **D-1** Cmd-Delete with a row selected moves the file to the macOS Trash via
   `NSWorkspace.recycle`. No confirmation. Selection moves to the next row.
@@ -170,7 +170,9 @@ Version 2 (ADR-0009 to ADR-0015, 2026-09-07) amends this document in place. Rule
   without extension. `![[target]]` is an embed and is treated as a link to a non-note file.
 - **K-2** Resolution: if exactly one note has that title, that is the target. If several do, the
   target must be given as a relative path (`[[daily/2026/foo]]`); a bare ambiguous title resolves
-  to the most recently modified candidate and is styled as ambiguous.
+  to the most recently modified candidate and is styled as ambiguous. *(ADR-0023)* A bare target
+  that is exactly a root note's relative path (`[[foo]]` with `foo.md` at the root) names that
+  note whenever it exists, even if other notes share the title; those then need their path.
 - **K-3** *(v3)* Cmd-click, or Cmd-Enter with the caret inside a link, opens the target. For a
   wikilink with no resolving note, one is created at the root with that title (C-2 rules) and
   opened. For a standard link, image `![alt](url)` *(ADR-0021)*, autolink or bare URL (ED-1)
