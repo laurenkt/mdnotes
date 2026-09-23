@@ -26,8 +26,9 @@ import Foundation
 /// first section on the text background, the second on `bandColor`, and so on. A rule's line
 /// is the first line of its section. Before the glyphs are drawn, every filled section that
 /// crosses them is painted as a band from the vertical centre of its rule's drawn hyphens to
-/// the centre of the next rule's (the bottom of the text for the last), across the full width of the
-/// editor including its margins: `EditorTextView` asks `drawBands` for them from its own
+/// the centre of the next rule's (the bottom of the text for the last, which `EditorTextView`
+/// continues to its own bottom, ADR-0022), across the full width of the editor including its
+/// margins: `EditorTextView` asks `drawBands` for them from its own
 /// background pass, because `NSTextView` clips the layout manager's background pass to the
 /// text container and the band must reach past the `textContainerInset` to the view's edges.
 /// Which sections are filled is a matter of counting the rules
@@ -136,20 +137,26 @@ public final class EditorLayoutManager: NSLayoutManager {
         super.processEditing(
             for: textStorage, edited: editMask, range: newCharRange, changeInLength: delta,
             invalidatedRange: invalidatedCharRange)
-        guard let old = cachedRules else { return }
-        let scan = textStorage.mutableString.lineRange(for: NSUnionRange(newCharRange, invalidatedCharRange))
-        // The scanned lines' end, as it was before the edit: the text after it only moved.
-        let scanEndBefore = NSMaxRange(scan) - delta
-        let before = old.prefix { $0.location < scan.location }
-        let after = old.drop { $0.location < scanEndBefore }
-            .map { NSRange(location: $0.location + delta, length: $0.length) }
-        let rescanned = ruleRanges(in: scan)
-        cachedRules = Array(before) + rescanned + after
-        if old.count - before.count - after.count != rescanned.count {
-            // The storage is edited on the main thread only (it belongs to a view), so the
-            // text views it lays out are reachable here.
-            let views = textContainers.compactMap(\.textView)
-            MainActor.assumeIsolated { for view in views { view.needsDisplay = true } }
+        // The storage is edited on the main thread only (it belongs to a view), so the text
+        // views it lays out are reachable here.
+        let views = textContainers.compactMap(\.textView)
+        if let old = cachedRules {
+            let scan = textStorage.mutableString.lineRange(for: NSUnionRange(newCharRange, invalidatedCharRange))
+            // The scanned lines' end, as it was before the edit: the text after it only moved.
+            let scanEndBefore = NSMaxRange(scan) - delta
+            let before = old.prefix { $0.location < scan.location }
+            let after = old.drop { $0.location < scanEndBefore }
+                .map { NSRange(location: $0.location + delta, length: $0.length) }
+            let rescanned = ruleRanges(in: scan)
+            cachedRules = Array(before) + rescanned + after
+            if old.count - before.count - after.count != rescanned.count {
+                MainActor.assumeIsolated { for view in views { view.needsDisplay = true } }
+            }
+        }
+        // Whether the last section is filled may have changed, and with it the colour of the
+        // scroll view's clip view under the text (ADR-0022).
+        MainActor.assumeIsolated {
+            for case let view as EditorTextView in views { view.updateFinalBandBackground() }
         }
     }
 
@@ -198,6 +205,29 @@ public final class EditorLayoutManager: NSLayoutManager {
             if line > starts[starts.count - 1] { starts.append(line) }
         }
         return starts
+    }
+
+    /// Whether the last section is filled (ED-10, ADR-0022): the sections alternate from an
+    /// unfilled first, so it is when there is an even number of them, which is one more than
+    /// the rules, less one when a rule is on the first line (it opens the first section).
+    public var lastSectionIsFilled: Bool {
+        let rules = allRules
+        guard let first = rules.first, let storage = textStorage else { return false }
+        let openers = storage.mutableString.lineRange(for: first).location == 0 ? rules.count - 1 : rules.count
+        return openers % 2 == 1
+    }
+
+    /// The bottom of the text in `container`'s coordinates: the bottom of the last line
+    /// fragment, or of the empty last line after a final line break when the container holds
+    /// it. The last band ends here (ED-10), and when the last section is filled the text view
+    /// fills on from here to its own bottom (ADR-0022). Lays out the end of the text; zero for
+    /// an empty text.
+    public func textBottom(in container: NSTextContainer) -> CGFloat {
+        let length = textStorage?.length ?? 0
+        guard length > 0 else { return 0 }
+        let lastLine = lineFragmentRect(forGlyphAt: glyphIndexForCharacter(at: length - 1), effectiveRange: nil)
+        guard extraLineFragmentTextContainer === container else { return lastLine.maxY }
+        return max(lastLine.maxY, extraLineFragmentRect.maxY)
     }
 
     /// The character ranges of the filled sections (every second one, the first unfilled)
@@ -250,14 +280,11 @@ public final class EditorLayoutManager: NSLayoutManager {
             if bandEnd < drawnEnd, let next = rule(onLineStartingAt: bandEnd) {
                 // The next section's rule line is drawn too: the band stops at its midline.
                 bottom = hyphenMidline(of: next)
+            } else if bandEnd == length, drawnEnd == length {
+                bottom = textBottom(in: container)
             } else {
-                let lastLine = lineFragmentRect(
-                    forGlyphAt: glyphIndexForCharacter(at: drawnEnd - 1), effectiveRange: nil)
-                if bandEnd == length, drawnEnd == length, extraLineFragmentTextContainer === container {
-                    bottom = max(lastLine.maxY, extraLineFragmentRect.maxY)
-                } else {
-                    bottom = lastLine.maxY
-                }
+                bottom =
+                    lineFragmentRect(forGlyphAt: glyphIndexForCharacter(at: drawnEnd - 1), effectiveRange: nil).maxY
             }
             guard bottom > top else { return nil }
             return NSRect(x: 0, y: top, width: container.size.width, height: bottom - top)

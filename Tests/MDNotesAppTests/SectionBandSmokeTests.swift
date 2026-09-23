@@ -673,4 +673,262 @@ final class SectionBandSmokeTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
         }
     }
+
+    // MARK: - ED-10, ADR-0022: a filled final band continues below the text
+
+    /// A note taller than the editor whose last section, after one rule, is filled.
+    private var longFilledNote: String {
+        let body = (1...60).map { "Line \($0) of the last section, which runs on to the end of the note." }
+        return "# Top\n\nThe first section.\n\n---\n\n" + body.joined(separator: "\n\n") + "\n"
+    }
+
+    /// The pixel of `rep`, which caches `rect` of a view, at `column` on the row through `y`
+    /// (view coordinates), converted to sRGB, the space the expected colours resolve in.
+    private func pixel(_ rep: NSBitmapImageRep, column: Int, y: CGFloat, of rect: NSRect) throws -> NSColor {
+        let scale = CGFloat(rep.pixelsHigh) / rect.height
+        let row = min(rep.pixelsHigh - 1, max(0, Int(((y - rect.minY) * scale).rounded(.down))))
+        let color = try XCTUnwrap(rep.colorAt(x: column, y: row), "pixel \(column), \(row)")
+        return try XCTUnwrap(color.usingColorSpace(.sRGB))
+    }
+
+    /// The pixel of `rep` (the whole text view) at `column` on the row through the middle of
+    /// the line holding `location`, in sRGB.
+    private func pixel(_ rep: NSBitmapImageRep, column: Int, middleOfLineAt location: Int, in fixture: Fixture) throws
+        -> NSColor
+    {
+        let middle = (fixture.lineTop(at: location) + fixture.lineBottom(at: location)) / 2
+        return try pixel(
+            rep, column: column, y: middle + fixture.textView.textContainerOrigin.y, of: fixture.textView.bounds)
+    }
+
+    /// The clip view's background colour, which the elastic overscroll shows, painted under
+    /// the text view's appearance into a bitmap made as the text view's own renders are, in
+    /// sRGB. Painted, not just resolved, so it goes through the same colour conversion as the
+    /// text view's pixels it is compared with.
+    private func clipBackgroundAsDrawn(_ fixture: Fixture) throws -> NSColor {
+        let view = fixture.textView
+        let clip = try XCTUnwrap(view.enclosingScrollView?.contentView)
+        XCTAssertTrue(clip.drawsBackground, "the clip view paints its background")
+        let area = NSRect(x: 0, y: 0, width: 4, height: 4)
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: area))
+        let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: rep))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            clip.backgroundColor.setFill()
+            NSRect(x: 0, y: 0, width: rep.pixelsWide, height: rep.pixelsHigh).fill()
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let color = try XCTUnwrap(rep.colorAt(x: 1, y: 1))
+        return try XCTUnwrap(color.usingColorSpace(.sRGB))
+    }
+
+    /// True when a rendered pixel is `expected` to within the rounding of the composite.
+    private func near(_ a: NSColor, _ expected: NSColor) -> Bool {
+        abs(a.redComponent - expected.redComponent) < 0.006
+            && abs(a.greenComponent - expected.greenComponent) < 0.006
+            && abs(a.blueComponent - expected.blueComponent) < 0.006
+    }
+
+    /// Asserts every pixel row of `rep` (caching `rect` of the text view) from `top` down to
+    /// the rect's bottom is `expected` at the first, middle and last columns.
+    private func assertRows(
+        of rep: NSBitmapImageRep, caching rect: NSRect, from top: CGFloat, are expected: NSColor, _ what: String,
+        line: UInt = #line
+    ) throws {
+        let scale = CGFloat(rep.pixelsHigh) / rect.height
+        let firstRow = Int(((top - rect.minY) * scale).rounded(.up))
+        XCTAssertLessThan(firstRow, rep.pixelsHigh, "rows to look at: \(what)", line: line)
+        for row in max(0, firstRow)..<rep.pixelsHigh {
+            for column in [0, rep.pixelsWide / 2, rep.pixelsWide - 1] {
+                let color = try XCTUnwrap(rep.colorAt(x: column, y: row)?.usingColorSpace(.sRGB))
+                guard near(color, expected) else {
+                    return XCTFail("\(what): row \(row) column \(column) is \(color), not \(expected)", line: line)
+                }
+            }
+        }
+    }
+
+    /// The bottom of the text in the text view's coordinates.
+    private func textBottom(of fixture: Fixture) throws -> CGFloat {
+        let container = try XCTUnwrap(fixture.textView.textContainer)
+        return fixture.layoutManager.textBottom(in: container) + fixture.textView.textContainerOrigin.y
+    }
+
+    func testED10_finalBandReachesViewBottom() throws {
+        let fixture = makeFixture()
+        fixture.show(longFilledNote)
+        let view = fixture.textView
+        let clip = try XCTUnwrap(view.enclosingScrollView?.contentView)
+        XCTAssertTrue(fixture.layoutManager.lastSectionIsFilled)
+        XCTAssertGreaterThan(view.frame.height, clip.bounds.height, "the note is taller than the editor")
+        view.scrollToEndOfDocument(nil)
+        let bottom = try textBottom(of: fixture)
+        XCTAssertGreaterThanOrEqual(view.bounds.maxY - bottom, view.textContainerInset.height - 1, "the bottom inset")
+
+        let rep = try renderTextView(with: fixture)
+        let middle = rep.pixelsWide / 2
+        let band = try pixel(rep, column: middle, middleOfLineAt: fixture.range(of: "Line 60").location, in: fixture)
+        let clear = try pixel(rep, column: middle, middleOfLineAt: fixture.range(of: "The first").location, in: fixture)
+        XCTAssertFalse(near(band, clear), "the band shows against the text background")
+        let expected = band
+        try assertRows(of: rep, caching: view.bounds, from: bottom, are: expected, "below the text, whole view drawn")
+
+        // A redraw of the bottom inset alone, which holds no glyph, still paints it.
+        let inset = NSRect(x: 0, y: bottom, width: view.bounds.width, height: view.bounds.maxY - bottom)
+        let insetRep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: inset))
+        view.cacheDisplay(in: inset, to: insetRep)
+        try assertRows(of: insetRep, caching: inset, from: inset.minY, are: expected, "the bottom inset drawn alone")
+    }
+
+    func testED10_finalBandFillsShortNoteViewport() throws {
+        let fixture = makeFixture()
+        fixture.show("A short note.\n\n___\n")
+        let view = fixture.textView
+        let clip = try XCTUnwrap(view.enclosingScrollView?.contentView)
+        XCTAssertEqual(fixture.layoutManager.allRules, [fixture.range(of: "___")], "a rule after a blank line (ED-8)")
+        XCTAssertTrue(fixture.layoutManager.lastSectionIsFilled)
+        XCTAssertGreaterThanOrEqual(view.frame.height, clip.bounds.height, "the view fills the clip view")
+        let bottom = try textBottom(of: fixture)
+        XCTAssertLessThan(bottom, clip.bounds.height / 2, "the text is a small part of the editor")
+
+        let rep = try renderTextView(with: fixture)
+        // The band as the clip view shows it past the end, which the testED10_clipView tests
+        // match to the band drawn over the text.
+        let expected = try clipBackgroundAsDrawn(fixture)
+        let clear = try pixel(rep, column: 0, middleOfLineAt: 0, in: fixture)
+        XCTAssertFalse(near(expected, clear), "the first section is on the text background")
+        try assertRows(of: rep, caching: view.bounds, from: bottom, are: expected, "under the last line")
+        XCTAssertGreaterThanOrEqual(view.frame.maxY, clip.bounds.maxY, "down to the clip view's bottom")
+
+        // The editor grows taller: the view grows with it, and the fill with the view.
+        let before = clip.bounds.height
+        fixture.controller.window?.setContentSize(NSSize(width: 800, height: 800))
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(clip.bounds.height, before)
+        XCTAssertGreaterThanOrEqual(view.frame.height, clip.bounds.height, "the view fills the taller clip view")
+        let taller = try renderTextView(with: fixture)
+        try assertRows(of: taller, caching: view.bounds, from: bottom, are: expected, "under the last line, taller")
+    }
+
+    func testED10_clipViewMatchesFilledFinalBand() throws {
+        let fixture = makeFixture()
+        fixture.show(longFilledNote)
+        let view = fixture.textView
+        let clip = try XCTUnwrap(view.enclosingScrollView?.contentView)
+        XCTAssertTrue(clip.drawsBackground)
+        XCTAssertTrue(clip.backgroundColor === EditorTextView.finalBandBackground, "\(clip.backgroundColor)")
+        let window = try XCTUnwrap(fixture.controller.window)
+        defer { window.appearance = nil }
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            window.appearance = appearance
+            let rep = try renderTextView(with: fixture)
+            let middle = rep.pixelsWide / 2
+            let band = try pixel(
+                rep, column: middle, middleOfLineAt: fixture.range(of: "Line 60").location, in: fixture)
+            let clear = try pixel(
+                rep, column: middle, middleOfLineAt: fixture.range(of: "The first").location, in: fixture)
+            let clipColor = try clipBackgroundAsDrawn(fixture)
+            XCTAssertTrue(near(band, clipColor), "\(name.rawValue): clip \(clipColor), band drawn \(band)")
+            XCTAssertFalse(near(clear, clipColor), "\(name.rawValue): the clip view is not the text background")
+        }
+    }
+
+    func testED10_clipViewRevertsWhenRuleRemoved() throws {
+        let fixture = makeFixture()
+        fixture.show("An introduction.\n\n---\n\nThe last section, on the band.\n")
+        let view = fixture.textView
+        let clip = try XCTUnwrap(view.enclosingScrollView?.contentView)
+        XCTAssertTrue(clip.backgroundColor === EditorTextView.finalBandBackground)
+
+        // Deleting the rule's line, as a keystroke does, leaves one unfilled section.
+        let rule = fixture.line(at: fixture.range(of: "---").location)
+        fixture.type("", at: rule.location, replacing: rule.length)
+        XCTAssertTrue(fixture.layoutManager.allRules.isEmpty)
+        XCTAssertFalse(fixture.layoutManager.lastSectionIsFilled)
+        XCTAssertEqual(clip.backgroundColor, view.backgroundColor, "back to the text background")
+        let rep = try renderTextView(with: fixture)
+        let clear = try pixel(rep, column: 0, middleOfLineAt: 0, in: fixture)
+        XCTAssertTrue(near(try clipBackgroundAsDrawn(fixture), clear), "the clip view is on the text background")
+        let last = fixture.range(of: "The last").location
+        let below = fixture.lineBottom(at: last) + view.textContainerOrigin.y
+        try assertRows(of: rep, caching: view.bounds, from: below, are: clear, "nothing filled below the text")
+
+        // Undo brings the rule and the clip view's fill back.
+        fixture.textView.breakUndoCoalescing()
+        fixture.textView.undoManager?.undo()
+        XCTAssertEqual(fixture.layoutManager.allRules.count, 1)
+        XCTAssertTrue(clip.backgroundColor === EditorTextView.finalBandBackground)
+    }
+
+    func testED10_unfilledFinalSectionUnchanged() throws {
+        let fixture = makeFixture()
+        fixture.show(threeRules + "\n* * *\n\nThe fifth section, back on the text background.\n")
+        let view = fixture.textView
+        let clip = try XCTUnwrap(view.enclosingScrollView?.contentView)
+        XCTAssertEqual(fixture.layoutManager.allRules.count, 4)
+        XCTAssertFalse(fixture.layoutManager.lastSectionIsFilled)
+        XCTAssertEqual(clip.backgroundColor, view.backgroundColor)
+
+        // The last band stops at the last rule's midline and nothing is filled below it.
+        let lastRule = fixture.range(of: "* * *", occurrence: 1)
+        let bands = try fixture.bandRects(in: fixture.whole)
+        XCTAssertEqual(bands.count, 2)
+        XCTAssertEqual(
+            try XCTUnwrap(bands.last).maxY, fixture.layoutManager.hyphenMidline(of: lastRule), accuracy: 0.01)
+        view.scrollToEndOfDocument(nil)
+        let rep = try renderTextView(with: fixture)
+        let clear = try pixel(rep, column: 0, middleOfLineAt: 0, in: fixture)
+        XCTAssertTrue(near(try clipBackgroundAsDrawn(fixture), clear), "the clip view is on the text background")
+        let fifth = fixture.range(of: "The fifth").location
+        let below = fixture.lineBottom(at: fifth) + view.textContainerOrigin.y
+        try assertRows(of: rep, caching: view.bounds, from: below, are: clear, "below the last section")
+
+        // With no rule at all a short note is unchanged too.
+        fixture.show("Just prose.\n")
+        XCTAssertFalse(fixture.layoutManager.lastSectionIsFilled)
+        XCTAssertEqual(clip.backgroundColor, view.backgroundColor)
+        let plain = try renderTextView(with: fixture)
+        let under = fixture.lineBottom(at: 0) + view.textContainerOrigin.y
+        try assertRows(of: plain, caching: view.bounds, from: under, are: clear, "a note with no rule")
+    }
+
+    // MARK: - V-1
+
+    func testV1_editorSnapshotShowsFinalBandBelowShortNote() throws {
+        let fixture = makeFixture()
+        fixture.show(
+            """
+            # A short note
+
+            Its first section is on the text background.
+
+            ---
+
+            Its last section is filled, down to the bottom of the editor.
+
+            """)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        XCTAssertTrue(fixture.layoutManager.lastSectionIsFilled)
+        let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-bands-short")
+        XCTAssertEqual(written.count, 2)
+    }
+
+    func testV1_editorSnapshotShowsFinalBandScrolledToEnd() throws {
+        let fixture = makeFixture()
+        fixture.show(longFilledNote)
+        fixture.controller.mainView.layoutSubtreeIfNeeded()
+        // Scrolled as far down as the scroll view lets a user scroll: the clip view's bottom on
+        // the text view's. The clip view's own background, which shows past that only in the
+        // elastic overscroll, is not in a cached render.
+        let view = fixture.textView
+        let scroll = try XCTUnwrap(view.enclosingScrollView)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: view.frame.maxY - scroll.contentView.bounds.height))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        XCTAssertEqual(scroll.contentView.bounds.maxY, view.frame.maxY)
+        XCTAssertTrue(fixture.layoutManager.lastSectionIsFilled)
+        let written = try writeWindowSnapshots(of: fixture.controller, named: "editor-bands-end")
+        XCTAssertEqual(written.count, 2)
+    }
 }

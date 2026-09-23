@@ -162,6 +162,11 @@ public final class EditorTextView: NSTextView {
     /// `textContainerInset` margins bare, while this pass is unclipped, so both are painted here
     /// for the glyphs `rect` (the dirty rect) covers, from the view's left edge to its right,
     /// before the text's own background, the selection and the glyphs go over them.
+    ///
+    /// When the last section is filled its band goes on below the text to the view's bottom,
+    /// bottom inset included (ADR-0022). That part is looked at only when `rect` reaches below
+    /// the text's used rect, which asks for no layout, so a redraw higher up in a long note
+    /// never lays out its end.
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
         guard let container = textContainer else { return }
@@ -169,8 +174,62 @@ public final class EditorTextView: NSTextView {
         let inContainer = rect.offsetBy(dx: -origin.x, dy: -origin.y)
         let glyphs = editorLayoutManager.glyphRange(forBoundingRect: inContainer, in: container)
         editorLayoutManager.drawBands(forGlyphRange: glyphs, at: origin, fromX: bounds.minX, toX: bounds.maxX)
+        if rect.maxY > editorLayoutManager.usedRect(for: container).maxY + origin.y,
+            editorLayoutManager.lastSectionIsFilled
+        {
+            let top = max(rect.minY, editorLayoutManager.textBottom(in: container) + origin.y)
+            let bottom = min(rect.maxY, bounds.maxY)
+            if bottom > top {
+                EditorLayoutManager.bandColor.setFill()
+                NSRect(x: bounds.minX, y: top, width: bounds.width, height: bottom - top).fill(using: .sourceOver)
+            }
+        }
         editorLayoutManager.drawRuleExtensions(
             forGlyphRange: glyphs, at: origin, fromX: bounds.minX, toX: bounds.maxX)
+    }
+
+    // MARK: - Below the text (ADR-0022)
+
+    /// The clip view's background while the last section is filled: the band colour over the
+    /// text background, composited under whichever appearance resolves it, so the elastic
+    /// overscroll past the end of the text reads as the band going on. Made of the two semantic
+    /// colours only (W-6, E-8).
+    nonisolated public static let finalBandBackground = NSColor(name: nil) { appearance in
+        var composite = NSColor.textBackgroundColor
+        appearance.performAsCurrentDrawingAppearance {
+            guard let base = NSColor.textBackgroundColor.usingColorSpace(.sRGB),
+                let band = EditorLayoutManager.bandColor.usingColorSpace(.sRGB)
+            else { return }
+            let alpha = band.alphaComponent
+            func over(_ top: CGFloat, _ under: CGFloat) -> CGFloat { top * alpha + under * (1 - alpha) }
+            composite = NSColor(
+                srgbRed: over(band.redComponent, base.redComponent),
+                green: over(band.greenComponent, base.greenComponent),
+                blue: over(band.blueComponent, base.blueComponent), alpha: base.alphaComponent)
+        }
+        return composite
+    }
+
+    /// Sets the enclosing clip view's background to `finalBandBackground` while the last
+    /// section is filled and to the view's own background otherwise (ADR-0022). The layout
+    /// manager calls this after every edit, since any edit may add or remove a rule.
+    public func updateFinalBandBackground() {
+        guard let clip = superview as? NSClipView else { return }
+        let color = editorLayoutManager.lastSectionIsFilled ? Self.finalBandBackground : backgroundColor
+        if clip.backgroundColor != color { clip.backgroundColor = color }
+    }
+
+    public override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        updateFinalBandBackground()
+    }
+
+    /// Keeps the view at least as tall as its clip view, so the empty area under a short note
+    /// is the view's to paint (ADR-0022) rather than the clip view's.
+    public override func setFrameSize(_ newSize: NSSize) {
+        var size = newSize
+        if let clip = superview as? NSClipView { size.height = max(size.height, clip.bounds.height) }
+        super.setFrameSize(size)
     }
 
     /// Widens every redraw the text system asks for to the view's full width. The layout

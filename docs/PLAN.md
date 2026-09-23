@@ -399,7 +399,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testK2_rootNoteLinkNotStyledAmbiguous`, `testK6_backlinksFollowRootResolution`,
       `testR4_copyLinkRootNoteSharedTitle`, `testR4_copyLinkNestedSharedTitleUsesPath`;
       existing K-2, K-6 and R-4 tests kept green or updated to the new rule.
-- [ ] M10.29 Final band fills below the text (ED-10): when the last section is filled, the band runs from
+- [x] M10.29 Final band fills below the text (ED-10): when the last section is filled, the band runs from
       its rule's hyphen midline to the bottom of the editor view, bottom inset included, and the
       text view is at least as tall as the clip view, so a short note's empty area is filled.
       The clip view's background matches the fill (the band colour over the text background,
