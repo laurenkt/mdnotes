@@ -28,10 +28,11 @@ final class LinkIndexTests: XCTestCase {
         { id in notes[id.relativePath].map { (self.at($0.minutes), $0.body) } }
     }
 
-    /// Two notes titled `foo`, the nested one newer, plus notes that link to them each way.
+    /// Two notes titled `foo`, both in folders so neither wins by root path (ADR-0023), the
+    /// `daily` one newer, plus notes that link to them each way.
     private var ambiguous: SearchIndex {
         index([
-            ("foo.md", 1, "the older foo"),
+            ("notes/foo.md", 1, "the older foo"),
             ("daily/2026/foo.md", 2, "the newer foo"),
             ("bare.md", 3, "see [[foo]]"),
             ("qualified.md", 4, "see [[daily/2026/foo]]"),
@@ -68,18 +69,19 @@ final class LinkIndexTests: XCTestCase {
     func testK2_ambiguousTitleResolvesToMostRecentlyModifiedAndIsFlagged() {
         let resolution = ambiguous.links.resolve("foo")
         XCTAssertEqual(
-            resolution, .ambiguous(id("daily/2026/foo.md"), candidates: [id("daily/2026/foo.md"), id("foo.md")]))
+            resolution, .ambiguous(id("daily/2026/foo.md"), candidates: [id("daily/2026/foo.md"), id("notes/foo.md")]))
         XCTAssertTrue(resolution.isAmbiguous)
         XCTAssertEqual(resolution.target, id("daily/2026/foo.md"))
     }
 
     func testK2_ambiguityFollowsModificationDates() {
-        // The root note is touched and becomes the newer one: bare links now open it.
+        // The older note is touched and becomes the newer one: bare links now open it.
         let touched = ambiguous.applying(
-            changes: LibraryChanges(modified: [id("foo.md")]),
-            contents: disk(["foo.md": (9, "the older foo, edited")]))
+            changes: LibraryChanges(modified: [id("notes/foo.md")]),
+            contents: disk(["notes/foo.md": (9, "the older foo, edited")]))
         XCTAssertEqual(
-            touched.links.resolve("foo"), .ambiguous(id("foo.md"), candidates: [id("foo.md"), id("daily/2026/foo.md")]))
+            touched.links.resolve("foo"),
+            .ambiguous(id("notes/foo.md"), candidates: [id("notes/foo.md"), id("daily/2026/foo.md")]))
     }
 
     func testK2_ambiguityWithEqualDatesIsDeterministic() {
@@ -105,6 +107,71 @@ final class LinkIndexTests: XCTestCase {
         let snapshot = index([("nested/Beta.md", 1, ""), ("Alpha.md", 2, "")])
         XCTAssertEqual(snapshot.links.resolve("nested/Beta"), .unique(id("nested/Beta.md")))
         XCTAssertEqual(snapshot.links.resolve("Beta"), .unique(id("nested/Beta.md")))
+    }
+
+    // MARK: K-2 a root note wins its bare path (ADR-0023)
+
+    func testK2_rootNoteWinsBareTitle() {
+        let snapshot = index([
+            ("foo.md", 2, "the root foo"),
+            ("daily/foo.md", 1, "an older nested foo"),
+        ])
+        XCTAssertEqual(snapshot.links.resolve("foo"), .unique(id("foo.md")))
+        XCTAssertEqual(snapshot.links.resolve(" FOO "), .unique(id("foo.md")), "folded and trimmed like any target")
+        XCTAssertEqual(snapshot.links.resolve("daily/foo"), .unique(id("daily/foo.md")), "the other needs its path")
+    }
+
+    func testK2_rootNoteWinsWhenOtherNewer() {
+        let snapshot = index([
+            ("foo.md", 1, "the older root foo"),
+            ("daily/foo.md", 2, "a newer foo"),
+            ("archive/foo.md", 3, "the newest foo"),
+        ])
+        XCTAssertEqual(snapshot.links.resolve("foo"), .unique(id("foo.md")), "modification times do not matter")
+
+        // Touching the nested notes again changes nothing; removing the root note hands the
+        // bare title back to the title rules.
+        let touched = snapshot.applying(
+            changes: LibraryChanges(modified: [id("daily/foo.md")]), contents: disk(["daily/foo.md": (9, "edited")]))
+        XCTAssertEqual(touched.links.resolve("foo"), .unique(id("foo.md")))
+        let rootless = touched.applying(changes: LibraryChanges(removed: [id("foo.md")])) { _ in nil }
+        XCTAssertEqual(
+            rootless.links.resolve("foo"),
+            .ambiguous(id("daily/foo.md"), candidates: [id("daily/foo.md"), id("archive/foo.md")]))
+    }
+
+    func testK2_noRootNoteFallsBackToNewest() {
+        let snapshot = index([
+            ("archive/foo.md", 1, "older"),
+            ("daily/foo.md", 2, "newer"),
+            ("nested/Beta.md", 3, ""),
+        ])
+        XCTAssertEqual(
+            snapshot.links.resolve("foo"),
+            .ambiguous(id("daily/foo.md"), candidates: [id("daily/foo.md"), id("archive/foo.md")]))
+        XCTAssertEqual(snapshot.links.resolve("Beta"), .unique(id("nested/Beta.md")), "one candidate is unique")
+    }
+
+    func testK2_rootNoteLinkNotStyledAmbiguous() {
+        // Styling reads `isAmbiguous` (ED-11): a bare title a root note owns is a plain link.
+        let snapshot = index([
+            ("daily/foo.md", 2, ""),
+            ("foo.md", 1, ""),
+        ])
+        XCTAssertFalse(snapshot.links.resolve("foo").isAmbiguous)
+        XCTAssertFalse(snapshot.links.resolve("Foo").isAmbiguous)
+    }
+
+    func testK6_backlinksFollowRootResolution() {
+        let snapshot = index([
+            ("foo.md", 1, "the root foo"),
+            ("daily/foo.md", 2, "a newer foo"),
+            ("bare.md", 3, "see [[foo]]"),
+            ("qualified.md", 4, "see [[daily/foo]]"),
+            ("both.md", 5, "see [[Foo]] and [[DAILY/foo]]"),
+        ])
+        XCTAssertEqual(paths(snapshot.links.backlinks(to: id("foo.md"))), ["both.md", "bare.md"])
+        XCTAssertEqual(paths(snapshot.links.backlinks(to: id("daily/foo.md"))), ["both.md", "qualified.md"])
     }
 
     // MARK: K-1 embeds
@@ -150,7 +217,7 @@ final class LinkIndexTests: XCTestCase {
         // note it names; a note linking both ways is listed once for the nested note.
         XCTAssertEqual(
             paths(ambiguous.links.backlinks(to: id("daily/2026/foo.md"))), ["root-path.md", "qualified.md", "bare.md"])
-        XCTAssertEqual(paths(ambiguous.links.backlinks(to: id("foo.md"))), [])
+        XCTAssertEqual(paths(ambiguous.links.backlinks(to: id("notes/foo.md"))), [])
     }
 
     func testK5_backlinksAreMostRecentlyModifiedFirst() {
@@ -191,29 +258,31 @@ final class LinkIndexTests: XCTestCase {
             nil
         }
         XCTAssertEqual(updated.links.count, 3)
-        XCTAssertEqual(updated.links.resolve("foo"), .unique(id("foo.md")), "one candidate left: no longer ambiguous")
+        XCTAssertEqual(
+            updated.links.resolve("foo"), .unique(id("notes/foo.md")), "one candidate left: no longer ambiguous")
         XCTAssertEqual(updated.links.resolve("daily/2026/foo"), .unresolved)
         XCTAssertEqual(updated.links.outgoing(of: id("bare.md")), [])
         XCTAssertEqual(
-            paths(updated.links.backlinks(to: id("foo.md"))), ["root-path.md"], "bare links now belong to the survivor")
+            paths(updated.links.backlinks(to: id("notes/foo.md"))), ["root-path.md"],
+            "bare links now belong to the survivor")
     }
 
     func testK5_addedNoteCanMakeATitleAmbiguous() {
         let base = index([
-            ("foo.md", 1, ""),
+            ("notes/foo.md", 1, ""),
             ("Alpha.md", 2, "[[foo]]"),
         ])
-        XCTAssertEqual(base.links.resolve("foo"), .unique(id("foo.md")))
-        XCTAssertEqual(paths(base.links.backlinks(to: id("foo.md"))), ["Alpha.md"])
+        XCTAssertEqual(base.links.resolve("foo"), .unique(id("notes/foo.md")))
+        XCTAssertEqual(paths(base.links.backlinks(to: id("notes/foo.md"))), ["Alpha.md"])
 
         let updated = base.applying(
             changes: LibraryChanges(added: [id("daily/foo.md")]),
             contents: disk(["daily/foo.md": (3, "")]))
         XCTAssertEqual(
             updated.links.resolve("foo"),
-            .ambiguous(id("daily/foo.md"), candidates: [id("daily/foo.md"), id("foo.md")]))
+            .ambiguous(id("daily/foo.md"), candidates: [id("daily/foo.md"), id("notes/foo.md")]))
         XCTAssertEqual(paths(updated.links.backlinks(to: id("daily/foo.md"))), ["Alpha.md"])
-        XCTAssertEqual(paths(updated.links.backlinks(to: id("foo.md"))), [])
+        XCTAssertEqual(paths(updated.links.backlinks(to: id("notes/foo.md"))), [])
     }
 
     func testK5_renameMovesTheNoteUnderItsNewTitle() {
@@ -237,13 +306,14 @@ final class LinkIndexTests: XCTestCase {
         let notes = [
             ScannedNote(id: id("Alpha.md"), modifiedAt: at(1)),
             ScannedNote(id: id("daily/foo.md"), modifiedAt: at(2)),
-            ScannedNote(id: id("foo.md"), modifiedAt: at(3)),
+            ScannedNote(id: id("notes/foo.md"), modifiedAt: at(3)),
         ]
         let titles = SearchIndex.titlesOnly(notes)
         XCTAssertEqual(titles.links.count, 3)
         XCTAssertEqual(titles.links.resolve("Alpha"), .unique(id("Alpha.md")))
         XCTAssertEqual(
-            titles.links.resolve("foo"), .ambiguous(id("foo.md"), candidates: [id("foo.md"), id("daily/foo.md")]))
+            titles.links.resolve("foo"),
+            .ambiguous(id("notes/foo.md"), candidates: [id("notes/foo.md"), id("daily/foo.md")]))
         XCTAssertEqual(titles.links.resolve("daily/foo"), .unique(id("daily/foo.md")))
         XCTAssertEqual(titles.links.outgoing(of: id("Alpha.md")), [])
 
@@ -252,7 +322,7 @@ final class LinkIndexTests: XCTestCase {
             contents: disk(["Alpha.md": (1, "[[foo]] [[daily/foo]]")]))
         XCTAssertEqual(
             filled.links.outgoing(of: id("Alpha.md")), [LinkTarget(text: "foo"), LinkTarget(text: "daily/foo")])
-        XCTAssertEqual(paths(filled.links.backlinks(to: id("foo.md"))), ["Alpha.md"])
+        XCTAssertEqual(paths(filled.links.backlinks(to: id("notes/foo.md"))), ["Alpha.md"])
         XCTAssertEqual(paths(filled.links.backlinks(to: id("daily/foo.md"))), ["Alpha.md"])
     }
 

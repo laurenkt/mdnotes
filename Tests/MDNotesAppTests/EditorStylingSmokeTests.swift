@@ -530,12 +530,13 @@ final class EditorStylingSmokeTests: XCTestCase {
         LinkIndex.empty.applying(upserts: [(NoteID(relativePath: "foo.md"), Date(), [])], removing: [])
     }
 
-    /// A link index over `foo.md`, `daily/foo.md` and `Bar.md`: the bare title `foo` is shared.
+    /// A link index over `notes/foo.md`, `daily/foo.md` and `Bar.md`: the bare title `foo` is
+    /// shared and no root note owns it (ADR-0023), so it is ambiguous.
     private func twoFooIndex() -> LinkIndex {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         return LinkIndex.empty.applying(
             upserts: [
-                (NoteID(relativePath: "foo.md"), base, []),
+                (NoteID(relativePath: "notes/foo.md"), base, []),
                 (NoteID(relativePath: "daily/foo.md"), base.addingTimeInterval(60), []),
                 (NoteID(relativePath: "Bar.md"), base, []),
             ], removing: [])
@@ -629,13 +630,15 @@ final class EditorStylingSmokeTests: XCTestCase {
         XCTAssertEqual(fixture.style(at: first.location), .wikilink, "another paragraph is not re-styled by typing")
     }
 
-    /// Through the library: `Linker.md` links to the one note titled `foo`, so the link is
-    /// unique. Creating a second `foo` publishes a snapshot that makes the title ambiguous, and
-    /// the link in the editor changes style without an edit.
+    /// Through the library: `Linker.md` links to the one note titled `foo`, in a folder, so the
+    /// link is unique. Creating a second `foo` publishes a snapshot that makes the title
+    /// ambiguous (neither is at the root, ADR-0023), and the link in the editor changes style
+    /// without an edit.
     func testK2_aSecondNoteTitledFooRestylesTheOpenNotesLink() async throws {
         let body = "see [[foo]] and [[Bar]]\n"
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try "first foo".write(to: root.appendingPathComponent("foo.md"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("notes", isDirectory: true), withIntermediateDirectories: true)
+        try "first foo".write(to: root.appendingPathComponent("notes/foo.md"), atomically: true, encoding: .utf8)
         try body.write(to: root.appendingPathComponent("Linker.md"), atomically: true, encoding: .utf8)
 
         let fixture = makeFixture()

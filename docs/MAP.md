@@ -95,7 +95,7 @@ Feature IDs like `S-2` refer to `docs/SPEC.md`; `ADR-000N` to `docs/adr/`.
 - `Tests/MDNotesCoreTests/SelectionTransformTests.swift` — `SelectionTransform` edges (ED-16): CRLF lines and fence terminators, an unclosed block's lone fence, an empty block, blank-only lines quoted.
 - `Tests/MDNotesCoreTests/SearchIndexTests.swift` — snapshot building, query and title-query matching, ordering (S-2, S-3).
 - `Tests/MDNotesCoreTests/SearchIndexUpdateTests.swift` — incremental add/modify/remove keeping list order without a rescan (X-1).
-- `Tests/MDNotesCoreTests/LinkIndexTests.swift` — outgoing links, backlinks, unique/ambiguous/path resolution (K-1, K-2, K-5).
+- `Tests/MDNotesCoreTests/LinkIndexTests.swift` — outgoing links, backlinks, unique/ambiguous/path resolution, a root note winning its bare path and backlinks following it (K-1, K-2, K-5, K-6).
 - `Tests/MDNotesCoreTests/TagIndexTests.swift` — tag/note maps, case-insensitivity with library spelling, incremental updates (T-2).
 - `Tests/MDNotesCoreTests/LinkCompletionTests.swift` — `[[` session opening, filter text, candidate titles (K-4).
 - `Tests/MDNotesCoreTests/TagCompletionTests.swift` — `#` session opening, prefix filtering, candidate tags (T-3).

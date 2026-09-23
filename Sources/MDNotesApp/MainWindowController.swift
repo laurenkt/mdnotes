@@ -46,7 +46,7 @@ import MDNotesCore
 /// row's note as its `representedObject`, so it acts on that note whatever is selected. Rename
 /// edits that row's title in place without selecting it; Show in Finder goes through
 /// `revealInFinder`; Copy Link writes `[[Title]]`, or the relative path without `.md` when
-/// the title is ambiguous (K-2), to `pasteboard`; Move to Trash is D-1's move for that note,
+/// the bare title does not name that note alone (K-2), to `pasteboard`; Move to Trash is D-1's move for that note,
 /// so the X-4 path moves the selection on only when the note was the selected one. Template
 /// rows (TP-5) get no menu.
 ///
@@ -982,12 +982,14 @@ public final class MainWindowController: NSWindowController, NSSearchFieldDelega
         return menu
     }
 
-    /// The link Copy Link puts on the pasteboard for `id` (R-4): `[[Title]]`, or, when other
-    /// notes share the title so that it would not name this one alone (K-2), `[[relative/path]]`
-    /// without `.md`.
+    /// The link Copy Link puts on the pasteboard for `id` (R-4): `[[Title]]`, or, when the bare
+    /// title names another note or is ambiguous (K-2), `[[relative/path]]` without `.md`. A root
+    /// note's bare title always names it (ADR-0023), so a root note gets `[[Title]]`.
     public func wikilink(to id: NoteID) -> String {
         let links = (library?.snapshot ?? .empty).links
-        let target = links.resolve(id.title).isAmbiguous ? NoteCreation.queryForm(of: id) : id.title
+        let resolution = links.resolve(id.title)
+        let namesThis = resolution == .unique(id) || resolution == .unresolved
+        let target = namesThis ? id.title : NoteCreation.queryForm(of: id)
         return "[[\(target)]]"
     }
 

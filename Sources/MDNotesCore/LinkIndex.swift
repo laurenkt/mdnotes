@@ -79,14 +79,15 @@ public struct LinkIndex: Sendable {
     /// The note `target` names (K-2). `target` is the text between the brackets: leading and
     /// trailing whitespace is ignored and the comparison is case-insensitive. A target with a
     /// `/` is a path relative to the root without extension (K-1, L-4) and names the one note
-    /// at that path. Any other target is a title: it is unique when one note has it, and when
-    /// several do it resolves to the most recently modified of them and is flagged ambiguous.
+    /// at that path. A bare target (no `/`) is first read as a root note's path: when that
+    /// note exists it is the target, whatever else shares its title (ADR-0023). Otherwise it is
+    /// a title: unique when one note has it, and when several do it resolves to the most
+    /// recently modified of them and is flagged ambiguous.
     public func resolve(_ target: String) -> Resolution {
         let key = CaseFolding.fold(target.trimmingCharacters(in: .whitespacesAndNewlines))
         if key.isEmpty { return .unresolved }
-        if key.contains("/") {
-            return byPath[key].map(Resolution.unique) ?? .unresolved
-        }
+        if let atPath = byPath[key] { return .unique(atPath) }
+        if key.contains("/") { return .unresolved }
         guard let candidates = byTitle[key], let only = candidates.first else { return .unresolved }
         if candidates.count == 1 { return .unique(only) }
         let ordered = candidates.sorted(by: precedesInList)
@@ -99,8 +100,9 @@ public struct LinkIndex: Sendable {
     }
 
     /// The notes with a wikilink that resolves to `id` (K-5, K-6), most recently modified first.
-    /// A link by title counts only when the title resolves to `id`: when the title is ambiguous,
-    /// bare links belong to the most recently modified candidate alone (K-2). A link by path
+    /// A link by title counts only when the title resolves to `id`: a bare title belongs to the
+    /// root note at that path when there is one, and otherwise, when the title is ambiguous, to
+    /// the most recently modified candidate alone (K-2, ADR-0023). A link by path
     /// always counts. A note linking to itself is its own backlink.
     public func backlinks(to id: NoteID) -> [NoteID] {
         guard let record = records[id] else { return [] }

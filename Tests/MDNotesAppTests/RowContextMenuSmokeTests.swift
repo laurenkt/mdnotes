@@ -18,7 +18,7 @@ final class RowContextMenuSmokeTests: XCTestCase {
     private var pasteboard: NSPasteboard?
 
     /// Written oldest first, so the empty query lists archive/Gamma, Gamma, Beta, Alpha (S-3).
-    /// Two notes are titled Gamma, so that title is ambiguous (K-2).
+    /// Two notes are titled Gamma; the root one owns the bare title (K-2, ADR-0023).
     private static let notes: [(path: String, body: String)] = [
         ("Alpha.md", "alpha body"),
         ("daily/Beta.md", "beta body"),
@@ -330,8 +330,37 @@ final class RowContextMenuSmokeTests: XCTestCase {
     }
 
     func testR4_copyLinkAmbiguousUsesPath() async throws {
+        // A second Beta in another folder: neither is at the root, so the title is ambiguous.
         let fixture = try await makeFixture()
-        XCTAssertTrue(fixture.library.snapshot.links.resolve("Gamma").isAmbiguous)
+        let otherBeta = NoteID(relativePath: "other/Beta.md")
+        var created = false
+        fixture.library.create(otherBeta) { result in
+            if case .failure(let error) = result { XCTFail("create failed: \(error)") }
+            created = true
+        }
+        await waitUntil("second Beta indexed") {
+            created && fixture.library.snapshot.links.resolve("Beta").isAmbiguous
+        }
+        try perform(MainWindowController.copyLinkRowItemTitle, on: beta, in: fixture)
+        XCTAssertEqual(pasteboard?.string(forType: .string), "[[daily/Beta]]")
+        assertPlainTextOnly()
+        XCTAssertEqual(
+            fixture.library.snapshot.links.resolve("daily/Beta"), .unique(beta), "the copied link names the note")
+        XCTAssertEqual(fixture.controller.wikilink(to: otherBeta), "[[other/Beta]]")
+    }
+
+    func testR4_copyLinkRootNoteSharedTitle() async throws {
+        // Gamma.md is at the root and archive/Gamma.md is newer: the bare title is the root's.
+        let fixture = try await makeFixture()
+        XCTAssertEqual(fixture.library.snapshot.links.resolve("Gamma"), .unique(gamma))
+        try perform(MainWindowController.copyLinkRowItemTitle, on: gamma, in: fixture)
+        XCTAssertEqual(pasteboard?.string(forType: .string), "[[Gamma]]")
+        assertPlainTextOnly()
+    }
+
+    func testR4_copyLinkNestedSharedTitleUsesPath() async throws {
+        let fixture = try await makeFixture()
+        XCTAssertNotEqual(fixture.library.snapshot.links.resolve("Gamma").target, archivedGamma)
         try perform(MainWindowController.copyLinkRowItemTitle, on: archivedGamma, in: fixture)
         XCTAssertEqual(pasteboard?.string(forType: .string), "[[archive/Gamma]]")
         assertPlainTextOnly()

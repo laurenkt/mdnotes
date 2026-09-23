@@ -65,16 +65,17 @@ final class LinkRewriteTests: XCTestCase {
     }
 
     func testR3_planLeavesBareLinksThatResolveToAnotherCandidateOfAnAmbiguousTitle() {
-        // Two notes titled Beta; the nested one is newer, so a bare [[Beta]] is its (K-2).
+        // Two notes titled Beta, neither at the root; the daily one is newer, so a bare
+        // [[Beta]] is its (K-2).
         let index = links([
-            ("Beta.md", 1, ""),
+            ("archive/Beta.md", 1, ""),
             ("daily/Beta.md", 2, ""),
             ("bare.md", 3, "[[Beta]]"),
             ("qualified.md", 4, "[[daily/Beta]] and [[Beta]]"),
         ])
-        let older = id("Beta.md")
+        let older = id("archive/Beta.md")
         XCTAssertEqual(
-            LinkRewrite.plan(renaming: older, to: id("Omega.md"), in: index), [:],
+            LinkRewrite.plan(renaming: older, to: id("archive/Omega.md"), in: index), [:],
             "no link resolves to the older Beta, so nothing is rewritten for it")
         XCTAssertEqual(
             LinkRewrite.plan(renaming: beta, to: delta, in: index),

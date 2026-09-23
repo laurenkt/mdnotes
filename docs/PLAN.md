@@ -387,7 +387,7 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testED17_noIndentNoInsertion`, `testED17_caretInsideIndentCopiesUpToCaret`,
       `testED17_listMarkerNotContinued`, `testED17_singleUndoStep`,
       `testED17_completionPopoverTakesReturn`.
-- [ ] M10.28 Root note wins its bare path (K-2, R-4): `LinkIndex.resolve` reads a bare target
+- [x] M10.28 Root note wins its bare path (K-2, R-4): `LinkIndex.resolve` reads a bare target
       (no `/`) as a root note's relative path first: when `<target>.md` exists at the root, that
       note is the target and the link is not styled ambiguous, whatever the modification times
       of same-titled notes elsewhere; only when no root note matches does it fall back to the
