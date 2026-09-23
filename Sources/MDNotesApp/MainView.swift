@@ -332,6 +332,11 @@ public final class MainView: NSView, NSSplitViewDelegate {
         text.textContainer?.containerSize = NSSize(width: 0, height: Self.unboundedEditorHeight)
         let scroll = NSScrollView()
         scroll.documentView = text
+        // Joining the clip view sizes the text view to its text before the clip view has
+        // taken on the document view's flippedness, so the layout manager keeps the view's
+        // top fixed in unflipped coordinates and moves its origin up the page by the growth,
+        // which autoresizing then carries for good (I-14). A document view sits at 0.
+        text.setFrameOrigin(.zero)
         scroll.borderType = .noBorder
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false

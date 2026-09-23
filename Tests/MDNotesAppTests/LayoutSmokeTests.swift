@@ -95,6 +95,39 @@ final class LayoutSmokeTests: XCTestCase {
         XCTAssertEqual(view.splitView.frame.maxY, view.searchSeparatorRect.minY, accuracy: 0.5)
     }
 
+    /// The editor's text view sits at its clip view's origin whatever size the window takes,
+    /// so scrolling to either end of a long note stops at the text view's own edge, past the
+    /// bottom by no more than the inset AppKit gives the clip view at the window's bottom
+    /// corner (I-14).
+    func testW2_editorTextViewSitsAtTheClipViewOrigin() throws {
+        let controller = makeLaidOutController(size: NSSize(width: 800, height: 600))
+        let view = controller.mainView
+        let text = view.textView
+        let clip = view.editorScrollView.contentView
+        XCTAssertEqual(text.frame.origin, .zero, "after the window takes its size")
+
+        text.string = (1...80).map { "Line \($0)" }.joined(separator: "\n\n") + "\n"
+        view.layoutSubtreeIfNeeded()
+        if let container = text.textContainer { text.layoutManager?.ensureLayout(for: container) }
+        XCTAssertEqual(text.frame.origin, .zero, "with a long note shown")
+        XCTAssertGreaterThan(text.frame.height, clip.bounds.height, "the note is taller than the editor")
+
+        text.scrollToEndOfDocument(nil)
+        XCTAssertEqual(
+            clip.bounds.maxY, text.frame.maxY + clip.contentInsets.bottom, accuracy: 0.5,
+            "scrolled to the end, not past it")
+        text.scrollToBeginningOfDocument(nil)
+        XCTAssertEqual(clip.bounds.minY, text.frame.minY, accuracy: 0.5, "scrolled to the top, not past it")
+
+        controller.window?.setContentSize(NSSize(width: 700, height: 500))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(text.frame.origin, .zero, "after the window shrinks")
+        text.scrollToEndOfDocument(nil)
+        XCTAssertEqual(
+            clip.bounds.maxY, text.frame.maxY + clip.contentInsets.bottom, accuracy: 0.5,
+            "scrolled to the end after a resize")
+    }
+
     func testW6_titleBarShowsTheWindowTitle() throws {
         let controller = makeLaidOutController(size: NSSize(width: 800, height: 600))
         let window = try XCTUnwrap(controller.window)
