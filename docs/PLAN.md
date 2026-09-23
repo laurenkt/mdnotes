@@ -399,3 +399,16 @@ Legend: `[ ]` todo, `[x]` done, `[?]` blocked (see `QUESTIONS.md`). Spec IDs ref
       `testK2_rootNoteLinkNotStyledAmbiguous`, `testK6_backlinksFollowRootResolution`,
       `testR4_copyLinkRootNoteSharedTitle`, `testR4_copyLinkNestedSharedTitleUsesPath`;
       existing K-2, K-6 and R-4 tests kept green or updated to the new rule.
+- [ ] M10.29 Final band fills below the text (ED-10): when the last section is filled, the band runs from
+      its rule's hyphen midline to the bottom of the editor view, bottom inset included, and the
+      text view is at least as tall as the clip view, so a short note's empty area is filled.
+      The clip view's background matches the fill (the band colour over the text background,
+      semantic colours only) while the last section is filled, so the elastic overscroll past
+      the end shows it; it goes back to the text background when an edit leaves the last
+      section unfilled. A final section on the text background is unchanged. Tests:
+      `testED10_finalBandReachesViewBottom` (bitmap: band colour in the bottom inset rows),
+      `testED10_finalBandFillsShortNoteViewport` (a two-line note ending filled, the rows
+      between the last line and the clip view's bottom are band colour),
+      `testED10_clipViewMatchesFilledFinalBand`, `testED10_clipViewRevertsWhenRuleRemoved`,
+      `testED10_unfilledFinalSectionUnchanged`; PF-3 green. V-1: editor-bands light and dark
+      with a note ending in a filled section, short and scrolled to the end.

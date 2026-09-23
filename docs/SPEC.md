@@ -345,9 +345,11 @@ place, and every marker that produced the styling stays visible and editable.
 - **ED-10** Sections between thematic breaks alternate backgrounds: the first section on the
   text background, the next on a subtle system fill (about 4 % label colour, adapting to
   appearance), and so on. *(ADR-0021)* A section boundary is the vertical centre of its rule's
-  drawn hyphens, so a band runs from one rule's hyphen midline to the next rule's (the last
-  band to the bottom of the text). Bands span the full editor width including margins and are
-  drawn for the visible rect only.
+  drawn hyphens, so a band runs from one rule's hyphen midline to the next rule's.
+  *(ADR-0022)* A filled last section continues below the text without a break: through the
+  empty editor area under a short note, the bottom margin and the scroll view's elastic
+  overscroll. Bands span the full editor width including margins and are drawn for the
+  visible rect only.
 - **ED-11** Wikilinks whose target resolves are in link colour; those with no resolving note
   keep link colour with a dotted underline and the tooltip "Cmd-click to create"; ambiguous
   targets stay per K-2. Standard links, autolinks and bare URLs are styled as links.
